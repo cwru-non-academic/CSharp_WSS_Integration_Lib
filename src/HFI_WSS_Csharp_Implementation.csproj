@@ -15,6 +15,9 @@
     <Reference Include="WSS_Core_Interface">
       <HintPath>..\lib\WSS_Core_Interface.dll</HintPath>
     </Reference>
+    <Reference Include="WSS.Transport.Serial">
+      <HintPath>..\lib\WSS.Transport.Serial.dll</HintPath>
+    </Reference>
     <Reference Include="Newtonsoft.Json">
       <HintPath>..\lib\Newtonsoft.Json.dll</HintPath>
     </Reference>
