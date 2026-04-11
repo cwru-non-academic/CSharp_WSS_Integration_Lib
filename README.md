@@ -4,6 +4,8 @@ Reusable .NET wrapper around the HFI WSS stimulation stack.
 
 This repository now owns the integration/library layer only. The CLI application should live in a separate repo and consume this library as a git submodule.
 
+All documentation about the API and other implementations can be found in [GitHub Pages](https://cwru-non-academic.github.io/WSS_Documentation/).
+
 ## Layout
 
 - `src/` - library project containing `StimulationController` and `StimulationOptions`
