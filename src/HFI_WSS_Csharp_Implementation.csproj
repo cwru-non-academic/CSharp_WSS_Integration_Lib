@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="InTheHand.BluetoothLE" Version="4.0.44" />
     <PackageReference Include="System.Security.Permissions" Version="7.0.0" />
     <PackageReference Include="System.IO.Ports" Version="7.0.0" />
   </ItemGroup>
@@ -14,6 +15,9 @@
   <ItemGroup>
     <Reference Include="WSS_Core_Interface">
       <HintPath>..\lib\WSS_Core_Interface.dll</HintPath>
+    </Reference>
+    <Reference Include="WSS.Transport.Serial">
+      <HintPath>..\lib\WSS.Transport.Serial.dll</HintPath>
     </Reference>
     <Reference Include="Newtonsoft.Json">
       <HintPath>..\lib\Newtonsoft.Json.dll</HintPath>
