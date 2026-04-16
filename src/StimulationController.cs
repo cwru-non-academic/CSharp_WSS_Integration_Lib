@@ -69,8 +69,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Builds the WSS stack, initializes the active transport, and starts the background tick loop.
     /// </summary>
     /// <remarks>
-    /// The controller creates the transport internally: test mode uses <see cref="TestModeTransport"/>;
-    /// otherwise a serial transport is created with either the configured port or auto-detection.
+    /// The controller creates the transport internally based on <see cref="StimulationOptions.Transport"/>:
+    /// test mode uses <see cref="TestModeTransport"/>, serial uses <see cref="SerialPortTransport"/>,
+    /// and BLE uses <see cref="BleNusTransport"/>.
     /// This method is idempotent and returns immediately when the controller is already initialized.
     /// Initialization failures from the underlying WSS stack propagate to the caller.
     /// </remarks>
@@ -80,13 +81,27 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
         {
             if (_wss != null) return;
 
-            ITransport transport = _options.TestMode
-                ? new TestModeTransport()
-                : !string.IsNullOrWhiteSpace(_options.SerialPort)
-                    ? new SerialPortTransport(_options.SerialPort!)
-                    : new SerialPortTransport();
+            ITransport transport = _options.Transport switch
+            {
+                StimulationTransportKind.Test => new TestModeTransport(new TestModeTransportOptions()),
+                StimulationTransportKind.Ble => new BleNusTransport(new BleNusTransportOptions
+                {
+                    AutoSelectDevice = _options.BleAutoSelect,
+                    DeviceId = _options.BleDeviceId,
+                    DeviceName = _options.BleDeviceName
+                }),
+                _ => new SerialPortTransport(new SerialPortTransportOptions
+                {
+                    PortName = _options.SerialPort,
+                    AutoSelectPort = string.IsNullOrWhiteSpace(_options.SerialPort)
+                })
+            };
 
-            IStimulationCore core = new WssStimulationCore(transport, _options.ConfigPath, _options.MaxSetupTries);
+            IStimulationCore core = new WssStimulationCore(transport, new WssStimulationCoreOptions
+            {
+                ConfigPath = _options.ConfigPath,
+                MaxSetupTries = _options.MaxSetupTries
+            });
 
             IStimParamsCore paramsLayer = new StimParamsLayer(core, _options.ConfigPath);
             var modelLayer = new ModelParamsLayer(paramsLayer, _options.ConfigPath);
@@ -875,25 +890,45 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
 /// <summary>
 /// Provides configuration values used to construct and run a <see cref="StimulationController"/>.
 /// </summary>
+public enum StimulationTransportKind
+{
+    Serial,
+    Ble,
+    Test
+}
+
+/// <summary>
+/// Configuration record for <see cref="StimulationController"/>.
+/// </summary>
 public sealed class StimulationOptions
 {
     private string _configPath = Path.Combine(Environment.CurrentDirectory, "Config");
 
     /// <summary>
-    /// Gets the serial device name to open for live hardware communication.
+    /// Selects the transport implementation used for stimulation.
     /// </summary>
-    /// <remarks>
-    /// Use values such as <c>COM3</c> on Windows or <c>/dev/ttyUSB0</c> on Linux. When <c>null</c>, the
-    /// underlying serial transport uses its default auto-detection behavior. Ignored when
-    /// <see cref="TestMode"/> is <c>true</c>.
-    /// </remarks>
+    public StimulationTransportKind Transport { get; init; } = StimulationTransportKind.Serial;
+
+    /// <summary>
+    /// Optional serial device name (e.g., "COM3" or "/dev/ttyUSB0"). Uses auto-detect when null.
+    /// </summary>
+    /// <remarks>Only used when <see cref="Transport"/> is <see cref="StimulationTransportKind.Serial"/>.</remarks>
     public string? SerialPort { get; init; }
 
     /// <summary>
-    /// Gets whether the controller should use simulated transport instead of real hardware.
+    /// When true, the BLE transport scans for compatible devices and auto-selects the best candidate.
     /// </summary>
-    /// <remarks>When enabled, this option takes precedence over <see cref="SerialPort"/>.</remarks>
-    public bool TestMode { get; init; }
+    public bool BleAutoSelect { get; init; }
+
+    /// <summary>
+    /// Exact BLE device name to connect to when auto-selection is disabled.
+    /// </summary>
+    public string? BleDeviceName { get; init; }
+
+    /// <summary>
+    /// Explicit BLE device identifier to connect to when auto-selection is disabled.
+    /// </summary>
+    public string? BleDeviceId { get; init; }
 
     /// <summary>
     /// Gets the maximum number of setup attempts to make before initialization fails.
@@ -923,6 +958,14 @@ public sealed class StimulationOptions
     {
         if (TickIntervalMs <= 0)
             throw new ArgumentOutOfRangeException(nameof(TickIntervalMs), "Tick interval must be positive.");
+
+        if (Transport == StimulationTransportKind.Ble &&
+            !BleAutoSelect &&
+            string.IsNullOrWhiteSpace(BleDeviceId) &&
+            string.IsNullOrWhiteSpace(BleDeviceName))
+        {
+            throw new ArgumentException("BLE transport requires --ble-auto, --ble-device-id, or --ble-device-name.");
+        }
 
         Directory.CreateDirectory(ConfigPath);
     }
