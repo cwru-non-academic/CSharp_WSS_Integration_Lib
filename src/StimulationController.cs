@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Wss.CoreModule;
 using Wss.ModelModule;
 using Wss.CalibrationModule;
+using WssTransport = Wss.Transports;
 
 namespace HFI.Wss;
 
@@ -73,10 +74,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
         {
             if (_wss != null) return;
 
-#if WSS_OPTIONS_API
-            ITransport transport = _options.TestMode
-                ? new TestModeTransport(new TestModeTransportOptions())
-                : new SerialPortTransport(new SerialPortTransportOptions
+            WssTransport.ITransport transport = _options.TestMode
+                ? new WssTransport.TestModeTransport(new WssTransport.TestModeTransportOptions())
+                : new WssTransport.SerialPortTransport(new WssTransport.SerialPortTransportOptions
                 {
                     PortName = _options.SerialPort,
                     AutoSelectPort = string.IsNullOrWhiteSpace(_options.SerialPort)
@@ -87,15 +87,6 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
                 ConfigPath = _options.ConfigPath,
                 MaxSetupTries = _options.MaxSetupTries
             });
-#else
-            ITransport transport = _options.TestMode
-                ? new TestModeTransport()
-                : !string.IsNullOrWhiteSpace(_options.SerialPort)
-                    ? new SerialPortTransport(_options.SerialPort!)
-                    : new SerialPortTransport();
-
-            IStimulationCore core = new WssStimulationCore(transport, _options.ConfigPath, _options.MaxSetupTries);
-#endif
 
             IStimParamsCore paramsLayer = new StimParamsLayer(core, _options.ConfigPath);
             var modelLayer = new ModelParamsLayer(paramsLayer, _options.ConfigPath);

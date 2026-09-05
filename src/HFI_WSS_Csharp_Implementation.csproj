@@ -6,7 +6,6 @@
     <Nullable>enable</Nullable>
     <WssArtifactDir Condition="'$(WSS_ARTIFACT_DIR)' == ''">$(MSBuildProjectDirectory)\..\lib</WssArtifactDir>
     <WssArtifactDir Condition="'$(WSS_ARTIFACT_DIR)' != ''">$(WSS_ARTIFACT_DIR)</WssArtifactDir>
-    <DefineConstants Condition="'$(WSS_ARTIFACT_DIR)' != ''">$(DefineConstants);WSS_OPTIONS_API</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
