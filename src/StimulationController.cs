@@ -73,6 +73,21 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
         {
             if (_wss != null) return;
 
+#if WSS_OPTIONS_API
+            ITransport transport = _options.TestMode
+                ? new TestModeTransport(new TestModeTransportOptions())
+                : new SerialPortTransport(new SerialPortTransportOptions
+                {
+                    PortName = _options.SerialPort,
+                    AutoSelectPort = string.IsNullOrWhiteSpace(_options.SerialPort)
+                });
+
+            IStimulationCore core = new WssStimulationCore(transport, new WssStimulationCoreOptions
+            {
+                ConfigPath = _options.ConfigPath,
+                MaxSetupTries = _options.MaxSetupTries
+            });
+#else
             ITransport transport = _options.TestMode
                 ? new TestModeTransport()
                 : !string.IsNullOrWhiteSpace(_options.SerialPort)
@@ -80,6 +95,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
                     : new SerialPortTransport();
 
             IStimulationCore core = new WssStimulationCore(transport, _options.ConfigPath, _options.MaxSetupTries);
+#endif
 
             IStimParamsCore paramsLayer = new StimParamsLayer(core, _options.ConfigPath);
             var modelLayer = new ModelParamsLayer(paramsLayer, _options.ConfigPath);
