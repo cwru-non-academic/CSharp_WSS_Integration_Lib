@@ -1,6 +1,6 @@
-# HFI WSS C# Integration Library
+# WSS C# Integration Library
 
-Reusable .NET wrapper around the HFI WSS stimulation stack.
+Reusable .NET wrapper around the WSS stimulation stack.
 
 Requires the .NET 9 SDK.
 
@@ -19,9 +19,51 @@ All documentation about the API and other implementations can be found in [GitHu
 Install the .NET 9 SDK first. This library now targets `net9.0` so BLE transport support can use the Linux provider path from `InTheHand.BluetoothLE`.
 
 ```bash
-dotnet restore HFI_WSS_Csharp_Implementation.sln
-dotnet build HFI_WSS_Csharp_Implementation.sln -c Release
+dotnet restore Wss.CSharpImplementation.sln
+dotnet build Wss.CSharpImplementation.sln -c Release
 ```
+
+By default, the project resolves WSS assemblies from `lib/`. To build and test against an
+extracted WSS release artifact instead, set `WSS_ARTIFACT_DIR`:
+
+```bash
+dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj -c Release \
+  -p:WSS_ARTIFACT_DIR=/path/to/extracted/WSS-Serial-v0.3.0-rc.7
+```
+
+`WSS_ARTIFACT_DIR` overrides the Core and companion runtime artifacts. Serial and BLE transport
+implementations come from `lib/WSS.Transport.BLE.dll` unless `WSS_BLE_ARTIFACT_DIR` is set to a
+directory containing a matched consolidated transport artifact.
+
+## Emulator Conformance Mode
+
+`StimulationOptions.Transport` provides four distinct transport choices:
+
+- `StimulationTransportKind.Serial` is the default and uses the Serial transport.
+- `StimulationTransportKind.Ble` uses `BleNusTransport`.
+- `StimulationTransportKind.Test` uses `TestModeTransport`.
+- `StimulationTransportKind.Conformance` uses the deterministic in-memory `EmulatedWssTransport`.
+
+The enum makes transport choices mutually exclusive. Applications using conformance mode can obtain
+the WSS Core-owned conformance capability without accessing or replacing the transport:
+
+```csharp
+using var controller = new StimulationController(new StimulationOptions
+{
+    ConfigPath = configDirectory,
+    Transport = StimulationTransportKind.Conformance
+});
+
+controller.Initialize();
+if (controller.TryGetConformance(out var conformance))
+{
+    // Poll controller.Started() and conformance.StimulationHistory with a finite timeout first.
+    var initialization = conformance.ValidateInitialization();
+}
+```
+
+The C# integration library only exposes this capability. Validation rules and observations remain implemented
+by WSS Core's `IWssConformance`.
 
 ## Transport support
 

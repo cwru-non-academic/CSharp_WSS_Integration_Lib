@@ -6,8 +6,10 @@ using System.Threading.Tasks;
 using Wss.CoreModule;
 using Wss.ModelModule;
 using Wss.CalibrationModule;
+using Wss.Testing;
+using WssTransport = Wss.Transports;
 
-namespace HFI.Wss;
+namespace Wss.CSharpImplementation;
 
 /// <summary>
 /// Hosts the WSS stimulation stack in a plain .NET application.
@@ -26,6 +28,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     private readonly object _gate = new();
 
     private IModelParamsCore? _wss;
+    private WssTransport.ITransport? _transport;
     private IBasicStimulation? _basicWss;
     private bool _basicSupported;
     private CancellationTokenSource? _tickCts;
@@ -70,8 +73,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </summary>
     /// <remarks>
     /// The controller creates the transport internally based on <see cref="StimulationOptions.Transport"/>:
-    /// test mode uses <see cref="TestModeTransport"/>, serial uses <see cref="SerialPortTransport"/>,
-    /// and BLE uses <see cref="BleNusTransport"/>.
+    /// conformance mode uses <see cref="EmulatedWssTransport"/>, test mode uses
+    /// <see cref="WssTransport.TestModeTransport"/>, serial uses
+    /// <see cref="WssTransport.SerialPortTransport"/>, and BLE uses
+    /// <see cref="WssTransport.BleNusTransport"/>.
     /// This method is idempotent and returns immediately when the controller is already initialized.
     /// Initialization failures from the underlying WSS stack propagate to the caller.
     /// </remarks>
@@ -81,20 +86,25 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
         {
             if (_wss != null) return;
 
-            ITransport transport = _options.Transport switch
+            WssTransport.ITransport transport = _options.Transport switch
             {
-                StimulationTransportKind.Test => new TestModeTransport(new TestModeTransportOptions()),
-                StimulationTransportKind.Ble => new BleNusTransport(new BleNusTransportOptions
-                {
-                    AutoSelectDevice = _options.BleAutoSelect,
-                    DeviceId = _options.BleDeviceId,
-                    DeviceName = _options.BleDeviceName
-                }),
-                _ => new SerialPortTransport(new SerialPortTransportOptions
-                {
-                    PortName = _options.SerialPort,
-                    AutoSelectPort = string.IsNullOrWhiteSpace(_options.SerialPort)
-                })
+                StimulationTransportKind.Conformance => new EmulatedWssTransport(),
+                StimulationTransportKind.Test => new WssTransport.TestModeTransport(
+                    new WssTransport.TestModeTransportOptions()),
+                StimulationTransportKind.Ble => new WssTransport.BleNusTransport(
+                    new WssTransport.BleNusTransportOptions
+                    {
+                        AutoSelectDevice = _options.BleAutoSelect,
+                        DeviceId = _options.BleDeviceId,
+                        DeviceName = _options.BleDeviceName
+                    }),
+                StimulationTransportKind.Serial => new WssTransport.SerialPortTransport(
+                    new WssTransport.SerialPortTransportOptions
+                    {
+                        PortName = _options.SerialPort,
+                        AutoSelectPort = string.IsNullOrWhiteSpace(_options.SerialPort)
+                    }),
+                _ => throw new InvalidOperationException($"Unsupported transport '{_options.Transport}'.")
             };
 
             IStimulationCore core = new WssStimulationCore(transport, new WssStimulationCoreOptions
@@ -107,6 +117,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
             var modelLayer = new ModelParamsLayer(paramsLayer, _options.ConfigPath);
 
             _wss = modelLayer;
+            _transport = transport;
             _wss.TryGetBasic(out _basicWss);
             _basicSupported = _basicWss != null;
 
@@ -134,6 +145,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
             }
 
             _wss = null;
+            _transport = null;
             _basicWss = null;
             _basicSupported = false;
             started = false;
@@ -254,6 +266,18 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         var wss = EnsureWss();
         wss.StopStim(WssTarget.Broadcast);
+        started = false;
+    }
+
+    /// <summary>
+    /// Sends a stop-stimulation command to the target device and marks <see cref="started"/> as false.
+    /// </summary>
+    /// <param name="targetWSS">0 = broadcast; 1-3 = specific device. Other values map to device 1.</param>
+    /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
+    public void StopStimulation(int targetWSS)
+    {
+        var wss = EnsureWss();
+        wss.StopStim(IntToWssTarget(targetWSS));
         started = false;
     }
 
@@ -497,6 +521,22 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.UpdateIPD(ipd, eventID, IntToWssTarget(targetWSS));
+    }
+
+    /// <summary>
+    /// Updates an event's amplitude ratio on the target device.
+    /// </summary>
+    /// <param name="targetWSS">0 = broadcast; 1-3 = specific device. Other values map to device 1.</param>
+    /// <param name="ratio">Event amplitude ratio.</param>
+    /// <param name="eventID">Event identifier to update.</param>
+    /// <remarks>
+    /// If the basic-stimulation API is unavailable, including before initialization, this method logs an
+    /// error and returns without throwing.
+    /// </remarks>
+    public void UpdateEventRatio(int targetWSS, int ratio, int eventID)
+    {
+        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+        basic.UpdateEventRatio(ratio, eventID, IntToWssTarget(targetWSS));
     }
 
     #endregion
@@ -793,6 +833,31 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     public bool Started() => _wss?.Started() ?? false;
 
     /// <summary>
+    /// Tries to obtain the WSS Core conformance capability from the active transport.
+    /// </summary>
+    /// <param name="conformance">
+    /// The Core-owned conformance capability when emulator/conformance mode is active.
+    /// </param>
+    /// <returns><c>true</c> when the active transport provides conformance; otherwise <c>false</c>.</returns>
+    /// <remarks>
+    /// Returns <c>false</c> before initialization, after shutdown, and for Serial, BLE, or Test transports.
+    /// </remarks>
+    public bool TryGetConformance(out IWssConformance conformance)
+    {
+        lock (_gate)
+        {
+            if (_transport is IConformanceProvider provider)
+            {
+                conformance = provider.Conformance;
+                return true;
+            }
+
+            conformance = null!;
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Gets the model configuration controller.
     /// </summary>
     /// <returns>The model configuration controller instance.</returns>
@@ -894,7 +959,8 @@ public enum StimulationTransportKind
 {
     Serial,
     Ble,
-    Test
+    Test,
+    Conformance
 }
 
 /// <summary>
@@ -958,6 +1024,9 @@ public sealed class StimulationOptions
     {
         if (TickIntervalMs <= 0)
             throw new ArgumentOutOfRangeException(nameof(TickIntervalMs), "Tick interval must be positive.");
+
+        if (!Enum.IsDefined(typeof(StimulationTransportKind), Transport))
+            throw new ArgumentOutOfRangeException(nameof(Transport), Transport, "Unsupported stimulation transport.");
 
         if (Transport == StimulationTransportKind.Ble &&
             !BleAutoSelect &&

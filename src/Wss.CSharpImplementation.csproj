@@ -4,6 +4,10 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <WssArtifactDir Condition="'$(WSS_ARTIFACT_DIR)' == ''">$(MSBuildProjectDirectory)\..\lib</WssArtifactDir>
+    <WssArtifactDir Condition="'$(WSS_ARTIFACT_DIR)' != ''">$(WSS_ARTIFACT_DIR)</WssArtifactDir>
+    <WssBleArtifactDir Condition="'$(WSS_BLE_ARTIFACT_DIR)' == ''">$(MSBuildProjectDirectory)\..\lib</WssBleArtifactDir>
+    <WssBleArtifactDir Condition="'$(WSS_BLE_ARTIFACT_DIR)' != ''">$(WSS_BLE_ARTIFACT_DIR)</WssBleArtifactDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,13 +18,13 @@
 
   <ItemGroup>
     <Reference Include="WSS_Core_Interface">
-      <HintPath>..\lib\WSS_Core_Interface.dll</HintPath>
+      <HintPath>$(WssArtifactDir)\WSS_Core_Interface.dll</HintPath>
     </Reference>
     <Reference Include="WSS.Transport.BLE">
-      <HintPath>..\lib\WSS.Transport.BLE.dll</HintPath>
+      <HintPath>$(WssBleArtifactDir)\WSS.Transport.BLE.dll</HintPath>
     </Reference>
     <Reference Include="Newtonsoft.Json">
-      <HintPath>..\lib\Newtonsoft.Json.dll</HintPath>
+      <HintPath>$(WssArtifactDir)\Newtonsoft.Json.dll</HintPath>
     </Reference>
   </ItemGroup>
 
