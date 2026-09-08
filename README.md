@@ -24,7 +24,7 @@ extracted WSS release artifact instead, set `WSS_ARTIFACT_DIR`:
 
 ```bash
 dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj -c Release \
-  -p:WSS_ARTIFACT_DIR=/path/to/extracted/WSS-Serial-v0.3.0-rc.5
+  -p:WSS_ARTIFACT_DIR=/path/to/extracted/WSS-Serial-v0.3.0-rc.7
 ```
 
 ## Emulator Conformance Mode

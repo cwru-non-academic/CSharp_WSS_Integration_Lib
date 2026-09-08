@@ -250,6 +250,18 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
+    /// Sends a stop-stimulation command to the target device and marks <see cref="started"/> as false.
+    /// </summary>
+    /// <param name="targetWSS">0 = broadcast; 1-3 = specific device. Other values map to device 1.</param>
+    /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
+    public void StopStimulation(int targetWSS)
+    {
+        var wss = EnsureWss();
+        wss.StopStim(IntToWssTarget(targetWSS));
+        started = false;
+    }
+
+    /// <summary>
     /// Persists basic-stimulation configuration to the target device.
     /// </summary>
     /// <param name="targetWSS">0 = broadcast; 1-3 = specific device. Other values map to device 1.</param>
@@ -489,6 +501,22 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.UpdateIPD(ipd, eventID, IntToWssTarget(targetWSS));
+    }
+
+    /// <summary>
+    /// Updates an event's amplitude ratio on the target device.
+    /// </summary>
+    /// <param name="targetWSS">0 = broadcast; 1-3 = specific device. Other values map to device 1.</param>
+    /// <param name="ratio">Event amplitude ratio.</param>
+    /// <param name="eventID">Event identifier to update.</param>
+    /// <remarks>
+    /// If the basic-stimulation API is unavailable, including before initialization, this method logs an
+    /// error and returns without throwing.
+    /// </remarks>
+    public void UpdateEventRatio(int targetWSS, int ratio, int eventID)
+    {
+        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+        basic.UpdateEventRatio(ratio, eventID, IntToWssTarget(targetWSS));
     }
 
     #endregion
