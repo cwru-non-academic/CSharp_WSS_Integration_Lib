@@ -12,14 +12,15 @@ using WssTransport = Wss.Transports;
 namespace Wss.CSharpImplementation;
 
 /// <summary>
-/// Host-agnostic wrapper around the full stimulation stack (core → params → model).
-/// Provides the same API surface as the Unity <c>Stimulation</c> MonoBehaviour but manages
-/// initialization, ticking, and shutdown inside a plain .NET application.
+/// Hosts the WSS stimulation stack in a plain .NET application.
+/// Exposes a compatibility surface similar to the Unity <c>Stimulation</c> MonoBehaviour while
+/// managing initialization, background ticking, and shutdown internally.
 /// </summary>
 /// <remarks>
-/// This type starts a background tick loop when <see cref="Initialize"/> completes.
-/// The public API is primarily intended for single-threaded use; avoid calling stimulation methods
-/// concurrently with <see cref="Shutdown"/>.
+/// <see cref="Initialize"/> starts a background tick loop that calls into the underlying WSS stack
+/// until <see cref="Shutdown"/>, <see cref="Dispose"/>, or <see cref="DisposeAsync"/> is called.
+/// The public API is intended for coordinated use by the host; avoid concurrent calls to stimulation
+/// methods while shutdown or disposal is in progress.
 /// </remarks>
 public sealed class StimulationController : IAsyncDisposable, IDisposable
 {
@@ -33,14 +34,21 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     private CancellationTokenSource? _tickCts;
     private Task? _tickTask;
 
-    /// <summary>True after this controller issues a successful <see cref="StartStimulation"/> request.</summary>
+    /// <summary>
+    /// Gets whether this controller has issued a successful <see cref="StartStimulation"/> request.
+    /// </summary>
     /// <remarks>
-    /// This is a controller-managed flag and may temporarily differ from <see cref="Started"/>, which
-    /// queries the underlying WSS stack for its current state.
+    /// This compatibility property is controller-managed and may temporarily differ from
+    /// <see cref="Started"/>, which queries the underlying WSS stack for its current state.
     /// </remarks>
     public bool started { get; private set; }
 
-    /// <summary>True if the underlying core exposes basic-stimulation APIs.</summary>
+    /// <summary>
+    /// Gets whether the initialized stack exposes the optional basic-stimulation API surface.
+    /// </summary>
+    /// <remarks>
+    /// Returns <c>false</c> before <see cref="Initialize"/> completes and after <see cref="Shutdown"/>.
+    /// </remarks>
     public bool BasicSupported => _basicSupported;
 
     /// <summary>
@@ -61,12 +69,14 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
-    /// Builds the full stimulation stack and initializes the hardware connection.
-    /// Automatically starts the background tick loop.
+    /// Builds the WSS stack, initializes the active transport, and starts the background tick loop.
     /// </summary>
     /// <remarks>
-    /// The controller creates the transport internally: emulator mode uses <see cref="EmulatedWssTransport"/>,
-    /// test mode uses <see cref="TestModeTransport"/>, and normal operation uses serial transport.
+    /// The controller creates the transport internally based on <see cref="StimulationOptions.Transport"/>:
+    /// conformance mode uses <see cref="EmulatedWssTransport"/>, test mode uses
+    /// <see cref="WssTransport.TestModeTransport"/>, serial uses
+    /// <see cref="WssTransport.SerialPortTransport"/>, and BLE uses
+    /// <see cref="WssTransport.BleNusTransport"/>.
     /// This method is idempotent and returns immediately when the controller is already initialized.
     /// Initialization failures from the underlying WSS stack propagate to the caller.
     /// </remarks>
@@ -76,23 +86,26 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
         {
             if (_wss != null) return;
 
-            WssTransport.ITransport transport;
-            if (_options.EmulatedConformanceMode)
+            WssTransport.ITransport transport = _options.Transport switch
             {
-                transport = new EmulatedWssTransport();
-            }
-            else if (_options.TestMode)
-            {
-                transport = new WssTransport.TestModeTransport(new WssTransport.TestModeTransportOptions());
-            }
-            else
-            {
-                transport = new WssTransport.SerialPortTransport(new WssTransport.SerialPortTransportOptions
-                {
-                    PortName = _options.SerialPort,
-                    AutoSelectPort = string.IsNullOrWhiteSpace(_options.SerialPort)
-                });
-            }
+                StimulationTransportKind.Conformance => new EmulatedWssTransport(),
+                StimulationTransportKind.Test => new WssTransport.TestModeTransport(
+                    new WssTransport.TestModeTransportOptions()),
+                StimulationTransportKind.Ble => new WssTransport.BleNusTransport(
+                    new WssTransport.BleNusTransportOptions
+                    {
+                        AutoSelectDevice = _options.BleAutoSelect,
+                        DeviceId = _options.BleDeviceId,
+                        DeviceName = _options.BleDeviceName
+                    }),
+                StimulationTransportKind.Serial => new WssTransport.SerialPortTransport(
+                    new WssTransport.SerialPortTransportOptions
+                    {
+                        PortName = _options.SerialPort,
+                        AutoSelectPort = string.IsNullOrWhiteSpace(_options.SerialPort)
+                    }),
+                _ => throw new InvalidOperationException($"Unsupported transport '{_options.Transport}'.")
+            };
 
             IStimulationCore core = new WssStimulationCore(transport, new WssStimulationCoreOptions
             {
@@ -113,7 +126,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
         }
     }
 
-    /// <summary>Stops the background tick loop and tears down the active connection.</summary>
+    /// <summary>
+    /// Stops the background tick loop and tears down the active WSS connection.
+    /// </summary>
     /// <remarks>
     /// This method blocks until the current tick loop exits and then shuts down and disposes the active
     /// WSS stack. It is safe to call multiple times; calls made before initialization return without error.
@@ -137,14 +152,18 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
         }
     }
 
-    /// <summary>Explicitly releases the active radio connection.</summary>
+    /// <summary>
+    /// Releases the active radio connection.
+    /// </summary>
     /// <remarks>
-    /// This is equivalent to calling <see cref="Shutdown"/> and has the same blocking and idempotent
-    /// behavior.
+    /// This legacy compatibility method is equivalent to <see cref="Shutdown"/> and has the same
+    /// blocking and idempotent behavior.
     /// </remarks>
     public void releaseRadio() => Shutdown();
 
-    /// <summary>Performs a radio reset by shutting down and re-initializing the connection.</summary>
+    /// <summary>
+    /// Resets the active radio connection in place.
+    /// </summary>
     /// <remarks>
     /// This method stops the current tick loop, reinitializes the underlying WSS stack in place, and then
     /// starts ticking again. If the controller has not been initialized yet, this method does nothing.
@@ -211,10 +230,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     #region ==== Stimulation methods: basic and core ====
 
     /// <summary>
-    /// Sends a direct (basic) analog stimulation request for a channel.
+    /// Sends a direct analog stimulation request through the core API.
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
+    /// Unrecognized values resolve to channel <c>0</c>.
     /// </param>
     /// <param name="PW">Pulse width (device-specific; commonly microseconds).</param>
     /// <param name="amp">Amplitude setting (device-specific).</param>
@@ -228,7 +248,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
-    /// Broadcasts a start-stimulation command and marks <see cref="started"/> as true.
+    /// Broadcasts a start-stimulation command to all devices and marks <see cref="started"/> as <c>true</c>.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void StartStimulation()
@@ -239,7 +259,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
-    /// Broadcasts a stop-stimulation command and marks <see cref="started"/> as false.
+    /// Broadcasts a stop-stimulation command to all devices and marks <see cref="started"/> as <c>false</c>.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void StopStimulation()
@@ -262,9 +282,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
-    /// Persists basic-stimulation configuration to the target device.
+    /// Persists basic-stimulation configuration to the selected device.
     /// </summary>
-    /// <param name="targetWSS">0 = broadcast; 1-3 = specific device. Other values map to device 1.</param>
+    /// <param name="targetWSS">Target device selector: <c>0</c> = broadcast, <c>1</c>-<c>3</c> = specific device. Any other value maps to device 1.</param>
     /// <remarks>
     /// If the basic-stimulation API is unavailable, including before initialization, this method logs an
     /// error and returns without throwing.
@@ -289,9 +309,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
-    /// Loads basic-stimulation configuration from the target device.
+    /// Loads basic-stimulation configuration from the selected device.
     /// </summary>
-    /// <param name="targetWSS">0 = broadcast; 1-3 = specific device. Other values map to device 1.</param>
+    /// <param name="targetWSS">Target device selector: <c>0</c> = broadcast, <c>1</c>-<c>3</c> = specific device. Any other value maps to device 1.</param>
     /// <remarks>
     /// If the basic-stimulation API is unavailable, including before initialization, this method logs an
     /// error and returns without throwing.
@@ -316,11 +336,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
-    /// Requests a configuration payload from the target device.
+    /// Requests a configuration payload from the selected device.
     /// </summary>
-    /// <param name="targetWSS">0 = broadcast; 1-3 = specific device. Other values map to device 1.</param>
+    /// <param name="targetWSS">Target device selector: <c>0</c> = broadcast, <c>1</c>-<c>3</c> = specific device. Any other value maps to device 1.</param>
     /// <param name="command">Command identifier (device-specific).</param>
-    /// <param name="id">Config identifier (device-specific).</param>
+    /// <param name="id">Configuration identifier within the selected command namespace.</param>
     /// <remarks>
     /// If the basic-stimulation API is unavailable, including before initialization, this method logs an
     /// error and returns without throwing.
@@ -349,7 +369,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <summary>
     /// Updates a waveform definition on the target device.
     /// </summary>
-    /// <param name="targetWSS">0 = broadcast; 1-3 = specific device. Other values map to device 1.</param>
+    /// <param name="targetWSS">Target device selector: <c>0</c> = broadcast, <c>1</c>-<c>3</c> = specific device. Any other value maps to device 1.</param>
     /// <param name="waveform">Waveform samples (device-specific representation).</param>
     /// <param name="eventID">Event identifier to update.</param>
     /// <remarks>
@@ -381,7 +401,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <summary>
     /// Updates an event shape using cathodic/anodic waveform identifiers on the target device.
     /// </summary>
-    /// <param name="targetWSS">0 = broadcast; 1-3 = specific device. Other values map to device 1.</param>
+    /// <param name="targetWSS">Target device selector: <c>0</c> = broadcast, <c>1</c>-<c>3</c> = specific device. Any other value maps to device 1.</param>
     /// <param name="cathodicWaveform">Cathodic waveform identifier.</param>
     /// <param name="anodicWaveform">Anodic waveform identifier.</param>
     /// <param name="eventID">Event identifier to update.</param>
@@ -398,7 +418,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <summary>
     /// Updates a waveform definition on all devices.
     /// </summary>
-    /// <param name="waveform">Waveform builder instance.</param>
+    /// <param name="waveform">Waveform builder instance to serialize and send.</param>
     /// <param name="eventID">Event identifier to update.</param>
     /// <remarks>
     /// If the basic-stimulation API is unavailable, including before initialization, this method logs an
@@ -413,8 +433,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <summary>
     /// Updates a waveform definition on the target device.
     /// </summary>
-    /// <param name="targetWSS">0 = broadcast; 1-3 = specific device. Other values map to device 1.</param>
-    /// <param name="waveform">Waveform builder instance.</param>
+    /// <param name="targetWSS">Target device selector: <c>0</c> = broadcast, <c>1</c>-<c>3</c> = specific device. Any other value maps to device 1.</param>
+    /// <param name="waveform">Waveform builder instance to serialize and send.</param>
     /// <param name="eventID">Event identifier to update.</param>
     /// <remarks>
     /// If the basic-stimulation API is unavailable, including before initialization, this method logs an
@@ -429,7 +449,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <summary>
     /// Loads a waveform file into the specified event slot.
     /// </summary>
-    /// <param name="fileName">Waveform file path (as expected by the underlying WSS library).</param>
+    /// <param name="fileName">Waveform file path in the format expected by the underlying WSS library.</param>
     /// <param name="eventID">Event identifier to update.</param>
     /// <remarks>
     /// If the basic-stimulation API is unavailable, including before initialization, this method logs an
@@ -444,7 +464,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <summary>
     /// Performs waveform setup for an event on all devices.
     /// </summary>
-    /// <param name="wave">Waveform builder instance.</param>
+    /// <param name="wave">Waveform builder instance to configure on the target event.</param>
     /// <param name="eventID">Event identifier to configure.</param>
     /// <remarks>
     /// If the basic-stimulation API is unavailable, including before initialization, this method logs an
@@ -459,8 +479,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <summary>
     /// Performs waveform setup for an event on the target device.
     /// </summary>
-    /// <param name="targetWSS">0 = broadcast; 1-3 = specific device. Other values map to device 1.</param>
-    /// <param name="wave">Waveform builder instance.</param>
+    /// <param name="targetWSS">Target device selector: <c>0</c> = broadcast, <c>1</c>-<c>3</c> = specific device. Any other value maps to device 1.</param>
+    /// <param name="wave">Waveform builder instance to configure on the target event.</param>
     /// <param name="eventID">Event identifier to configure.</param>
     /// <remarks>
     /// If the basic-stimulation API is unavailable, including before initialization, this method logs an
@@ -490,7 +510,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <summary>
     /// Updates the inter-phase delay for an event on the target device.
     /// </summary>
-    /// <param name="targetWSS">0 = broadcast; 1-3 = specific device. Other values map to device 1.</param>
+    /// <param name="targetWSS">Target device selector: <c>0</c> = broadcast, <c>1</c>-<c>3</c> = specific device. Any other value maps to device 1.</param>
     /// <param name="ipd">Inter-phase delay (device-specific; commonly microseconds).</param>
     /// <param name="eventID">Event identifier to update.</param>
     /// <remarks>
@@ -527,9 +547,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Sends a normalized stimulation magnitude for the specified channel.
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
+    /// Unrecognized values resolve to channel <c>0</c>.
     /// </param>
-    /// <param name="magnitude">Normalized magnitude (device/model-specific convention).</param>
+    /// <param name="magnitude">Normalized magnitude interpreted by the active model or parameter configuration.</param>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void StimulateNormalized(string finger, float magnitude)
     {
@@ -542,7 +563,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Gets the current stimulation intensity for the specified channel.
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
+    /// Unrecognized values resolve to channel <c>0</c>.
     /// </param>
     /// <returns>The current intensity value (device/model-specific units).</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
@@ -568,7 +590,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <summary>
     /// Loads stimulation parameters from a JSON file or directory.
     /// </summary>
-    /// <param name="pathOrDir">File path or directory path; directory inputs use the library default filename.</param>
+    /// <param name="pathOrDir">JSON file path or directory path. Directory inputs use the library default filename.</param>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void LoadParamsJson(string pathOrDir) => EnsureWss().LoadParamsJson(pathOrDir);
 
@@ -592,7 +614,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Attempts to get a stimulation parameter value.
     /// </summary>
     /// <param name="key">Parameter key.</param>
-    /// <param name="v">Receives the parameter value when present.</param>
+    /// <param name="v">Receives the parameter value when the key exists; otherwise receives the underlying default output value.</param>
     /// <returns><c>true</c> when the parameter exists; otherwise <c>false</c>.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public bool TryGetStimParam(string key, out float v) => EnsureWss().TryGetStimParam(key, out v);
@@ -608,7 +630,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Sets the channel amplitude.
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
+    /// Unrecognized values resolve to channel <c>0</c>.
     /// </param>
     /// <param name="mA">Amplitude in milliamps.</param>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
@@ -623,7 +646,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Sets the minimum pulse width for a channel.
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
+    /// Unrecognized values resolve to channel <c>0</c>.
     /// </param>
     /// <param name="us">Pulse width in microseconds.</param>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
@@ -638,7 +662,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Sets the maximum pulse width for a channel.
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
+    /// Unrecognized values resolve to channel <c>0</c>.
     /// </param>
     /// <param name="us">Pulse width in microseconds.</param>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
@@ -653,7 +678,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Sets the inter-pulse interval for a channel.
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
+    /// Unrecognized values resolve to channel <c>0</c>.
     /// </param>
     /// <param name="ms">Inter-pulse interval in milliseconds.</param>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
@@ -668,7 +694,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Gets the channel amplitude.
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
+    /// Unrecognized values resolve to channel <c>0</c>.
     /// </param>
     /// <returns>Amplitude in milliamps.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
@@ -683,7 +710,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Gets the minimum pulse width for a channel.
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
+    /// Unrecognized values resolve to channel <c>0</c>.
     /// </param>
     /// <returns>Pulse width in microseconds.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
@@ -698,7 +726,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Gets the maximum pulse width for a channel.
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
+    /// Unrecognized values resolve to channel <c>0</c>.
     /// </param>
     /// <returns>Pulse width in microseconds.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
@@ -713,7 +742,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Gets the inter-pulse interval for a channel.
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
+    /// Unrecognized values resolve to channel <c>0</c>.
     /// </param>
     /// <returns>Inter-pulse interval in milliseconds.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
@@ -728,7 +758,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Checks whether a finger name or channel alias resolves to a valid channel for the current configuration.
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
     /// </param>
     /// <returns><c>true</c> when the channel is in range; otherwise <c>false</c>.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
@@ -743,7 +773,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Sends a stimulation request interpreted by the active mode (model/params-dependent).
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
+    /// Unrecognized values resolve to channel <c>0</c>.
     /// </param>
     /// <param name="magnitude">Magnitude value interpreted by the active mode.</param>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
@@ -758,7 +789,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Updates a channel's max/min pulse width and amplitude parameters using the conventional parameter keys.
     /// </summary>
     /// <param name="finger">
-    /// Finger name (e.g., "thumb", "index") or channel alias (e.g., "ch1").
+    /// Finger name (for example, "thumb" or "index") or channel alias (for example, "ch1").
     /// </param>
     /// <param name="max">Maximum pulse width (units depend on the parameter schema; commonly microseconds).</param>
     /// <param name="min">Minimum pulse width (units depend on the parameter schema; commonly microseconds).</param>
@@ -790,13 +821,13 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     public bool isModeValid() => EnsureWss().IsModeValid();
 
     /// <summary>
-    /// Gets whether the underlying stack reports a ready state.
+    /// Gets whether the underlying stack currently reports a ready state.
     /// </summary>
     /// <returns><c>true</c> when ready; otherwise <c>false</c>. Returns <c>false</c> before initialization.</returns>
     public bool Ready() => _wss?.Ready() ?? false;
 
     /// <summary>
-    /// Gets whether the underlying stack reports stimulation started.
+    /// Gets whether the underlying stack currently reports active stimulation.
     /// </summary>
     /// <returns><c>true</c> when started; otherwise <c>false</c>. Returns <c>false</c> before initialization.</returns>
     public bool Started() => _wss?.Started() ?? false;
@@ -809,7 +840,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </param>
     /// <returns><c>true</c> when the active transport provides conformance; otherwise <c>false</c>.</returns>
     /// <remarks>
-    /// Returns <c>false</c> before initialization, after shutdown, and for Serial or TestMode transports.
+    /// Returns <c>false</c> before initialization, after shutdown, and for Serial, BLE, or Test transports.
     /// </remarks>
     public bool TryGetConformance(out IWssConformance conformance)
     {
@@ -841,7 +872,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     public CoreConfigController GetCoreConfigCTRL() => EnsureWss().GetCoreConfigController();
 
     /// <summary>
-    /// Reloads the core configuration JSON.
+    /// Reloads the core configuration JSON from the configured config directory.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void LoadCoreConfigFile() => EnsureWss().LoadConfigFile();
@@ -922,6 +953,17 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
 }
 
 /// <summary>
+/// Provides configuration values used to construct and run a <see cref="StimulationController"/>.
+/// </summary>
+public enum StimulationTransportKind
+{
+    Serial,
+    Ble,
+    Test,
+    Conformance
+}
+
+/// <summary>
 /// Configuration record for <see cref="StimulationController"/>.
 /// </summary>
 public sealed class StimulationOptions
@@ -929,32 +971,40 @@ public sealed class StimulationOptions
     private string _configPath = Path.Combine(Environment.CurrentDirectory, "Config");
 
     /// <summary>
+    /// Selects the transport implementation used for stimulation.
+    /// </summary>
+    public StimulationTransportKind Transport { get; init; } = StimulationTransportKind.Serial;
+
+    /// <summary>
     /// Optional serial device name (e.g., "COM3" or "/dev/ttyUSB0"). Uses auto-detect when null.
     /// </summary>
-    /// <remarks>
-    /// Ignored when <see cref="TestMode"/> or <see cref="EmulatedConformanceMode"/> is <c>true</c>.
-    /// </remarks>
+    /// <remarks>Only used when <see cref="Transport"/> is <see cref="StimulationTransportKind.Serial"/>.</remarks>
     public string? SerialPort { get; init; }
 
     /// <summary>
-    /// Enables simulated mode without real hardware communication.
+    /// When true, the BLE transport scans for compatible devices and auto-selects the best candidate.
     /// </summary>
-    /// <remarks>When enabled, this option takes precedence over <see cref="SerialPort"/>.</remarks>
-    public bool TestMode { get; init; }
+    public bool BleAutoSelect { get; init; }
 
     /// <summary>
-    /// Uses the deterministic in-memory WSS emulator and enables access to Core conformance observations.
+    /// Exact BLE device name to connect to when auto-selection is disabled.
     /// </summary>
-    /// <remarks>
-    /// This testing mode is distinct from <see cref="TestMode"/> and takes precedence over
-    /// <see cref="SerialPort"/>.
-    /// </remarks>
-    public bool EmulatedConformanceMode { get; init; }
+    public string? BleDeviceName { get; init; }
 
-    /// <summary>Maximum number of setup retries before failing initialization.</summary>
+    /// <summary>
+    /// Explicit BLE device identifier to connect to when auto-selection is disabled.
+    /// </summary>
+    public string? BleDeviceId { get; init; }
+
+    /// <summary>
+    /// Gets the maximum number of setup attempts to make before initialization fails.
+    /// </summary>
     public int MaxSetupTries { get; init; } = 5;
 
-    /// <summary>Directory that holds the JSON configs used by the WSS stack.</summary>
+    /// <summary>
+    /// Gets the directory that contains the JSON configuration files used by the WSS stack.
+    /// </summary>
+    /// <exception cref="ArgumentException">Thrown when an empty or whitespace path is assigned.</exception>
     public string ConfigPath
     {
         get => _configPath;
@@ -965,21 +1015,32 @@ public sealed class StimulationOptions
         }
     }
 
-    /// <summary>Delay in milliseconds between background tick invocations.</summary>
+    /// <summary>
+    /// Gets the delay, in milliseconds, between background tick invocations.
+    /// </summary>
     public int TickIntervalMs { get; init; } = 10;
 
     internal void Validate()
     {
         if (TickIntervalMs <= 0)
             throw new ArgumentOutOfRangeException(nameof(TickIntervalMs), "Tick interval must be positive.");
-        if (TestMode && EmulatedConformanceMode)
-            throw new ArgumentException("TestMode and EmulatedConformanceMode cannot both be enabled.");
+
+        if (!Enum.IsDefined(typeof(StimulationTransportKind), Transport))
+            throw new ArgumentOutOfRangeException(nameof(Transport), Transport, "Unsupported stimulation transport.");
+
+        if (Transport == StimulationTransportKind.Ble &&
+            !BleAutoSelect &&
+            string.IsNullOrWhiteSpace(BleDeviceId) &&
+            string.IsNullOrWhiteSpace(BleDeviceName))
+        {
+            throw new ArgumentException("BLE transport requires --ble-auto, --ble-device-id, or --ble-device-name.");
+        }
 
         Directory.CreateDirectory(ConfigPath);
     }
 
     /// <summary>
-    /// Creates default options using a <c>Config</c> directory under the current working directory.
+    /// Creates default options that use a <c>Config</c> directory under the current working directory.
     /// </summary>
     public static StimulationOptions CreateDefault() => new();
 }

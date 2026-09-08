@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 9.0.x
 
       - name: Download and verify WSS RC.7 artifact
         shell: bash
@@ -43,7 +43,6 @@ jobs:
           unzip -q "$archive_path" -d "$artifact_dir"
           for assembly in \
             WSS_Core_Interface.dll \
-            WSS.Transport.Serial.dll \
             Newtonsoft.Json.dll \
             System.Buffers.dll \
             System.Memory.dll \
@@ -58,15 +57,15 @@ jobs:
           echo "WSS_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
           echo "Verified $WSS_ARCHIVE_NAME SHA256: $actual_sha"
 
-      - name: Verify checked-in RC.7 fallback and disable it
+      - name: Verify checked-in RC.7 Core fallback and disable it
         shell: bash
         run: |
           set -euo pipefail
-          for assembly in WSS_Core_Interface.dll WSS.Transport.Serial.dll; do
-            cmp "$WSS_ARTIFACT_DIR/$assembly" "lib/$assembly"
-          done
-          mv lib lib.compat-disabled
-          test ! -d lib
+          cmp "$WSS_ARTIFACT_DIR/WSS_Core_Interface.dll" "lib/WSS_Core_Interface.dll"
+          mkdir -p lib.compat-disabled
+          mv lib/WSS_Core_Interface.dll lib.compat-disabled/
+          test ! -f lib/WSS_Core_Interface.dll
+          test -f lib/WSS.Transport.BLE.dll
 
       - name: Restore with released WSS assemblies
         shell: bash
@@ -87,14 +86,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test ! -d lib
-          for assembly in WSS_Core_Interface.dll WSS.Transport.Serial.dll; do
+          test ! -f lib/WSS_Core_Interface.dll
+          for assembly in WSS_Core_Interface.dll; do
             extracted_sha="$(sha256sum "$WSS_ARTIFACT_DIR/$assembly" | awk '{ print $1 }')"
-            for output_dir in src/bin/Release/net8.0 tests/Wss.CSharpImplementation.Tests/bin/Release/net8.0; do
+            for output_dir in src/bin/Release/net9.0 tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0; do
               output_sha="$(sha256sum "$output_dir/$assembly" | awk '{ print $1 }')"
               echo "$output_dir/$assembly SHA256: $output_sha"
               test "$output_sha" = "$extracted_sha"
             done
+          done
+          ble_sha="$(sha256sum lib/WSS.Transport.BLE.dll | awk '{ print $1}')"
+          for output_dir in src/bin/Release/net9.0 tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0; do
+            output_sha="$(sha256sum "$output_dir/WSS.Transport.BLE.dll" | awk '{ print $1}')"
+            echo "$output_dir/WSS.Transport.BLE.dll SHA256: $output_sha"
+            test "$output_sha" = "$ble_sha"
           done
 
       - name: Run C# implementation conformance integration tests

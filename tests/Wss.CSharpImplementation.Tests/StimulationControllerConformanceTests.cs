@@ -258,7 +258,7 @@ public sealed class StimulationControllerConformanceTests
         new(new StimulationOptions
         {
             ConfigPath = fixtureDirectory,
-            EmulatedConformanceMode = true,
+            Transport = StimulationTransportKind.Conformance,
             MaxSetupTries = 1,
             TickIntervalMs = 1
         });

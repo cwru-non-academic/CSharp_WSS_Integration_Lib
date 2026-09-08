@@ -1,6 +1,6 @@
 # Agent Guide (WSS C# Implementation)
 
-This repo is a .NET 8 integration library that hosts the WSS stimulation stack (core -> params -> model)
+This repo is a .NET 9 integration library that hosts the WSS stimulation stack (core -> params -> model)
 via the native WSS interface assembly in `lib/`.
 
 No Cursor/Copilot instruction files were found (no `.cursor/rules/`, `.cursorrules`, or
@@ -9,7 +9,7 @@ No Cursor/Copilot instruction files were found (no `.cursor/rules/`, `.cursorrul
 ## Repo Layout
 
 - `Wss.CSharpImplementation.sln` - solution containing the library and NUnit integration tests
-- `src/Wss.CSharpImplementation.csproj` - .NET 8 class library
+- `src/Wss.CSharpImplementation.csproj` - .NET 9 class library
 - `src/StimulationController.cs` - wrapper around WSS modules + background tick loop
 - `tests/Wss.CSharpImplementation.Tests/` - NUnit tests for released WSS artifact compatibility and conformance
 - `lib/` - third-party/native `.dll` dependencies referenced by the project
@@ -44,7 +44,7 @@ dotnet format Wss.CSharpImplementation.sln --verify-no-changes
 
 ### General
 
-- Target `net8.0`; keep behavior deterministic/scriptable; prefer small explicit changes (this code touches hardware).
+- Target `net9.0`; keep behavior deterministic/scriptable; prefer small explicit changes (this code touches hardware).
 - Nullable reference types are enabled; avoid weakening nullability to "make warnings go away".
 - Prefer minimal allocations and clear control flow in the tick path.
 
@@ -115,7 +115,7 @@ dotnet format Wss.CSharpImplementation.sln --verify-no-changes
 
 ## Hardware / Runtime Notes
 
-- Default behavior in host apps is live hardware unless they opt into `StimulationOptions.TestMode`.
+- Default behavior in host apps is live Serial hardware unless they select another `StimulationOptions.Transport` value.
 - Serial port names are OS-specific (e.g., `COM3` on Windows, `/dev/ttyUSB0` on Linux).
 - `StimulationController.Initialize()` must be called before using most APIs; otherwise `EnsureWss()` throws.
 
