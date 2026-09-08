@@ -8,9 +8,10 @@ No Cursor/Copilot instruction files were found (no `.cursor/rules/`, `.cursorrul
 
 ## Repo Layout
 
-- `HFI_WSS_Csharp_Implementation.sln` - solution (useful when adding more projects, e.g., tests)
+- `HFI_WSS_Csharp_Implementation.sln` - solution containing the library and NUnit integration tests
 - `src/HFI_WSS_Csharp_Implementation.csproj` - .NET 8 class library
 - `src/StimulationController.cs` - wrapper around WSS modules + background tick loop
+- `tests/HFI.Wss.Tests/` - NUnit tests for released WSS artifact compatibility and conformance
 - `lib/` - third-party/native `.dll` dependencies referenced by the project
 - `temp/CLI_CSharp_WSS_Application/` - temporary copy of the CLI files to move into the separate app repo
 
@@ -25,7 +26,7 @@ dotnet build HFI_WSS_Csharp_Implementation.sln -c Release
 dotnet build HFI_WSS_Csharp_Implementation.sln -c Release -p:TreatWarningsAsErrors=true
 ```
 
-Tests (no test projects currently; use when you add one):
+Tests:
 ```bash
 dotnet test HFI_WSS_Csharp_Implementation.sln -c Release
 dotnet test -c Release --list-tests
@@ -118,16 +119,8 @@ dotnet format HFI_WSS_Csharp_Implementation.sln --verify-no-changes
 - Serial port names are OS-specific (e.g., `COM3` on Windows, `/dev/ttyUSB0` on Linux).
 - `StimulationController.Initialize()` must be called before using most APIs; otherwise `EnsureWss()` throws.
 
-## Adding Tests (when you create a test project)
+## Running Focused Tests
 
-Example (xUnit):
-```bash
-dotnet new xunit -n HFI.Wss.Tests
-dotnet sln HFI_WSS_Csharp_Implementation.sln add HFI.Wss.Tests/HFI.Wss.Tests.csproj
-dotnet test -c Release
-```
-
-Single-test recipes to keep handy:
 ```bash
 dotnet test -c Release --filter FullyQualifiedName~HFI.Wss.Tests.SomeClassTests.SomeTest
 dotnet test -c Release --filter Name~SomeTestSubstring

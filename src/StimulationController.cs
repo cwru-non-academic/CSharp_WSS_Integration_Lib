@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Wss.CoreModule;
 using Wss.ModelModule;
 using Wss.CalibrationModule;
+using Wss.Testing;
 using WssTransport = Wss.Transports;
 
 namespace HFI.Wss;
@@ -26,6 +27,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     private readonly object _gate = new();
 
     private IModelParamsCore? _wss;
+    private WssTransport.ITransport? _transport;
     private IBasicStimulation? _basicWss;
     private bool _basicSupported;
     private CancellationTokenSource? _tickCts;
@@ -63,8 +65,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// Automatically starts the background tick loop.
     /// </summary>
     /// <remarks>
-    /// The controller creates the transport internally: test mode uses <see cref="TestModeTransport"/>;
-    /// otherwise a serial transport is created with either the configured port or auto-detection.
+    /// The controller creates the transport internally: emulator mode uses <see cref="EmulatedWssTransport"/>,
+    /// test mode uses <see cref="TestModeTransport"/>, and normal operation uses serial transport.
     /// This method is idempotent and returns immediately when the controller is already initialized.
     /// Initialization failures from the underlying WSS stack propagate to the caller.
     /// </remarks>
@@ -74,13 +76,23 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
         {
             if (_wss != null) return;
 
-            WssTransport.ITransport transport = _options.TestMode
-                ? new WssTransport.TestModeTransport(new WssTransport.TestModeTransportOptions())
-                : new WssTransport.SerialPortTransport(new WssTransport.SerialPortTransportOptions
+            WssTransport.ITransport transport;
+            if (_options.EmulatedConformanceMode)
+            {
+                transport = new EmulatedWssTransport();
+            }
+            else if (_options.TestMode)
+            {
+                transport = new WssTransport.TestModeTransport(new WssTransport.TestModeTransportOptions());
+            }
+            else
+            {
+                transport = new WssTransport.SerialPortTransport(new WssTransport.SerialPortTransportOptions
                 {
                     PortName = _options.SerialPort,
                     AutoSelectPort = string.IsNullOrWhiteSpace(_options.SerialPort)
                 });
+            }
 
             IStimulationCore core = new WssStimulationCore(transport, new WssStimulationCoreOptions
             {
@@ -92,6 +104,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
             var modelLayer = new ModelParamsLayer(paramsLayer, _options.ConfigPath);
 
             _wss = modelLayer;
+            _transport = transport;
             _wss.TryGetBasic(out _basicWss);
             _basicSupported = _basicWss != null;
 
@@ -117,6 +130,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
             }
 
             _wss = null;
+            _transport = null;
             _basicWss = null;
             _basicSupported = false;
             started = false;
@@ -760,6 +774,31 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     public bool Started() => _wss?.Started() ?? false;
 
     /// <summary>
+    /// Tries to obtain the WSS Core conformance capability from the active transport.
+    /// </summary>
+    /// <param name="conformance">
+    /// The Core-owned conformance capability when emulator/conformance mode is active.
+    /// </param>
+    /// <returns><c>true</c> when the active transport provides conformance; otherwise <c>false</c>.</returns>
+    /// <remarks>
+    /// Returns <c>false</c> before initialization, after shutdown, and for Serial or TestMode transports.
+    /// </remarks>
+    public bool TryGetConformance(out IWssConformance conformance)
+    {
+        lock (_gate)
+        {
+            if (_transport is IConformanceProvider provider)
+            {
+                conformance = provider.Conformance;
+                return true;
+            }
+
+            conformance = null!;
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Gets the model configuration controller.
     /// </summary>
     /// <returns>The model configuration controller instance.</returns>
@@ -864,7 +903,9 @@ public sealed class StimulationOptions
     /// <summary>
     /// Optional serial device name (e.g., "COM3" or "/dev/ttyUSB0"). Uses auto-detect when null.
     /// </summary>
-    /// <remarks>Ignored when <see cref="TestMode"/> is <c>true</c>.</remarks>
+    /// <remarks>
+    /// Ignored when <see cref="TestMode"/> or <see cref="EmulatedConformanceMode"/> is <c>true</c>.
+    /// </remarks>
     public string? SerialPort { get; init; }
 
     /// <summary>
@@ -872,6 +913,15 @@ public sealed class StimulationOptions
     /// </summary>
     /// <remarks>When enabled, this option takes precedence over <see cref="SerialPort"/>.</remarks>
     public bool TestMode { get; init; }
+
+    /// <summary>
+    /// Uses the deterministic in-memory WSS emulator and enables access to Core conformance observations.
+    /// </summary>
+    /// <remarks>
+    /// This testing mode is distinct from <see cref="TestMode"/> and takes precedence over
+    /// <see cref="SerialPort"/>.
+    /// </remarks>
+    public bool EmulatedConformanceMode { get; init; }
 
     /// <summary>Maximum number of setup retries before failing initialization.</summary>
     public int MaxSetupTries { get; init; } = 5;
@@ -894,6 +944,8 @@ public sealed class StimulationOptions
     {
         if (TickIntervalMs <= 0)
             throw new ArgumentOutOfRangeException(nameof(TickIntervalMs), "Tick interval must be positive.");
+        if (TestMode && EmulatedConformanceMode)
+            throw new ArgumentException("TestMode and EmulatedConformanceMode cannot both be enabled.");
 
         Directory.CreateDirectory(ConfigPath);
     }

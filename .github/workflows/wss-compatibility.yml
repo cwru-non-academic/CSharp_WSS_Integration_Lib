@@ -1,0 +1,107 @@
+name: WSS RC.5 conformance compatibility
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    env:
+      WSS_RELEASE_TAG: v0.3.0-rc.5
+      WSS_ARCHIVE_NAME: WSS-Serial-v0.3.0-rc.5.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Download and verify WSS RC.5 artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/wss/$WSS_RELEASE_TAG"
+          archive_path="$RUNNER_TEMP/$WSS_ARCHIVE_NAME"
+          checksums_path="$RUNNER_TEMP/SHA256SUMS.txt"
+          gh release download "$WSS_RELEASE_TAG" \
+            --repo cwru-non-academic/WSSCore \
+            --pattern "$WSS_ARCHIVE_NAME" \
+            --pattern SHA256SUMS.txt \
+            --dir "$RUNNER_TEMP"
+          test -f "$archive_path"
+          test -f "$checksums_path"
+          expected_sha="$(awk -v name="$WSS_ARCHIVE_NAME" '$2 == name { print $1 }' "$checksums_path")"
+          actual_sha="$(sha256sum "$archive_path" | awk '{ print $1 }')"
+          test -n "$expected_sha"
+          test "$actual_sha" = "$expected_sha"
+          mkdir -p "$artifact_dir"
+          unzip -q "$archive_path" -d "$artifact_dir"
+          for assembly in \
+            WSS_Core_Interface.dll \
+            WSS.Transport.Serial.dll \
+            Newtonsoft.Json.dll \
+            System.Buffers.dll \
+            System.Memory.dll \
+            System.Numerics.Vectors.dll \
+            System.Runtime.CompilerServices.Unsafe.dll \
+            System.Security.AccessControl.dll \
+            System.Security.Permissions.dll \
+            System.Security.Principal.Windows.dll \
+            System.IO.Ports.dll; do
+            test -f "$artifact_dir/$assembly"
+          done
+          echo "WSS_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+          echo "Verified $WSS_ARCHIVE_NAME SHA256: $actual_sha"
+
+      - name: Verify checked-in RC.5 fallback and disable it
+        shell: bash
+        run: |
+          set -euo pipefail
+          for assembly in WSS_Core_Interface.dll WSS.Transport.Serial.dll; do
+            cmp "$WSS_ARTIFACT_DIR/$assembly" "lib/$assembly"
+          done
+          mv lib lib.compat-disabled
+          test ! -d lib
+
+      - name: Restore with released WSS assemblies
+        shell: bash
+        run: >-
+          dotnet restore tests/HFI.Wss.Tests/HFI.Wss.Tests.csproj
+          -p:WSS_ARTIFACT_DIR="$WSS_ARTIFACT_DIR"
+
+      - name: Build with released WSS assemblies
+        shell: bash
+        run: >-
+          dotnet build tests/HFI.Wss.Tests/HFI.Wss.Tests.csproj
+          -c Release
+          --no-restore
+          -p:TreatWarningsAsErrors=true
+          -p:WSS_ARTIFACT_DIR="$WSS_ARTIFACT_DIR"
+
+      - name: Verify WSS assembly provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -d lib
+          for assembly in WSS_Core_Interface.dll WSS.Transport.Serial.dll; do
+            extracted_sha="$(sha256sum "$WSS_ARTIFACT_DIR/$assembly" | awk '{ print $1 }')"
+            for output_dir in src/bin/Release/net8.0 tests/HFI.Wss.Tests/bin/Release/net8.0; do
+              output_sha="$(sha256sum "$output_dir/$assembly" | awk '{ print $1 }')"
+              echo "$output_dir/$assembly SHA256: $output_sha"
+              test "$output_sha" = "$extracted_sha"
+            done
+          done
+
+      - name: Run HFI conformance integration tests
+        shell: bash
+        run: >-
+          dotnet test tests/HFI.Wss.Tests/HFI.Wss.Tests.csproj
+          -c Release
+          --no-build
+          --no-restore
+          -p:WSS_ARTIFACT_DIR="$WSS_ARTIFACT_DIR"

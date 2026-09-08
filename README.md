@@ -19,6 +19,43 @@ dotnet restore HFI_WSS_Csharp_Implementation.sln
 dotnet build HFI_WSS_Csharp_Implementation.sln -c Release
 ```
 
+By default, the project resolves WSS assemblies from `lib/`. To build and test against an
+extracted WSS release artifact instead, set `WSS_ARTIFACT_DIR`:
+
+```bash
+dotnet test tests/HFI.Wss.Tests/HFI.Wss.Tests.csproj -c Release \
+  -p:WSS_ARTIFACT_DIR=/path/to/extracted/WSS-Serial-v0.3.0-rc.5
+```
+
+## Emulator Conformance Mode
+
+`StimulationOptions` provides three distinct transport choices:
+
+- Default options use the Serial transport.
+- `TestMode = true` uses the existing `TestModeTransport`.
+- `EmulatedConformanceMode = true` uses the deterministic in-memory `EmulatedWssTransport`.
+
+The testing modes are mutually exclusive. Applications using emulator mode can obtain the
+WSS Core-owned conformance capability without accessing or replacing the transport:
+
+```csharp
+using var controller = new StimulationController(new StimulationOptions
+{
+    ConfigPath = configDirectory,
+    EmulatedConformanceMode = true
+});
+
+controller.Initialize();
+if (controller.TryGetConformance(out var conformance))
+{
+    // Poll controller.Started() and conformance.StimulationHistory with a finite timeout first.
+    var initialization = conformance.ValidateInitialization();
+}
+```
+
+The HFI library only exposes this capability. Validation rules and observations remain implemented
+by WSS Core's `IWssConformance`.
+
 ## Runtime Ownership
 
 - Library-owned: controller code and low-level WSS dependencies in `lib/`
