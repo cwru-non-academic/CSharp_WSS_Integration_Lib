@@ -71,13 +71,13 @@ jobs:
       - name: Restore with released WSS assemblies
         shell: bash
         run: >-
-          dotnet restore tests/HFI.Wss.Tests/HFI.Wss.Tests.csproj
+          dotnet restore tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
           -p:WSS_ARTIFACT_DIR="$WSS_ARTIFACT_DIR"
 
       - name: Build with released WSS assemblies
         shell: bash
         run: >-
-          dotnet build tests/HFI.Wss.Tests/HFI.Wss.Tests.csproj
+          dotnet build tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
           -c Release
           --no-restore
           -p:TreatWarningsAsErrors=true
@@ -90,17 +90,17 @@ jobs:
           test ! -d lib
           for assembly in WSS_Core_Interface.dll WSS.Transport.Serial.dll; do
             extracted_sha="$(sha256sum "$WSS_ARTIFACT_DIR/$assembly" | awk '{ print $1 }')"
-            for output_dir in src/bin/Release/net8.0 tests/HFI.Wss.Tests/bin/Release/net8.0; do
+            for output_dir in src/bin/Release/net8.0 tests/Wss.CSharpImplementation.Tests/bin/Release/net8.0; do
               output_sha="$(sha256sum "$output_dir/$assembly" | awk '{ print $1 }')"
               echo "$output_dir/$assembly SHA256: $output_sha"
               test "$output_sha" = "$extracted_sha"
             done
           done
 
-      - name: Run HFI conformance integration tests
+      - name: Run C# implementation conformance integration tests
         shell: bash
         run: >-
-          dotnet test tests/HFI.Wss.Tests/HFI.Wss.Tests.csproj
+          dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
           -c Release
           --no-build
           --no-restore

@@ -20,7 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\HFI_WSS_Csharp_Implementation.csproj" />
+    <ProjectReference Include="..\..\src\Wss.CSharpImplementation.csproj" />
     <Reference Include="WSS_Core_Interface">
       <HintPath>$(WssArtifactDir)\WSS_Core_Interface.dll</HintPath>
     </Reference>

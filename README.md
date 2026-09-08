@@ -1,6 +1,6 @@
-# HFI WSS C# Integration Library
+# WSS C# Integration Library
 
-Reusable .NET wrapper around the HFI WSS stimulation stack.
+Reusable .NET wrapper around the WSS stimulation stack.
 
 This repository now owns the integration/library layer only. The CLI application should live in a separate repo and consume this library as a git submodule.
 
@@ -15,15 +15,15 @@ All documentation about the API and other implementations can be found in [GitHu
 ## Build
 
 ```bash
-dotnet restore HFI_WSS_Csharp_Implementation.sln
-dotnet build HFI_WSS_Csharp_Implementation.sln -c Release
+dotnet restore Wss.CSharpImplementation.sln
+dotnet build Wss.CSharpImplementation.sln -c Release
 ```
 
 By default, the project resolves WSS assemblies from `lib/`. To build and test against an
 extracted WSS release artifact instead, set `WSS_ARTIFACT_DIR`:
 
 ```bash
-dotnet test tests/HFI.Wss.Tests/HFI.Wss.Tests.csproj -c Release \
+dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj -c Release \
   -p:WSS_ARTIFACT_DIR=/path/to/extracted/WSS-Serial-v0.3.0-rc.5
 ```
 
@@ -53,7 +53,7 @@ if (controller.TryGetConformance(out var conformance))
 }
 ```
 
-The HFI library only exposes this capability. Validation rules and observations remain implemented
+The C# integration library only exposes this capability. Validation rules and observations remain implemented
 by WSS Core's `IWssConformance`.
 
 ## Runtime Ownership

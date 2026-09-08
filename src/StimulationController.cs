@@ -9,7 +9,7 @@ using Wss.CalibrationModule;
 using Wss.Testing;
 using WssTransport = Wss.Transports;
 
-namespace HFI.Wss;
+namespace Wss.CSharpImplementation;
 
 /// <summary>
 /// Host-agnostic wrapper around the full stimulation stack (core → params → model).

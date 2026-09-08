@@ -2,7 +2,7 @@ using NUnit.Framework;
 using Wss.CoreModule;
 using Wss.Testing;
 
-namespace HFI.Wss.Tests;
+namespace Wss.CSharpImplementation.Tests;
 
 [TestFixture]
 public sealed class StimulationControllerConformanceTests
@@ -11,7 +11,7 @@ public sealed class StimulationControllerConformanceTests
     private const int OperationPollLimit = 2000;
 
     [Test]
-    public async Task InitializationThroughHfiPassesCoreConformance()
+    public async Task InitializationThroughCSharpImplementationPassesCoreConformance()
     {
         string fixtureDirectory = CreateFixtureDirectory();
         try
@@ -30,7 +30,7 @@ public sealed class StimulationControllerConformanceTests
     }
 
     [Test]
-    public async Task AnalogStimulationThroughHfiPassesCoreConformance()
+    public async Task AnalogStimulationThroughCSharpImplementationPassesCoreConformance()
     {
         string fixtureDirectory = CreateFixtureDirectory();
         try
@@ -54,7 +54,7 @@ public sealed class StimulationControllerConformanceTests
     }
 
     [Test]
-    public async Task NormalizedStimulationThroughHfiPassesCoreConformance()
+    public async Task NormalizedStimulationThroughCSharpImplementationPassesCoreConformance()
     {
         string fixtureDirectory = CreateFixtureDirectory();
         try
@@ -78,7 +78,7 @@ public sealed class StimulationControllerConformanceTests
     }
 
     [Test]
-    public async Task RuntimeEventEditThroughHfiResumesConformantStreaming()
+    public async Task RuntimeEventEditThroughCSharpImplementationResumesConformantStreaming()
     {
         string fixtureDirectory = CreateFixtureDirectory();
         try
@@ -117,7 +117,7 @@ public sealed class StimulationControllerConformanceTests
             Assert.Multiple(() =>
             {
                 Assert.That(pausedAfterRequest, Is.True, "Core did not pause streaming for the Event edit.");
-                Assert.That(edit, Is.Not.Null, "Core did not transmit EditEventConfig for the HFI UpdateIPD call.");
+                Assert.That(edit, Is.Not.Null, "Core did not transmit EditEventConfig for the C# implementation UpdateIPD call.");
                 Assert.That(resumedStream, Is.Not.Null, "Core did not resume streaming after the Event edit.");
                 Assert.That(controller.Started(), Is.True, "Core did not return to streaming state.");
                 Assert.That(result.Passed, Is.True, string.Join(Environment.NewLine, result.Failures));
@@ -142,7 +142,7 @@ public sealed class StimulationControllerConformanceTests
     {
         controller.Initialize();
         Assert.That(controller.TryGetConformance(out IWssConformance conformance), Is.True,
-            "HFI did not expose the emulator's Core conformance capability.");
+            "The C# implementation did not expose the emulator's Core conformance capability.");
 
         bool startedObserved = false;
         bool streamObserved = false;
@@ -193,7 +193,7 @@ public sealed class StimulationControllerConformanceTests
 
     private static string CreateFixtureDirectory()
     {
-        string directory = Path.Combine(Path.GetTempPath(), $"hfi-wss-conformance-{Guid.NewGuid():N}");
+        string directory = Path.Combine(Path.GetTempPath(), $"wss-csharp-implementation-conformance-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         File.WriteAllText(
             Path.Combine(directory, "stimConfig.json"),
