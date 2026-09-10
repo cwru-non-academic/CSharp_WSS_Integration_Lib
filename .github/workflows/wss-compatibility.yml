@@ -21,9 +21,9 @@ jobs:
           - macos-latest
     runs-on: ${{ matrix.os }}
     env:
-      WSS_RELEASE_TAG: v0.3.0-rc.11
-      WSS_CORE_ARCHIVE_NAME: WSS-Core-v0.3.0-rc.11.zip
-      WSS_BLE_ARCHIVE_NAME: WSS-BLE-Unified-v0.3.0-rc.11.zip
+      WSS_RELEASE_TAG: v0.3.0-rc.12
+      WSS_CORE_ARCHIVE_NAME: WSS-Core-v0.3.0-rc.12.zip
+      WSS_BLE_ARCHIVE_NAME: WSS-BLE-Unified-v0.3.0-rc.12.zip
     steps:
       - uses: actions/checkout@v4
 
