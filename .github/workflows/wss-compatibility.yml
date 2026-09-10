@@ -1,17 +1,28 @@
-name: WSS RC.7 conformance compatibility
+name: WSS integration compatibility
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+      - dev
 
 permissions:
   contents: read
 
 jobs:
-  conformance:
-    runs-on: ubuntu-latest
+  compatibility:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+    runs-on: ${{ matrix.os }}
     env:
-      WSS_RELEASE_TAG: v0.3.0-rc.7
-      WSS_ARCHIVE_NAME: WSS-Serial-v0.3.0-rc.7.zip
+      WSS_RELEASE_TAG: v0.3.0-rc.11
+      WSS_CORE_ARCHIVE_NAME: WSS-Core-v0.3.0-rc.11.zip
+      WSS_BLE_ARCHIVE_NAME: WSS-BLE-Unified-v0.3.0-rc.11.zip
     steps:
       - uses: actions/checkout@v4
 
@@ -19,59 +30,82 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
-      - name: Download and verify WSS RC.7 artifact
+      - name: Download and verify WSS release artifacts
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          artifact_dir="$RUNNER_TEMP/wss/$WSS_RELEASE_TAG"
-          archive_path="$RUNNER_TEMP/$WSS_ARCHIVE_NAME"
-          checksums_path="$RUNNER_TEMP/SHA256SUMS.txt"
+          download_dir="$RUNNER_TEMP/wss-downloads/$WSS_RELEASE_TAG"
+          core_artifact_dir="$RUNNER_TEMP/wss-core/$WSS_RELEASE_TAG"
+          ble_artifact_dir="$RUNNER_TEMP/wss-ble-unified/$WSS_RELEASE_TAG"
+          mkdir -p "$download_dir" "$core_artifact_dir" "$ble_artifact_dir"
+
           gh release download "$WSS_RELEASE_TAG" \
             --repo cwru-non-academic/WSSCore \
-            --pattern "$WSS_ARCHIVE_NAME" \
+            --pattern "$WSS_CORE_ARCHIVE_NAME" \
+            --pattern "$WSS_BLE_ARCHIVE_NAME" \
             --pattern SHA256SUMS.txt \
-            --dir "$RUNNER_TEMP"
-          test -f "$archive_path"
-          test -f "$checksums_path"
-          expected_sha="$(awk -v name="$WSS_ARCHIVE_NAME" '$2 == name { print $1 }' "$checksums_path")"
-          actual_sha="$(sha256sum "$archive_path" | awk '{ print $1 }')"
-          test -n "$expected_sha"
-          test "$actual_sha" = "$expected_sha"
-          mkdir -p "$artifact_dir"
-          unzip -q "$archive_path" -d "$artifact_dir"
-          for assembly in \
-            WSS_Core_Interface.dll \
-            Newtonsoft.Json.dll \
-            System.Buffers.dll \
-            System.Memory.dll \
-            System.Numerics.Vectors.dll \
-            System.Runtime.CompilerServices.Unsafe.dll \
-            System.Security.AccessControl.dll \
-            System.Security.Permissions.dll \
-            System.Security.Principal.Windows.dll \
-            System.IO.Ports.dll; do
-            test -f "$artifact_dir/$assembly"
-          done
-          echo "WSS_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
-          echo "Verified $WSS_ARCHIVE_NAME SHA256: $actual_sha"
+            --dir "$download_dir"
 
-      - name: Verify checked-in RC.7 Core fallback and disable it
+          checksums_path="$download_dir/SHA256SUMS.txt"
+          test -f "$checksums_path"
+          for archive_name in "$WSS_CORE_ARCHIVE_NAME" "$WSS_BLE_ARCHIVE_NAME"; do
+            archive_path="$download_dir/$archive_name"
+            test -f "$archive_path"
+            expected_sha="$(awk -v name="$archive_name" '{ candidate=$2; sub(/^\*/, "", candidate); if (candidate == name) { print $1; exit } }' "$checksums_path")"
+            actual_sha="$(sha256sum "$archive_path" | awk '{ print $1 }')"
+            test -n "$expected_sha"
+            test "$actual_sha" = "$expected_sha"
+            echo "Verified $archive_name SHA256: $actual_sha"
+          done
+
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            7z x -y "-o$core_artifact_dir" "$download_dir/$WSS_CORE_ARCHIVE_NAME" > /dev/null
+            7z x -y "-o$ble_artifact_dir" "$download_dir/$WSS_BLE_ARCHIVE_NAME" > /dev/null
+          else
+            unzip -q "$download_dir/$WSS_CORE_ARCHIVE_NAME" -d "$core_artifact_dir"
+            unzip -q "$download_dir/$WSS_BLE_ARCHIVE_NAME" -d "$ble_artifact_dir"
+          fi
+
+          test -f "$core_artifact_dir/WSS_Core_Interface.dll"
+          test -f "$ble_artifact_dir/WSS.Transport.BLE.dll"
+          for required_file in \
+            backends/windows/WSS.Transport.BLE.Windows.dll \
+            backends/windows/Microsoft.Windows.SDK.NET.dll \
+            backends/windows/WinRT.Runtime.dll \
+            backends/linux/WSS.Transport.BLE.Linux.dll \
+            backends/linux/Linux.Bluetooth.dll \
+            backends/linux/Tmds.DBus.dll; do
+            test -f "$ble_artifact_dir/$required_file"
+          done
+          for runtime_tree in runtimes/win runtimes/unix runtimes/linux-x64; do
+            test -d "$ble_artifact_dir/$runtime_tree"
+            test -n "$(find "$ble_artifact_dir/$runtime_tree" -type f -print -quit)"
+          done
+
+          echo "WSS_ARTIFACT_DIR=$core_artifact_dir" >> "$GITHUB_ENV"
+          echo "WSS_BLE_ARTIFACT_DIR=$ble_artifact_dir" >> "$GITHUB_ENV"
+
+      - name: Disable checked-in binary fallback and clean outputs
         shell: bash
         run: |
           set -euo pipefail
-          cmp "$WSS_ARTIFACT_DIR/WSS_Core_Interface.dll" "lib/WSS_Core_Interface.dll"
-          mkdir -p lib.compat-disabled
-          mv lib/WSS_Core_Interface.dll lib.compat-disabled/
-          test ! -f lib/WSS_Core_Interface.dll
-          test -f lib/WSS.Transport.BLE.dll
+          test -d lib
+          mv lib lib.ci-disabled
+          test ! -d lib
+          rm -rf \
+            src/bin \
+            src/obj \
+            tests/Wss.CSharpImplementation.Tests/bin \
+            tests/Wss.CSharpImplementation.Tests/obj
 
       - name: Restore with released WSS assemblies
         shell: bash
         run: >-
           dotnet restore tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
           -p:WSS_ARTIFACT_DIR="$WSS_ARTIFACT_DIR"
+          -p:WSS_BLE_ARTIFACT_DIR="$WSS_BLE_ARTIFACT_DIR"
 
       - name: Build with released WSS assemblies
         shell: bash
@@ -81,32 +115,49 @@ jobs:
           --no-restore
           -p:TreatWarningsAsErrors=true
           -p:WSS_ARTIFACT_DIR="$WSS_ARTIFACT_DIR"
+          -p:WSS_BLE_ARTIFACT_DIR="$WSS_BLE_ARTIFACT_DIR"
 
-      - name: Verify WSS assembly provenance
+      - name: Verify downstream WSS artifact propagation
         shell: bash
         run: |
           set -euo pipefail
-          test ! -f lib/WSS_Core_Interface.dll
-          for assembly in WSS_Core_Interface.dll; do
-            extracted_sha="$(sha256sum "$WSS_ARTIFACT_DIR/$assembly" | awk '{ print $1 }')"
-            for output_dir in src/bin/Release/net9.0 tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0; do
-              output_sha="$(sha256sum "$output_dir/$assembly" | awk '{ print $1 }')"
-              echo "$output_dir/$assembly SHA256: $output_sha"
-              test "$output_sha" = "$extracted_sha"
-            done
-          done
-          ble_sha="$(sha256sum lib/WSS.Transport.BLE.dll | awk '{ print $1}')"
-          for output_dir in src/bin/Release/net9.0 tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0; do
-            output_sha="$(sha256sum "$output_dir/WSS.Transport.BLE.dll" | awk '{ print $1}')"
-            echo "$output_dir/WSS.Transport.BLE.dll SHA256: $output_sha"
-            test "$output_sha" = "$ble_sha"
-          done
+          output_dir="tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0"
 
-      - name: Run C# implementation conformance integration tests
+          compare_file() {
+            source_file="$1"
+            output_file="$2"
+            test -f "$output_file"
+            source_sha="$(sha256sum "$source_file" | awk '{ print $1 }')"
+            output_sha="$(sha256sum "$output_file" | awk '{ print $1 }')"
+            echo "$output_file SHA256: $output_sha"
+            test "$output_sha" = "$source_sha"
+          }
+
+          compare_tree() {
+            source_root="$1"
+            relative_tree="$2"
+            test -d "$source_root/$relative_tree"
+            while IFS= read -r -d '' source_file; do
+              relative_file="${source_file#"$source_root/"}"
+              compare_file "$source_file" "$output_dir/$relative_file"
+            done < <(find "$source_root/$relative_tree" -type f -print0)
+          }
+
+          compare_file "$WSS_ARTIFACT_DIR/WSS_Core_Interface.dll" "$output_dir/WSS_Core_Interface.dll"
+          compare_file "$WSS_BLE_ARTIFACT_DIR/WSS.Transport.BLE.dll" "$output_dir/WSS.Transport.BLE.dll"
+          compare_tree "$WSS_BLE_ARTIFACT_DIR" backends/windows
+          compare_tree "$WSS_BLE_ARTIFACT_DIR" backends/linux
+          compare_tree "$WSS_BLE_ARTIFACT_DIR" runtimes/win
+          compare_tree "$WSS_BLE_ARTIFACT_DIR" runtimes/unix
+          compare_tree "$WSS_BLE_ARTIFACT_DIR" runtimes/linux-x64
+
+      - name: Run C# implementation integration tests
         shell: bash
         run: >-
           dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
           -c Release
           --no-build
           --no-restore
+          -p:TreatWarningsAsErrors=true
           -p:WSS_ARTIFACT_DIR="$WSS_ARTIFACT_DIR"
+          -p:WSS_BLE_ARTIFACT_DIR="$WSS_BLE_ARTIFACT_DIR"
