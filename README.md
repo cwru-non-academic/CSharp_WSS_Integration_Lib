@@ -16,7 +16,7 @@ All documentation about the API and other implementations can be found in [GitHu
 
 ## Build
 
-Install the .NET 9 SDK first. This library now targets `net9.0` so BLE transport support can use the Linux provider path from `InTheHand.BluetoothLE`.
+Install the .NET 9 SDK first. The library targets `net9.0` and supports the WSS unified BLE distribution on Windows and Linux.
 
 ```bash
 dotnet restore Wss.CSharpImplementation.sln
@@ -24,16 +24,18 @@ dotnet build Wss.CSharpImplementation.sln -c Release
 ```
 
 By default, the project resolves WSS assemblies from `lib/`. To build and test against an
-extracted WSS release artifact instead, set `WSS_ARTIFACT_DIR`:
+official WSS release, extract the Core and Unified BLE artifacts separately and set both artifact roots:
 
 ```bash
 dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj -c Release \
-  -p:WSS_ARTIFACT_DIR=/path/to/extracted/WSS-Serial-v0.3.0-rc.7
+  -p:WSS_ARTIFACT_DIR=/path/to/extracted/WSS-Core \
+  -p:WSS_BLE_ARTIFACT_DIR=/path/to/extracted/WSS-BLE-Unified
 ```
 
-`WSS_ARTIFACT_DIR` overrides the Core and companion runtime artifacts. Serial and BLE transport
-implementations come from `lib/WSS.Transport.BLE.dll` unless `WSS_BLE_ARTIFACT_DIR` is set to a
-directory containing a matched consolidated transport artifact.
+`WSS_ARTIFACT_DIR` identifies the Core artifact root. `WSS_BLE_ARTIFACT_DIR` identifies the matched
+Unified BLE artifact root. The integration project automatically propagates the BLE facade, both
+Windows and Linux backend trees, and the `win`, `unix`, and `linux-x64` runtime trees to downstream
+consumer build and publish outputs. No manual DLL copying is required.
 
 ## Emulator Conformance Mode
 
@@ -70,8 +72,8 @@ by WSS Core's `IWssConformance`.
 - Serial transport remains available through the vendor serial stack.
 - Test transport remains available for simulated runs.
 - BLE transport is exposed through `BleNusTransport` and is intended for Nordic UART Service-compatible devices.
+- The Unified BLE artifact provides platform backends for Windows and Linux; compatibility for both is checked in CI.
 - The current WSS BLE path assumes an unpaired, unencrypted NUS connection and does not request BLE pairing.
-- On Linux, BLE support depends on this `net9.0` target; the earlier `net8.0` target did not have the required Linux backend from `InTheHand.BluetoothLE`.
 
 ## Runtime Ownership
 
