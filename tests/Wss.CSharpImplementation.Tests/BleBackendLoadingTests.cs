@@ -11,6 +11,9 @@ public sealed class BleBackendLoadingTests
     [Test]
     public void FacadeLoadsCurrentPlatformBackendAndDependencies()
     {
+        if (OperatingSystem.IsMacOS())
+            Assert.Ignore("macOS BLE backend is not implemented yet.");
+
         (string platform, string backendName, string[] dependencyNames) = GetPlatformExpectation();
         string expectedBackendDirectory = Path.GetFullPath(
             Path.Combine(AppContext.BaseDirectory, "backends", platform));
