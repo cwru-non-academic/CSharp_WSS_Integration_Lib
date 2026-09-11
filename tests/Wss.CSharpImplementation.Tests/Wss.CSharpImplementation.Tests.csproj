@@ -8,6 +8,8 @@
     <IsTestProject>true</IsTestProject>
     <WssArtifactDir Condition="'$(WSS_ARTIFACT_DIR)' == ''">$(MSBuildProjectDirectory)\..\..\lib</WssArtifactDir>
     <WssArtifactDir Condition="'$(WSS_ARTIFACT_DIR)' != ''">$(WSS_ARTIFACT_DIR)</WssArtifactDir>
+    <WssBleArtifactDir Condition="'$(WSS_BLE_ARTIFACT_DIR)' == ''">$(MSBuildProjectDirectory)\..\..\lib</WssBleArtifactDir>
+    <WssBleArtifactDir Condition="'$(WSS_BLE_ARTIFACT_DIR)' != ''">$(WSS_BLE_ARTIFACT_DIR)</WssBleArtifactDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,6 +25,10 @@
     <ProjectReference Include="..\..\src\Wss.CSharpImplementation.csproj" />
     <Reference Include="WSS_Core_Interface">
       <HintPath>$(WssArtifactDir)\WSS_Core_Interface.dll</HintPath>
+    </Reference>
+    <Reference Include="WSS.Transport.BLE">
+      <HintPath>$(WssBleArtifactDir)\WSS.Transport.BLE.dll</HintPath>
+      <Private>false</Private>
     </Reference>
   </ItemGroup>
 

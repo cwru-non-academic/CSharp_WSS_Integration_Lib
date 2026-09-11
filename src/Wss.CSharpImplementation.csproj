@@ -11,8 +11,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="InTheHand.BluetoothLE" Version="4.0.44" />
-    <PackageReference Include="System.Security.Permissions" Version="7.0.0" />
     <PackageReference Include="System.IO.Ports" Version="9.0.0" />
   </ItemGroup>
 
@@ -26,6 +24,38 @@
     <Reference Include="Newtonsoft.Json">
       <HintPath>$(WssArtifactDir)\Newtonsoft.Json.dll</HintPath>
     </Reference>
+    <Reference Include="System.Security.Permissions">
+      <HintPath>$(WssBleArtifactDir)\System.Security.Permissions.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Windows.Extensions">
+      <HintPath>$(WssBleArtifactDir)\System.Windows.Extensions.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Drawing.Common">
+      <HintPath>$(WssBleArtifactDir)\System.Drawing.Common.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Win32.SystemEvents">
+      <HintPath>$(WssBleArtifactDir)\Microsoft.Win32.SystemEvents.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(WssBleArtifactDir)/*.dll"
+          Exclude="$(WssBleArtifactDir)/System.IO.Ports.dll"
+          Link="%(Filename)%(Extension)"
+          TargetPath="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(WssBleArtifactDir)/backends/**/*"
+          Link="backends/%(RecursiveDir)%(Filename)%(Extension)"
+          TargetPath="backends/%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(WssBleArtifactDir)/runtimes/**/*"
+          Exclude="$(WssBleArtifactDir)/runtimes/**/System.IO.Ports.dll;$(WssBleArtifactDir)/runtimes/**/libSystem.IO.Ports.Native.*"
+          Link="runtimes/%(RecursiveDir)%(Filename)%(Extension)"
+          TargetPath="runtimes/%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

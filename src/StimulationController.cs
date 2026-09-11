@@ -101,7 +101,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
                 StimulationTransportKind.Serial => new WssTransport.SerialPortTransport(
                     new WssTransport.SerialPortTransportOptions
                     {
-                        PortName = _options.SerialPort,
+                        PortName = _options.SerialPort ?? string.Empty,
                         AutoSelectPort = string.IsNullOrWhiteSpace(_options.SerialPort)
                     }),
                 _ => throw new InvalidOperationException($"Unsupported transport '{_options.Transport}'.")
