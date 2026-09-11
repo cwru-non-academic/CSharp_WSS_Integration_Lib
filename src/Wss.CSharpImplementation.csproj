@@ -11,6 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="System.IO.Ports" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="WSS_Core_Interface">
       <HintPath>$(WssArtifactDir)\WSS_Core_Interface.dll</HintPath>
     </Reference>
@@ -19,9 +23,6 @@
     </Reference>
     <Reference Include="Newtonsoft.Json">
       <HintPath>$(WssArtifactDir)\Newtonsoft.Json.dll</HintPath>
-    </Reference>
-    <Reference Include="System.IO.Ports">
-      <HintPath>$(WssBleArtifactDir)\System.IO.Ports.dll</HintPath>
     </Reference>
     <Reference Include="System.Security.Permissions">
       <HintPath>$(WssBleArtifactDir)\System.Security.Permissions.dll</HintPath>
@@ -39,6 +40,7 @@
 
   <ItemGroup>
     <None Include="$(WssBleArtifactDir)/*.dll"
+          Exclude="$(WssBleArtifactDir)/System.IO.Ports.dll"
           Link="%(Filename)%(Extension)"
           TargetPath="%(Filename)%(Extension)"
           CopyToOutputDirectory="PreserveNewest"
@@ -49,6 +51,7 @@
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest" />
     <None Include="$(WssBleArtifactDir)/runtimes/**/*"
+          Exclude="$(WssBleArtifactDir)/runtimes/**/System.IO.Ports.dll;$(WssBleArtifactDir)/runtimes/**/libSystem.IO.Ports.Native.*"
           Link="runtimes/%(RecursiveDir)%(Filename)%(Extension)"
           TargetPath="runtimes/%(RecursiveDir)%(Filename)%(Extension)"
           CopyToOutputDirectory="PreserveNewest"
