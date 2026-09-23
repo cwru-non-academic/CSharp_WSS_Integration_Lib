@@ -94,39 +94,56 @@ jobs:
           BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $pulls = @(& gh pr list `
-            --repo cwru-non-academic/CSharp_WSS_Integration_Lib `
-            --state open `
-            --base dev `
-            --head $env:BRANCH_NAME `
-            --limit 2 `
-            --json number,url | ConvertFrom-Json)
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Failed to query existing promotion PRs.'
+          $previousNativeErrorPreference = $PSNativeCommandUseErrorActionPreference
+          try {
+            $PSNativeCommandUseErrorActionPreference = $false
+
+            $pullJson = & gh pr list `
+              --repo cwru-non-academic/CSharp_WSS_Integration_Lib `
+              --state open `
+              --base dev `
+              --head $env:BRANCH_NAME `
+              --limit 2 `
+              --json number,url
+            $prListExitCode = $LASTEXITCODE
+            if ($prListExitCode -ne 0) {
+              throw "Failed to query existing promotion PRs; gh exited with code $prListExitCode."
+            }
+
+            $pulls = @($pullJson | ConvertFrom-Json)
+            if ($pulls.Count -gt 1) {
+              throw "Multiple open promotion PRs use $($env:BRANCH_NAME)."
+            }
+            $hasExistingPr = $pulls.Count -eq 1
+            "Existing promotion PR: $(if ($hasExistingPr) { 'YES' } else { 'NO' })"
+
+            & git ls-remote --exit-code --heads origin "refs/heads/$($env:BRANCH_NAME)" *> $null
+            $branchProbeExitCode = $LASTEXITCODE
+            $branchExists = switch ($branchProbeExitCode) {
+              0 { $true; break }
+              2 { $false; break }
+              default {
+                throw "Failed to inspect the remote automation branch; git ls-remote exited with code $branchProbeExitCode."
+              }
+            }
+            "Automation branch exists: $(if ($branchExists) { 'YES' } else { 'NO' })"
+
+            if ($hasExistingPr -and -not $branchExists) {
+              throw 'An open promotion PR exists, but its automation branch is missing.'
+            }
           }
-          if ($pulls.Count -gt 1) {
-            throw "Multiple open promotion PRs use $($env:BRANCH_NAME)."
+          finally {
+            $PSNativeCommandUseErrorActionPreference = $previousNativeErrorPreference
           }
 
-          if ($pulls.Count -eq 1) {
+          $global:LASTEXITCODE = 0
+          if ($hasExistingPr) {
             "pr_number=$($pulls[0].number)" >> $env:GITHUB_OUTPUT
             "pr_url=$($pulls[0].url)" >> $env:GITHUB_OUTPUT
-            'branch_exists=true' >> $env:GITHUB_OUTPUT
-            exit 0
-          }
-
-          & git ls-remote --exit-code --heads origin "refs/heads/$($env:BRANCH_NAME)" *> $null
-          if ($LASTEXITCODE -eq 0) {
+          } else {
             'pr_number=' >> $env:GITHUB_OUTPUT
-            'branch_exists=true' >> $env:GITHUB_OUTPUT
-            exit 0
           }
-          if ($LASTEXITCODE -ne 2) {
-            throw 'Failed to inspect the remote automation branch.'
-          }
-
-          'pr_number=' >> $env:GITHUB_OUTPUT
-          'branch_exists=false' >> $env:GITHUB_OUTPUT
+          "branch_exists=$($branchExists.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Check out existing automation branch
         if: steps.existing.outputs.branch_exists == 'true'
