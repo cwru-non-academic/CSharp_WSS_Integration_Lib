@@ -1,0 +1,230 @@
+name: WSS downloaded-artifact preflight
+run-name: WSS preflight ${{ inputs.wss_release_tag != '' && inputs.wss_release_tag || 'default' }}${{ inputs.correlation_id != '' && format(' / {0}', inputs.correlation_id) || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      wss_release_tag:
+        description: WSSCore release tag; empty uses the workflow default
+        required: false
+        type: string
+      correlation_id:
+        description: Optional promotion-cascade correlation ID
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  DEFAULT_WSS_RELEASE_TAG: v0.3.0-rc.12
+
+jobs:
+  resolve-inputs:
+    name: Resolve preflight inputs
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+    steps:
+      - name: Resolve and validate inputs
+        id: resolve
+        shell: pwsh
+        env:
+          REQUESTED_TAG: ${{ inputs.wss_release_tag }}
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = if ([string]::IsNullOrWhiteSpace($env:REQUESTED_TAG)) {
+            $env:DEFAULT_WSS_RELEASE_TAG
+          } else {
+            $env:REQUESTED_TAG
+          }
+
+          if ($tag -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') {
+            throw 'wss_release_tag must contain only letters, digits, periods, underscores, and hyphens.'
+          }
+          if ($env:CORRELATION_ID.Length -gt 200 -or $env:CORRELATION_ID -match "[\r\n]") {
+            throw 'correlation_id must be a single line no longer than 200 characters.'
+          }
+
+          "release_tag=$tag" >> $env:GITHUB_OUTPUT
+
+  behavioral-tests:
+    name: Preflight behavioral tests
+    needs: resolve-inputs
+    runs-on: ubuntu-latest
+    env:
+      WSS_RELEASE_TAG: ${{ needs.resolve-inputs.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Download and verify WSS release artifacts
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./.github/scripts/Resolve-WssRelease.ps1 `
+            -ReleaseTag $env:WSS_RELEASE_TAG `
+            -OutputRoot (Join-Path $env:RUNNER_TEMP 'wss-release')
+          "WSS_ARTIFACT_DIR=$(Join-Path $env:RUNNER_TEMP 'wss-release/core')" >> $env:GITHUB_ENV
+          "WSS_BLE_ARTIFACT_DIR=$(Join-Path $env:RUNNER_TEMP 'wss-release/ble-unified')" >> $env:GITHUB_ENV
+
+      - name: Disable committed fallback and clean outputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path -LiteralPath 'lib' -PathType Container)) {
+            throw 'Committed lib directory is missing.'
+          }
+          Move-Item -LiteralPath 'lib' -Destination 'lib.preflight-disabled'
+          if (Test-Path -LiteralPath 'lib') {
+            throw 'Committed lib fallback remains available.'
+          }
+          Get-ChildItem -Path src, tests -Directory -Recurse -Force |
+            Where-Object Name -in @('bin', 'obj') |
+            Remove-Item -Recurse -Force
+
+      - name: Restore with downloaded WSS assemblies
+        shell: pwsh
+        run: >-
+          dotnet restore tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
+          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+
+      - name: Build with downloaded WSS assemblies
+        shell: pwsh
+        run: >-
+          dotnet build tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          -c Release
+          --no-restore
+          -p:TreatWarningsAsErrors=true
+          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
+          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+
+      - name: Run behavioral tests
+        shell: pwsh
+        run: >-
+          dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          -c Release
+          --no-build
+          --no-restore
+          --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationOptionsTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationControllerTestModeTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationControllerConformanceTests"
+          -p:TreatWarningsAsErrors=true
+          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
+          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+
+  compatibility:
+    name: Preflight compatibility (${{ matrix.name }})
+    needs: resolve-inputs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: Ubuntu
+            os: ubuntu-latest
+          - name: macOS
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    env:
+      WSS_RELEASE_TAG: ${{ needs.resolve-inputs.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Download and verify WSS release artifacts
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./.github/scripts/Resolve-WssRelease.ps1 `
+            -ReleaseTag $env:WSS_RELEASE_TAG `
+            -OutputRoot (Join-Path $env:RUNNER_TEMP 'wss-release')
+          "WSS_ARTIFACT_DIR=$(Join-Path $env:RUNNER_TEMP 'wss-release/core')" >> $env:GITHUB_ENV
+          "WSS_BLE_ARTIFACT_DIR=$(Join-Path $env:RUNNER_TEMP 'wss-release/ble-unified')" >> $env:GITHUB_ENV
+
+      - name: Disable committed fallback and clean outputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path -LiteralPath 'lib' -PathType Container)) {
+            throw 'Committed lib directory is missing.'
+          }
+          Move-Item -LiteralPath 'lib' -Destination 'lib.preflight-disabled'
+          if (Test-Path -LiteralPath 'lib') {
+            throw 'Committed lib fallback remains available.'
+          }
+          Get-ChildItem -Path src, tests -Directory -Recurse -Force |
+            Where-Object Name -in @('bin', 'obj') |
+            Remove-Item -Recurse -Force
+
+      - name: Restore with downloaded WSS assemblies
+        shell: pwsh
+        run: >-
+          dotnet restore tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
+          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+
+      - name: Build with downloaded WSS assemblies
+        shell: pwsh
+        run: >-
+          dotnet build tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          -c Release
+          --no-restore
+          -p:TreatWarningsAsErrors=true
+          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
+          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+
+      - name: Verify downloaded artifact propagation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $outputDir = 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
+
+          function Assert-SameHash([string] $SourceFile, [string] $OutputFile) {
+            if (-not (Test-Path -LiteralPath $OutputFile -PathType Leaf)) {
+              throw "Downstream output file is missing: $OutputFile"
+            }
+            $sourceSha = (Get-FileHash -LiteralPath $SourceFile -Algorithm SHA256).Hash
+            $outputSha = (Get-FileHash -LiteralPath $OutputFile -Algorithm SHA256).Hash
+            if (-not $outputSha.Equals($sourceSha, [StringComparison]::OrdinalIgnoreCase)) {
+              throw "Downstream hash mismatch for $OutputFile."
+            }
+          }
+
+          Assert-SameHash `
+            (Join-Path $env:WSS_ARTIFACT_DIR 'WSS_Core_Interface.dll') `
+            (Join-Path $outputDir 'WSS_Core_Interface.dll')
+
+          foreach ($sourceFile in Get-ChildItem -LiteralPath $env:WSS_BLE_ARTIFACT_DIR -File -Recurse) {
+            $relativePath = [IO.Path]::GetRelativePath($env:WSS_BLE_ARTIFACT_DIR, $sourceFile.FullName).Replace('\', '/')
+            $isNuGetOwned =
+              $relativePath.Equals('System.IO.Ports.dll', [StringComparison]::OrdinalIgnoreCase) -or
+              ($relativePath.StartsWith('runtimes/', [StringComparison]::OrdinalIgnoreCase) -and
+                $sourceFile.Name.Equals('System.IO.Ports.dll', [StringComparison]::OrdinalIgnoreCase)) -or
+              ($relativePath.StartsWith('runtimes/', [StringComparison]::OrdinalIgnoreCase) -and
+                $sourceFile.Name.StartsWith('libSystem.IO.Ports.Native.', [StringComparison]::OrdinalIgnoreCase))
+            if (-not $isNuGetOwned) {
+              Assert-SameHash $sourceFile.FullName (Join-Path $outputDir $relativePath)
+            }
+          }
+
+      - name: Run platform compatibility tests
+        shell: pwsh
+        run: >-
+          dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          -c Release
+          --no-build
+          --no-restore
+          --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.SerialRuntimeSelectionTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.BleBackendLoadingTests"
+          -p:TreatWarningsAsErrors=true
+          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
+          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"

@@ -1,0 +1,337 @@
+name: Promote WSS into Integration
+run-name: Promote WSS ${{ inputs.wss_release_tag }} / ${{ inputs.correlation_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      wss_release_tag:
+        description: Exact WSSCore release tag to promote
+        required: true
+        type: string
+      correlation_id:
+        description: Promotion-cascade correlation ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-wss-${{ inputs.wss_release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Create WSS promotion PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate promotion inputs
+        id: inputs
+        shell: pwsh
+        env:
+          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:WSS_RELEASE_TAG -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') {
+            throw 'wss_release_tag must contain only letters, digits, periods, underscores, and hyphens.'
+          }
+          if ($env:CORRELATION_ID -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$') {
+            throw 'correlation_id must be 1-200 branch-safe, single-line characters.'
+          }
+
+          "branch=automation/wss-$($env:WSS_RELEASE_TAG)" >> $env:GITHUB_OUTPUT
+
+      - name: Create WSSCore read token
+        id: core-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore
+          permission-contents: read
+
+      - name: Create Integration write token
+        id: integration-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: CSharp_WSS_Integration_Lib
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Check out current Integration dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+          token: ${{ steps.integration-token.outputs.token }}
+
+      - name: Download, verify, and stage the approved release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.core-token.outputs.token }}
+          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseRoot = Join-Path $env:RUNNER_TEMP 'wss-release'
+          $desiredLib = Join-Path $env:RUNNER_TEMP 'desired-lib'
+          ./.github/scripts/Resolve-WssRelease.ps1 `
+            -ReleaseTag $env:WSS_RELEASE_TAG `
+            -OutputRoot $releaseRoot
+          ./.github/scripts/New-WssLib.ps1 `
+            -BleArtifactDir (Join-Path $releaseRoot 'ble-unified') `
+            -Destination $desiredLib
+
+      - name: Inspect existing automation state
+        id: existing
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.integration-token.outputs.token }}
+          BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pulls = @(& gh pr list `
+            --repo cwru-non-academic/CSharp_WSS_Integration_Lib `
+            --state open `
+            --base dev `
+            --head $env:BRANCH_NAME `
+            --limit 2 `
+            --json number,url | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to query existing promotion PRs.'
+          }
+          if ($pulls.Count -gt 1) {
+            throw "Multiple open promotion PRs use $($env:BRANCH_NAME)."
+          }
+
+          if ($pulls.Count -eq 1) {
+            "pr_number=$($pulls[0].number)" >> $env:GITHUB_OUTPUT
+            "pr_url=$($pulls[0].url)" >> $env:GITHUB_OUTPUT
+            'branch_exists=true' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          & git ls-remote --exit-code --heads origin "refs/heads/$($env:BRANCH_NAME)" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            'pr_number=' >> $env:GITHUB_OUTPUT
+            'branch_exists=true' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          if ($LASTEXITCODE -ne 2) {
+            throw 'Failed to inspect the remote automation branch.'
+          }
+
+          'pr_number=' >> $env:GITHUB_OUTPUT
+          'branch_exists=false' >> $env:GITHUB_OUTPUT
+
+      - name: Check out existing automation branch
+        if: steps.existing.outputs.branch_exists == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.inputs.outputs.branch }}
+          path: existing-promotion
+          fetch-depth: 0
+          token: ${{ steps.integration-token.outputs.token }}
+
+      - name: Validate existing automation branch and PR
+        if: steps.existing.outputs.branch_exists == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.integration-token.outputs.token }}
+          PR_NUMBER: ${{ steps.existing.outputs.pr_number }}
+          PR_URL: ${{ steps.existing.outputs.pr_url }}
+          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not [string]::IsNullOrEmpty($env:PR_NUMBER)) {
+            $pr = & gh pr view $env:PR_NUMBER `
+              --repo cwru-non-academic/CSharp_WSS_Integration_Lib `
+              --json body | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) {
+              throw 'Failed to inspect the existing promotion PR.'
+            }
+
+            $requiredMarkers = @(
+              '<!-- wss-promotion:v1 -->',
+              "<!-- wss-release-tag:$($env:WSS_RELEASE_TAG) -->",
+              "<!-- correlation-id:$($env:CORRELATION_ID) -->"
+            )
+            foreach ($marker in $requiredMarkers) {
+              if (-not $pr.body.Contains($marker, [StringComparison]::Ordinal)) {
+                throw "Existing promotion PR has mismatched metadata: $marker"
+              }
+            }
+
+            $files = @(& gh api `
+              "repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/$($env:PR_NUMBER)/files?per_page=100" |
+              ConvertFrom-Json)
+            if ($LASTEXITCODE -ne 0 -or $files.Count -eq 0) {
+              throw 'Existing promotion PR has no readable changed files.'
+            }
+            $unexpected = @($files | Where-Object { $_.filename -notmatch '^lib/' })
+            if ($unexpected.Count -ne 0) {
+              throw "Existing promotion PR changes files outside lib/: $($unexpected.filename -join ', ')"
+            }
+          }
+
+          & git diff --no-index --quiet -- `
+            (Join-Path $env:RUNNER_TEMP 'desired-lib') `
+            'existing-promotion/lib'
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Existing promotion PR does not contain the intended lib state.'
+          }
+
+          $branchFiles = @(& git -C existing-promotion diff --name-only origin/dev...HEAD)
+          if ($LASTEXITCODE -ne 0 -or $branchFiles.Count -eq 0) {
+            throw 'Existing automation branch has no readable diff from dev.'
+          }
+          $unexpectedBranchFiles = @($branchFiles | Where-Object { $_ -notmatch '^lib/' })
+          if ($unexpectedBranchFiles.Count -ne 0) {
+            throw "Existing automation branch changes files outside lib/: $($unexpectedBranchFiles -join ', ')"
+          }
+
+          $commitMessage = & git -C existing-promotion log -1 --format=%B
+          if ($LASTEXITCODE -ne 0 -or
+              $commitMessage -notcontains "Promote WSS $($env:WSS_RELEASE_TAG)" -or
+              $commitMessage -notcontains "Correlation-ID: $($env:CORRELATION_ID)") {
+            throw 'Existing automation branch has mismatched deterministic commit metadata.'
+          }
+
+          if ([string]::IsNullOrEmpty($env:PR_NUMBER)) {
+            'Validated an interrupted promotion branch; the missing PR will be created.' >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            "Reusing matching promotion PR: $($env:PR_URL)" >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Replace artifact-managed lib contents
+        if: steps.existing.outputs.branch_exists == 'false'
+        shell: pwsh
+        env:
+          BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & git switch -c $env:BRANCH_NAME
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to create the local automation branch.'
+          }
+
+          Remove-Item -LiteralPath 'lib' -Recurse -Force
+          New-Item -ItemType Directory -Path 'lib' | Out-Null
+          Copy-Item -Path (Join-Path $env:RUNNER_TEMP 'desired-lib/*') -Destination 'lib' -Recurse
+
+      - name: Validate and commit the lib-only diff
+        if: steps.existing.outputs.branch_exists == 'false'
+        id: commit
+        shell: pwsh
+        env:
+          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $workingTreeChanges = @(& git status --short --untracked-files=all)
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to inspect the promotion working tree.'
+          }
+          if ($workingTreeChanges.Count -eq 0) {
+            'no_change=true' >> $env:GITHUB_OUTPUT
+            'Integration dev already contains the intended promoted lib state.' >> $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+          $unexpectedWorkingTreeChanges = @($workingTreeChanges | Where-Object {
+            $_.Length -lt 4 -or $_.Substring(3).Trim('"') -notmatch '^lib/'
+          })
+          if ($unexpectedWorkingTreeChanges.Count -ne 0) {
+            throw "Promotion changed files outside lib/: $($unexpectedWorkingTreeChanges -join ', ')"
+          }
+
+          & git add -A -- lib
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to stage the promoted lib.'
+          }
+
+          & git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            throw 'Promotion working tree changes were not captured in the staged lib diff.'
+          }
+
+          $changedFiles = @(& git diff --cached --name-only)
+          if ($LASTEXITCODE -ne 0 -or $changedFiles.Count -eq 0) {
+            throw 'Unable to inspect the staged promotion diff.'
+          }
+          $unexpected = @($changedFiles | Where-Object { $_ -notmatch '^lib/' })
+          if ($unexpected.Count -ne 0) {
+            throw "Promotion diff contains unrelated files: $($unexpected -join ', ')"
+          }
+
+          & git diff --cached --check
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Promotion diff failed git diff --check.'
+          }
+          & git diff --cached --stat
+
+          & git config user.name 'wss-promotion[bot]'
+          & git config user.email 'wss-promotion[bot]@users.noreply.github.com'
+          & git commit `
+            -m "Promote WSS $env:WSS_RELEASE_TAG" `
+            -m "Correlation-ID: $env:CORRELATION_ID"
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to commit the promoted lib.'
+          }
+          'no_change=false' >> $env:GITHUB_OUTPUT
+
+      - name: Push automation branch
+        if: steps.existing.outputs.branch_exists == 'false' && steps.commit.outputs.no_change == 'false'
+        shell: pwsh
+        env:
+          BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
+        run: |
+          & git push origin "HEAD:refs/heads/$($env:BRANCH_NAME)"
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to push the automation branch without force.'
+          }
+
+      - name: Open promotion pull request
+        if: >-
+          steps.existing.outputs.pr_number == '' &&
+          (steps.existing.outputs.branch_exists == 'true' || steps.commit.outputs.no_change == 'false')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.integration-token.outputs.token }}
+          BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
+          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bodyPath = Join-Path $env:RUNNER_TEMP 'promotion-pr-body.md'
+          @(
+            '<!-- wss-promotion:v1 -->'
+            "<!-- wss-release-tag:$($env:WSS_RELEASE_TAG) -->"
+            "<!-- correlation-id:$($env:CORRELATION_ID) -->"
+            ''
+            "Promotes the Integration committed artifacts to WSS release ``$($env:WSS_RELEASE_TAG)``."
+            ''
+            "- Correlation ID: ``$($env:CORRELATION_ID)``"
+            "- Source release: https://github.com/cwru-non-academic/WSSCore/releases/tag/$($env:WSS_RELEASE_TAG)"
+            '- `lib/` was replaced from the checksum-verified WSS BLE Unified release artifact.'
+            '- The Core and BLE Unified copies of `WSS_Core_Interface.dll` were verified to match.'
+            '- Artifact-provided System.IO.Ports files were excluded; NuGet System.IO.Ports 9.0.0 remains authoritative.'
+            '- Normal Integration PR CI will validate this committed/local state after the PR opens.'
+            ''
+            'This workflow does not merge the PR.'
+          ) | Set-Content -LiteralPath $bodyPath
+
+          $url = & gh pr create `
+            --repo cwru-non-academic/CSharp_WSS_Integration_Lib `
+            --base dev `
+            --head $env:BRANCH_NAME `
+            --title "Promote WSS $($env:WSS_RELEASE_TAG)" `
+            --body-file $bodyPath
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to create the Integration promotion PR.'
+          }
+          "Created promotion PR: $url" >> $env:GITHUB_STEP_SUMMARY

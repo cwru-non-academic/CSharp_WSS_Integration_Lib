@@ -14,10 +14,6 @@ jobs:
   behavioral-tests:
     name: Integration behavioral tests
     runs-on: ubuntu-latest
-    env:
-      WSS_RELEASE_TAG: v0.3.0-rc.12
-      WSS_CORE_ARCHIVE_NAME: WSS-Core-v0.3.0-rc.12.zip
-      WSS_BLE_ARCHIVE_NAME: WSS-BLE-Unified-v0.3.0-rc.12.zip
     steps:
       - uses: actions/checkout@v4
 
@@ -25,123 +21,24 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
-      - name: Download and verify WSS release artifacts
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          function Assert-FileExists([string] $Path) {
-            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-              throw "Required file is missing: $Path"
-            }
-          }
-
-          function Assert-DirectoryHasFiles([string] $Path) {
-            if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
-              throw "Required directory is missing: $Path"
-            }
-            if (@(Get-ChildItem -LiteralPath $Path -File -Recurse).Count -eq 0) {
-              throw "Required directory contains no files: $Path"
-            }
-          }
-
-          $downloadDir = Join-Path $env:RUNNER_TEMP "wss-downloads/$env:WSS_RELEASE_TAG"
-          $coreArtifactDir = Join-Path $env:RUNNER_TEMP "wss-core/$env:WSS_RELEASE_TAG"
-          $bleArtifactDir = Join-Path $env:RUNNER_TEMP "wss-ble-unified/$env:WSS_RELEASE_TAG"
-          New-Item -ItemType Directory -Force -Path $downloadDir, $coreArtifactDir, $bleArtifactDir | Out-Null
-
-          & gh release download $env:WSS_RELEASE_TAG `
-            --repo cwru-non-academic/WSSCore `
-            --pattern $env:WSS_CORE_ARCHIVE_NAME `
-            --pattern $env:WSS_BLE_ARCHIVE_NAME `
-            --pattern SHA256SUMS.txt `
-            --dir $downloadDir
-          if ($LASTEXITCODE -ne 0) {
-            throw "gh release download failed with exit code $LASTEXITCODE."
-          }
-
-          $checksumsPath = Join-Path $downloadDir 'SHA256SUMS.txt'
-          Assert-FileExists $checksumsPath
-          $checksumText = Get-Content -LiteralPath $checksumsPath -Raw
-          foreach ($archiveName in @($env:WSS_CORE_ARCHIVE_NAME, $env:WSS_BLE_ARCHIVE_NAME)) {
-            $archivePath = Join-Path $downloadDir $archiveName
-            Assert-FileExists $archivePath
-            $escapedName = [Regex]::Escape($archiveName)
-            $checksumMatch = [Regex]::Match(
-              $checksumText,
-              "(?m)^(?<hash>[0-9a-fA-F]{64})\s+\*?$escapedName\r?$"
-            )
-            if (-not $checksumMatch.Success) {
-              throw "SHA256SUMS.txt has no checksum entry for $archiveName."
-            }
-            $expectedSha = $checksumMatch.Groups['hash'].Value
-            $actualSha = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
-            if (-not $actualSha.Equals($expectedSha, [StringComparison]::OrdinalIgnoreCase)) {
-              throw "SHA-256 mismatch for $archiveName. Expected $expectedSha; actual $actualSha."
-            }
-            "Verified $archiveName SHA256: $actualSha"
-          }
-
-          Expand-Archive -LiteralPath (Join-Path $downloadDir $env:WSS_CORE_ARCHIVE_NAME) -DestinationPath $coreArtifactDir -Force
-          Expand-Archive -LiteralPath (Join-Path $downloadDir $env:WSS_BLE_ARCHIVE_NAME) -DestinationPath $bleArtifactDir -Force
-
-          Assert-FileExists (Join-Path $coreArtifactDir 'WSS_Core_Interface.dll')
-          Assert-FileExists (Join-Path $bleArtifactDir 'WSS.Transport.BLE.dll')
-          foreach ($requiredFile in @(
-            'backends/windows/WSS.Transport.BLE.Windows.dll',
-            'backends/windows/Microsoft.Windows.SDK.NET.dll',
-            'backends/windows/WinRT.Runtime.dll',
-            'backends/linux/WSS.Transport.BLE.Linux.dll',
-            'backends/linux/Linux.Bluetooth.dll',
-            'backends/linux/Tmds.DBus.dll'
-          )) {
-            Assert-FileExists (Join-Path $bleArtifactDir $requiredFile)
-          }
-          foreach ($runtimeTree in @('runtimes/win', 'runtimes/unix', 'runtimes/linux-x64')) {
-            Assert-DirectoryHasFiles (Join-Path $bleArtifactDir $runtimeTree)
-          }
-
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "WSS_ARTIFACT_DIR=$coreArtifactDir"
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "WSS_BLE_ARTIFACT_DIR=$bleArtifactDir"
-
-      - name: Disable checked-in binary fallback and clean outputs
+      - name: Clean outputs
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          if (-not (Test-Path -LiteralPath 'lib' -PathType Container)) {
-            throw 'Checked-in lib directory was not found, so fallback disabling could not be verified.'
-          }
-          Move-Item -LiteralPath 'lib' -Destination 'lib.ci-disabled'
-          if (Test-Path -LiteralPath 'lib') {
-            throw 'Checked-in lib directory still exists after fallback disabling.'
-          }
-          foreach ($outputPath in @(
-            'src/bin',
-            'src/obj',
-            'tests/Wss.CSharpImplementation.Tests/bin',
-            'tests/Wss.CSharpImplementation.Tests/obj'
-          )) {
-            Remove-Item -LiteralPath $outputPath -Recurse -Force -ErrorAction SilentlyContinue
-          }
+          Get-ChildItem -Path src, tests -Directory -Recurse -Force |
+            Where-Object Name -in @('bin', 'obj') |
+            Remove-Item -Recurse -Force
 
-      - name: Restore with released WSS assemblies
+      - name: Restore committed Integration state
         shell: pwsh
-        run: >-
-          dotnet restore tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+        run: dotnet restore tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
 
-      - name: Build with released WSS assemblies
+      - name: Build committed Integration state
         shell: pwsh
         run: >-
           dotnet build tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
           -c Release
           --no-restore
           -p:TreatWarningsAsErrors=true
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
 
       - name: Run shared C# implementation behavioral tests
         shell: pwsh
@@ -152,8 +49,6 @@ jobs:
           --no-restore
           --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationOptionsTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationControllerTestModeTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationControllerConformanceTests"
           -p:TreatWarningsAsErrors=true
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
 
   compatibility:
     name: Integration compatibility (${{ matrix.name }})
@@ -168,10 +63,6 @@ jobs:
           - name: macOS
             os: macos-latest
     runs-on: ${{ matrix.os }}
-    env:
-      WSS_RELEASE_TAG: v0.3.0-rc.12
-      WSS_CORE_ARCHIVE_NAME: WSS-Core-v0.3.0-rc.12.zip
-      WSS_BLE_ARCHIVE_NAME: WSS-BLE-Unified-v0.3.0-rc.12.zip
     steps:
       - uses: actions/checkout@v4
 
@@ -179,167 +70,55 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
-      - name: Download and verify WSS release artifacts
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          function Assert-FileExists([string] $Path) {
-            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-              throw "Required file is missing: $Path"
-            }
-          }
-
-          function Assert-DirectoryHasFiles([string] $Path) {
-            if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
-              throw "Required directory is missing: $Path"
-            }
-            if (@(Get-ChildItem -LiteralPath $Path -File -Recurse).Count -eq 0) {
-              throw "Required directory contains no files: $Path"
-            }
-          }
-
-          $downloadDir = Join-Path $env:RUNNER_TEMP "wss-downloads/$env:WSS_RELEASE_TAG"
-          $coreArtifactDir = Join-Path $env:RUNNER_TEMP "wss-core/$env:WSS_RELEASE_TAG"
-          $bleArtifactDir = Join-Path $env:RUNNER_TEMP "wss-ble-unified/$env:WSS_RELEASE_TAG"
-          New-Item -ItemType Directory -Force -Path $downloadDir, $coreArtifactDir, $bleArtifactDir | Out-Null
-
-          & gh release download $env:WSS_RELEASE_TAG `
-            --repo cwru-non-academic/WSSCore `
-            --pattern $env:WSS_CORE_ARCHIVE_NAME `
-            --pattern $env:WSS_BLE_ARCHIVE_NAME `
-            --pattern SHA256SUMS.txt `
-            --dir $downloadDir
-          if ($LASTEXITCODE -ne 0) {
-            throw "gh release download failed with exit code $LASTEXITCODE."
-          }
-
-          $checksumsPath = Join-Path $downloadDir 'SHA256SUMS.txt'
-          Assert-FileExists $checksumsPath
-          $checksumText = Get-Content -LiteralPath $checksumsPath -Raw
-          foreach ($archiveName in @($env:WSS_CORE_ARCHIVE_NAME, $env:WSS_BLE_ARCHIVE_NAME)) {
-            $archivePath = Join-Path $downloadDir $archiveName
-            Assert-FileExists $archivePath
-            $escapedName = [Regex]::Escape($archiveName)
-            $checksumMatch = [Regex]::Match(
-              $checksumText,
-              "(?m)^(?<hash>[0-9a-fA-F]{64})\s+\*?$escapedName\r?$"
-            )
-            if (-not $checksumMatch.Success) {
-              throw "SHA256SUMS.txt has no checksum entry for $archiveName."
-            }
-            $expectedSha = $checksumMatch.Groups['hash'].Value
-            $actualSha = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
-            if (-not $actualSha.Equals($expectedSha, [StringComparison]::OrdinalIgnoreCase)) {
-              throw "SHA-256 mismatch for $archiveName. Expected $expectedSha; actual $actualSha."
-            }
-            "Verified $archiveName SHA256: $actualSha"
-          }
-
-          Expand-Archive -LiteralPath (Join-Path $downloadDir $env:WSS_CORE_ARCHIVE_NAME) -DestinationPath $coreArtifactDir -Force
-          Expand-Archive -LiteralPath (Join-Path $downloadDir $env:WSS_BLE_ARCHIVE_NAME) -DestinationPath $bleArtifactDir -Force
-
-          Assert-FileExists (Join-Path $coreArtifactDir 'WSS_Core_Interface.dll')
-          Assert-FileExists (Join-Path $bleArtifactDir 'WSS.Transport.BLE.dll')
-          foreach ($requiredFile in @(
-            'backends/windows/WSS.Transport.BLE.Windows.dll',
-            'backends/windows/Microsoft.Windows.SDK.NET.dll',
-            'backends/windows/WinRT.Runtime.dll',
-            'backends/linux/WSS.Transport.BLE.Linux.dll',
-            'backends/linux/Linux.Bluetooth.dll',
-            'backends/linux/Tmds.DBus.dll'
-          )) {
-            Assert-FileExists (Join-Path $bleArtifactDir $requiredFile)
-          }
-          foreach ($runtimeTree in @('runtimes/win', 'runtimes/unix', 'runtimes/linux-x64')) {
-            Assert-DirectoryHasFiles (Join-Path $bleArtifactDir $runtimeTree)
-          }
-
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "WSS_ARTIFACT_DIR=$coreArtifactDir"
-          Add-Content -LiteralPath $env:GITHUB_ENV -Value "WSS_BLE_ARTIFACT_DIR=$bleArtifactDir"
-
-      - name: Disable checked-in binary fallback and clean outputs
+      - name: Clean outputs
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          if (-not (Test-Path -LiteralPath 'lib' -PathType Container)) {
-            throw 'Checked-in lib directory was not found, so fallback disabling could not be verified.'
-          }
-          Move-Item -LiteralPath 'lib' -Destination 'lib.ci-disabled'
-          if (Test-Path -LiteralPath 'lib') {
-            throw 'Checked-in lib directory still exists after fallback disabling.'
-          }
-          foreach ($outputPath in @(
-            'src/bin',
-            'src/obj',
-            'tests/Wss.CSharpImplementation.Tests/bin',
-            'tests/Wss.CSharpImplementation.Tests/obj'
-          )) {
-            Remove-Item -LiteralPath $outputPath -Recurse -Force -ErrorAction SilentlyContinue
-          }
+          Get-ChildItem -Path src, tests -Directory -Recurse -Force |
+            Where-Object Name -in @('bin', 'obj') |
+            Remove-Item -Recurse -Force
 
-      - name: Restore with released WSS assemblies
+      - name: Restore committed Integration state
         shell: pwsh
-        run: >-
-          dotnet restore tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+        run: dotnet restore tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
 
-      - name: Build with released WSS assemblies
+      - name: Build committed Integration state
         shell: pwsh
         run: >-
           dotnet build tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
           -c Release
           --no-restore
           -p:TreatWarningsAsErrors=true
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
 
-      - name: Verify downstream WSS artifact propagation
+      - name: Verify committed WSS artifact propagation
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $sourceRoot = (Resolve-Path -LiteralPath 'lib').Path
           $outputDir = 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
 
           function Assert-SameHash([string] $SourceFile, [string] $OutputFile) {
-            if (-not (Test-Path -LiteralPath $SourceFile -PathType Leaf)) {
-              throw "Authoritative release file is missing: $SourceFile"
-            }
             if (-not (Test-Path -LiteralPath $OutputFile -PathType Leaf)) {
               throw "Downstream output file is missing: $OutputFile"
             }
             $sourceSha = (Get-FileHash -LiteralPath $SourceFile -Algorithm SHA256).Hash
             $outputSha = (Get-FileHash -LiteralPath $OutputFile -Algorithm SHA256).Hash
             if (-not $outputSha.Equals($sourceSha, [StringComparison]::OrdinalIgnoreCase)) {
-              throw "Downstream hash mismatch for $OutputFile. Expected $sourceSha; actual $outputSha."
-            }
-            "$OutputFile SHA256: $outputSha"
-          }
-
-          function Assert-TreePropagated([string] $SourceRoot, [string] $RelativeTree) {
-            $sourceTree = Join-Path $SourceRoot $RelativeTree
-            if (-not (Test-Path -LiteralPath $sourceTree -PathType Container)) {
-              throw "Authoritative release tree is missing: $sourceTree"
-            }
-            $sourceFiles = @(Get-ChildItem -LiteralPath $sourceTree -File -Recurse)
-            if ($sourceFiles.Count -eq 0) {
-              throw "Authoritative release tree contains no files: $sourceTree"
-            }
-            foreach ($sourceFile in $sourceFiles) {
-              $relativeFile = [IO.Path]::GetRelativePath($SourceRoot, $sourceFile.FullName)
-              Assert-SameHash $sourceFile.FullName (Join-Path $outputDir $relativeFile)
+              throw "Downstream hash mismatch for $OutputFile."
             }
           }
 
-          Assert-SameHash (Join-Path $env:WSS_ARTIFACT_DIR 'WSS_Core_Interface.dll') (Join-Path $outputDir 'WSS_Core_Interface.dll')
-          Assert-SameHash (Join-Path $env:WSS_BLE_ARTIFACT_DIR 'WSS.Transport.BLE.dll') (Join-Path $outputDir 'WSS.Transport.BLE.dll')
-          Assert-TreePropagated $env:WSS_BLE_ARTIFACT_DIR 'backends/windows'
-          Assert-TreePropagated $env:WSS_BLE_ARTIFACT_DIR 'backends/linux'
-          Assert-TreePropagated $env:WSS_BLE_ARTIFACT_DIR 'runtimes/win'
-          Assert-TreePropagated $env:WSS_BLE_ARTIFACT_DIR 'runtimes/unix'
-          Assert-TreePropagated $env:WSS_BLE_ARTIFACT_DIR 'runtimes/linux-x64'
+          foreach ($sourceFile in Get-ChildItem -LiteralPath $sourceRoot -File -Recurse) {
+            $relativePath = [IO.Path]::GetRelativePath($sourceRoot, $sourceFile.FullName).Replace('\', '/')
+            $isNuGetOwned =
+              $relativePath.Equals('System.IO.Ports.dll', [StringComparison]::OrdinalIgnoreCase) -or
+              ($relativePath.StartsWith('runtimes/', [StringComparison]::OrdinalIgnoreCase) -and
+                $sourceFile.Name.Equals('System.IO.Ports.dll', [StringComparison]::OrdinalIgnoreCase)) -or
+              ($relativePath.StartsWith('runtimes/', [StringComparison]::OrdinalIgnoreCase) -and
+                $sourceFile.Name.StartsWith('libSystem.IO.Ports.Native.', [StringComparison]::OrdinalIgnoreCase))
+            if (-not $isNuGetOwned) {
+              Assert-SameHash $sourceFile.FullName (Join-Path $outputDir $relativePath)
+            }
+          }
 
       - name: Run platform compatibility tests
         shell: pwsh
@@ -350,5 +129,3 @@ jobs:
           --no-restore
           --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.SerialRuntimeSelectionTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.BleBackendLoadingTests"
           -p:TreatWarningsAsErrors=true
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
