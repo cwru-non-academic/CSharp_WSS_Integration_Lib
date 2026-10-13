@@ -23,19 +23,51 @@ dotnet restore Wss.CSharpImplementation.sln
 dotnet build Wss.CSharpImplementation.sln -c Release
 ```
 
-By default, the project resolves WSS assemblies from `lib/`. To build and test against an
-official WSS release, extract the Core and Unified BLE artifacts separately and set both artifact roots:
+By default, the project resolves WSS assemblies from `lib/`. Updated source requires the
+complete final universal distribution. For downloaded-candidate builds, verify the single
+`WSS-Universal-<name>.zip` and extract its nested `WSS-Universal/` root:
 
 ```bash
 dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj -c Release \
-  -p:WSS_ARTIFACT_DIR=/path/to/extracted/WSS-Core \
-  -p:WSS_BLE_ARTIFACT_DIR=/path/to/extracted/WSS-BLE-Unified
+  -p:WSS_ARTIFACT_DIR=/path/to/extracted/WSS-Universal \
+  -p:WSS_BLE_ARTIFACT_DIR=/path/to/extracted/WSS-Universal
 ```
 
-`WSS_ARTIFACT_DIR` identifies the Core artifact root. `WSS_BLE_ARTIFACT_DIR` identifies the matched
-Unified BLE artifact root. The integration project automatically propagates the BLE facade, both
-Windows and Linux backend trees, and the `win`, `unix`, and `linux-x64` runtime trees to downstream
-consumer build and publish outputs. No manual DLL copying is required.
+Both artifact properties must identify the same root. The project references Core, Serial,
+and the Standard 2.0 BLE facade directly. System.IO.Ports NuGet 8.0.0 selects the runnable
+host implementation; the root net462 alternate is not copied over it. Both backend trees,
+the Windows native wrapper/production DLL, shared dependencies, and all runtime trees
+propagate to build and publish outputs. Preflight verifies their hashes against the candidate.
+
+### Exact candidate preflight
+
+Dispatch the existing `wss-preflight.yml` on the updated Integration source with these inputs:
+
+- `wss_producer_repository`: `cwru-non-academic/WSSCore`
+- `wss_run_id`: exact successful `artifacts.yml` run (manual dispatch or tag push, not a PR merge-ref run)
+- `wss_commit`: full expected producer SHA
+- `wss_archive`: `WSS-Universal-ci.zip` for an untagged run
+- `wss_sha256`: expected archive SHA-256, obtained from that run's `SHA256SUMS.txt`
+- `correlation_id`: optional single-line identifier
+
+Alternatively set `wss_release_tag` instead of `wss_run_id`, with the matching universal
+archive name, expected tag commit, and SHA-256. Tag selection resolves exactly one successful
+authoritative tag-push run and downloads its retained Actions artifact, not manually attached
+release assets; expired/missing artifacts fail closed. There is no release/default fallback and
+no support for the old two-archive format. The resolver verifies run/workflow/repository,
+successful completion, exact commit, artifact availability, checksum and exact ZIP inventory
+before extraction. All jobs consume one verified tree; `wss-candidate-provenance` retains
+the producer run/artifact ID, commit and archive hash.
+
+Use exactly the same candidate inputs for CLI preflight, with `integration_sha` selecting
+the updated Integration source. No submodule promotion is required for this test.
+
+**Transition coordination:** committed `lib/` still contains the old distribution. Normal
+Integration CI cannot pass with that payload and the new references/tests; preflight must
+use the explicit universal candidate. Do not overlay old DLLs or add compatibility shims.
+After preflights pass, a separate promotion phase must update committed artifacts and the
+promotion scripts. The shared resolver now requires candidate provenance, so existing
+promotion calls supplying only a release tag are intentionally not runnable unchanged.
 
 ## Emulator Conformance Mode
 
@@ -72,7 +104,7 @@ by WSS Core's `IWssConformance`.
 - Serial transport remains available through the vendor serial stack.
 - Test transport remains available for simulated runs.
 - BLE transport is exposed through `BleNusTransport` and is intended for Nordic UART Service-compatible devices.
-- The Unified BLE artifact provides platform backends for Windows and Linux; compatibility for both is checked in CI.
+- The universal artifact provides platform backends for Windows and Linux; macOS supports Core/Serial only.
 - The current WSS BLE path assumes an unpaired, unencrypted NUS connection and does not request BLE pairing.
 
 ## Runtime Ownership

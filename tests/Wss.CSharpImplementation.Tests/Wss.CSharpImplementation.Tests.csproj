@@ -23,6 +23,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Wss.CSharpImplementation.csproj" />
+    <Reference Include="WSS.Transport.Serial">
+      <HintPath>$(WssArtifactDir)\WSS.Transport.Serial.dll</HintPath>
+    </Reference>
     <Reference Include="WSS_Core_Interface">
       <HintPath>$(WssArtifactDir)\WSS_Core_Interface.dll</HintPath>
     </Reference>

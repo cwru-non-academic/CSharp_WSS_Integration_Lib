@@ -1,60 +1,95 @@
 name: WSS downloaded-artifact preflight
-run-name: WSS preflight ${{ inputs.wss_release_tag != '' && inputs.wss_release_tag || 'default' }}${{ inputs.correlation_id != '' && format(' / {0}', inputs.correlation_id) || '' }}
+run-name: WSS preflight ${{ inputs.wss_run_id || inputs.wss_release_tag }} / ${{ inputs.correlation_id }}
 
 on:
   workflow_dispatch:
     inputs:
       wss_release_tag:
-        description: WSSCore release tag; empty uses the workflow default
+        description: Published universal release tag (mutually exclusive with run ID)
         required: false
         type: string
       correlation_id:
         description: Optional promotion-cascade correlation ID
         required: false
         type: string
+      wss_producer_repository:
+        description: Authoritative producer repository
+        default: cwru-non-academic/WSSCore
+        type: string
+      wss_run_id:
+        description: Exact successful artifacts.yml run ID (no PR merge-ref artifacts)
+        type: string
+      wss_commit:
+        description: Expected full producer commit SHA
+        required: true
+        type: string
+      wss_archive:
+        description: Universal ZIP filename
+        default: WSS-Universal-ci.zip
+        required: true
+        type: string
+      wss_sha256:
+        description: Expected universal ZIP SHA-256
+        required: true
+        type: string
 
 permissions:
   contents: read
-
-env:
-  DEFAULT_WSS_RELEASE_TAG: v0.3.0-rc.12
 
 jobs:
   resolve-inputs:
     name: Resolve preflight inputs
     runs-on: ubuntu-latest
-    outputs:
-      release_tag: ${{ steps.resolve.outputs.release_tag }}
     steps:
+      - uses: actions/checkout@v4
+      - name: Create producer read token
+        id: core-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore
+          permission-contents: read
+          permission-actions: read
       - name: Resolve and validate inputs
         id: resolve
         shell: pwsh
         env:
-          REQUESTED_TAG: ${{ inputs.wss_release_tag }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
+          GH_TOKEN: ${{ steps.core-token.outputs.token }}
+          PRODUCER_REPOSITORY: ${{ inputs.wss_producer_repository }}
+          RUN_ID: ${{ inputs.wss_run_id }}
+          EXPECTED_COMMIT: ${{ inputs.wss_commit }}
+          ARCHIVE: ${{ inputs.wss_archive }}
+          SHA256: ${{ inputs.wss_sha256 }}
+          RELEASE_TAG: ${{ inputs.wss_release_tag }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $tag = if ([string]::IsNullOrWhiteSpace($env:REQUESTED_TAG)) {
-            $env:DEFAULT_WSS_RELEASE_TAG
-          } else {
-            $env:REQUESTED_TAG
-          }
-
-          if ($tag -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') {
-            throw 'wss_release_tag must contain only letters, digits, periods, underscores, and hyphens.'
-          }
           if ($env:CORRELATION_ID.Length -gt 200 -or $env:CORRELATION_ID -match "[\r\n]") {
             throw 'correlation_id must be a single line no longer than 200 characters.'
           }
 
-          "release_tag=$tag" >> $env:GITHUB_OUTPUT
+          ./.github/scripts/Resolve-WssRelease.ps1 -ProducerRepository $env:PRODUCER_REPOSITORY -RunId $env:RUN_ID -ReleaseTag $env:RELEASE_TAG -ExpectedCommit $env:EXPECTED_COMMIT -ArchiveName $env:ARCHIVE -ExpectedSha256 $env:SHA256 -OutputRoot "$env:RUNNER_TEMP/wss-release"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-wss-universal
+          path: ${{ runner.temp }}/wss-release/extracted/WSS-Universal
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wss-candidate-provenance
+          path: ${{ runner.temp }}/wss-release/candidate.json
+          if-no-files-found: error
 
   behavioral-tests:
     name: Preflight behavioral tests
     needs: resolve-inputs
     runs-on: ubuntu-latest
     env:
-      WSS_RELEASE_TAG: ${{ needs.resolve-inputs.outputs.release_tag }}
+      WSS_ARTIFACT_DIR: ${{ github.workspace }}/.wss-artifacts/universal
+      WSS_BLE_ARTIFACT_DIR: ${{ github.workspace }}/.wss-artifacts/universal
     steps:
       - uses: actions/checkout@v4
 
@@ -62,16 +97,10 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
-      - name: Download and verify WSS release artifacts
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          ./.github/scripts/Resolve-WssRelease.ps1 `
-            -ReleaseTag $env:WSS_RELEASE_TAG `
-            -OutputRoot (Join-Path $env:RUNNER_TEMP 'wss-release')
-          "WSS_ARTIFACT_DIR=$(Join-Path $env:RUNNER_TEMP 'wss-release/core')" >> $env:GITHUB_ENV
-          "WSS_BLE_ARTIFACT_DIR=$(Join-Path $env:RUNNER_TEMP 'wss-release/ble-unified')" >> $env:GITHUB_ENV
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-wss-universal
+          path: ${{ env.WSS_ARTIFACT_DIR }}
 
       - name: Disable committed fallback and clean outputs
         shell: pwsh
@@ -132,7 +161,8 @@ jobs:
             os: macos-latest
     runs-on: ${{ matrix.os }}
     env:
-      WSS_RELEASE_TAG: ${{ needs.resolve-inputs.outputs.release_tag }}
+      WSS_ARTIFACT_DIR: ${{ github.workspace }}/.wss-artifacts/universal
+      WSS_BLE_ARTIFACT_DIR: ${{ github.workspace }}/.wss-artifacts/universal
     steps:
       - uses: actions/checkout@v4
 
@@ -140,16 +170,10 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
-      - name: Download and verify WSS release artifacts
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          ./.github/scripts/Resolve-WssRelease.ps1 `
-            -ReleaseTag $env:WSS_RELEASE_TAG `
-            -OutputRoot (Join-Path $env:RUNNER_TEMP 'wss-release')
-          "WSS_ARTIFACT_DIR=$(Join-Path $env:RUNNER_TEMP 'wss-release/core')" >> $env:GITHUB_ENV
-          "WSS_BLE_ARTIFACT_DIR=$(Join-Path $env:RUNNER_TEMP 'wss-release/ble-unified')" >> $env:GITHUB_ENV
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-wss-universal
+          path: ${{ env.WSS_ARTIFACT_DIR }}
 
       - name: Disable committed fallback and clean outputs
         shell: pwsh
@@ -186,36 +210,10 @@ jobs:
       - name: Verify downloaded artifact propagation
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $outputDir = 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
-
-          function Assert-SameHash([string] $SourceFile, [string] $OutputFile) {
-            if (-not (Test-Path -LiteralPath $OutputFile -PathType Leaf)) {
-              throw "Downstream output file is missing: $OutputFile"
-            }
-            $sourceSha = (Get-FileHash -LiteralPath $SourceFile -Algorithm SHA256).Hash
-            $outputSha = (Get-FileHash -LiteralPath $OutputFile -Algorithm SHA256).Hash
-            if (-not $outputSha.Equals($sourceSha, [StringComparison]::OrdinalIgnoreCase)) {
-              throw "Downstream hash mismatch for $OutputFile."
-            }
-          }
-
-          Assert-SameHash `
-            (Join-Path $env:WSS_ARTIFACT_DIR 'WSS_Core_Interface.dll') `
-            (Join-Path $outputDir 'WSS_Core_Interface.dll')
-
-          foreach ($sourceFile in Get-ChildItem -LiteralPath $env:WSS_BLE_ARTIFACT_DIR -File -Recurse) {
-            $relativePath = [IO.Path]::GetRelativePath($env:WSS_BLE_ARTIFACT_DIR, $sourceFile.FullName).Replace('\', '/')
-            $isNuGetOwned =
-              $relativePath.Equals('System.IO.Ports.dll', [StringComparison]::OrdinalIgnoreCase) -or
-              ($relativePath.StartsWith('runtimes/', [StringComparison]::OrdinalIgnoreCase) -and
-                $sourceFile.Name.Equals('System.IO.Ports.dll', [StringComparison]::OrdinalIgnoreCase)) -or
-              ($relativePath.StartsWith('runtimes/', [StringComparison]::OrdinalIgnoreCase) -and
-                $sourceFile.Name.StartsWith('libSystem.IO.Ports.Native.', [StringComparison]::OrdinalIgnoreCase))
-            if (-not $isNuGetOwned) {
-              Assert-SameHash $sourceFile.FullName (Join-Path $outputDir $relativePath)
-            }
-          }
+          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
+          dotnet publish src/Wss.CSharpImplementation.csproj -c Release --no-restore -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" -o "$env:RUNNER_TEMP/integration-publish"
+          if ($LASTEXITCODE -ne 0) { throw 'Integration publish failed.' }
+          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot "$env:RUNNER_TEMP/integration-publish"
 
       - name: Run platform compatibility tests
         shell: pwsh
