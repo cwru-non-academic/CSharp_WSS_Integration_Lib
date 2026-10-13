@@ -20,8 +20,23 @@ $platform = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { '
 $hostPorts = Join-Path $OutputRoot 'System.IO.Ports.dll'
 if (Test-Path -LiteralPath $hostPorts) {
     $runtimePorts = Join-Path $ArtifactRoot "runtimes/$platform/lib/net8.0/System.IO.Ports.dll"
-    if ((Get-FileHash -LiteralPath $hostPorts).Hash -cne (Get-FileHash -LiteralPath $runtimePorts).Hash) {
-        throw 'Root output Ports must be the host runtime asset, never the net462 alternate.'
+    # Framework-dependent builds retain NuGet's neutral net8 DLL at the root;
+    # .deps.json selects the platform runtime tree. RID publishes can flatten it.
+    $packageRoot = $env:NUGET_PACKAGES
+    if ([string]::IsNullOrEmpty($packageRoot)) {
+        $locals = & dotnet nuget locals global-packages --list --force-english-output
+        if ($LASTEXITCODE -ne 0 -or $locals -notmatch '^global-packages:\s*(.+)$') {
+            throw 'Cannot locate restored NuGet assets to verify neutral Ports output.'
+        }
+        $packageRoot = $Matches[1].Trim()
+    }
+    $neutralPorts = Join-Path $packageRoot 'system.io.ports/8.0.0/lib/net8.0/System.IO.Ports.dll'
+    if (-not (Test-Path -LiteralPath $neutralPorts -PathType Leaf)) {
+        throw 'Restored System.IO.Ports 8.0.0 neutral net8 asset is missing.'
+    }
+    $allowedHashes = @((Get-FileHash -LiteralPath $runtimePorts).Hash, (Get-FileHash -LiteralPath $neutralPorts).Hash)
+    if ((Get-FileHash -LiteralPath $hostPorts).Hash -cnotin $allowedHashes) {
+        throw 'Root output Ports is neither the restored neutral net8 asset nor the verified host runtime asset; net462 is forbidden.'
     }
 }
 $obsolete = @('WinRT.Runtime.dll', 'Microsoft.Windows.SDK.NET.dll', 'WSS.Transport.BLE.Windows.NativeBackend.dll',
