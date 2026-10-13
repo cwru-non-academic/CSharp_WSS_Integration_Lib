@@ -69,6 +69,86 @@ After preflights pass, a separate promotion phase must update committed artifact
 promotion scripts. The shared resolver now requires candidate provenance, so existing
 promotion calls supplying only a release tag are intentionally not runnable unchanged.
 
+## Universal promotion and first bootstrap
+
+Routine `promote-wss.yml` retains **lib-only** bot PRs to `dev`. Dispatch it on `dev` with
+`approval_json` and `correlation_id`. Schema 2 is illustrated by `.github/universal-bootstrap.json`:
+producer repository/commit/run/artifact/archive/hash, plus both downstream source SHAs and
+successful preflight run IDs. Future promotions supply fresh matching values, never a default.
+Both preflight provenance records and the CLI checkout-verification log must match. Source
+comparison allows only explicitly listed promotion/CI automation and documentation changes
+from the tested source; application, reference and preflight changes require new evidence.
+
+`New-WssLib.ps1` deterministically stages all 25 universal files plus `lib/wss-candidate.json`.
+No DLL overlay or Ports runtime exclusion is used. Existing PR/branch reuse requires identical
+bytes, source, approval and correlation. Native branch probing still distinguishes exit 2
+(absence) from API/authentication failures. No force push or auto-merge is used.
+
+### First coordinated migration
+
+Do not merge source-only changes first or relax normal CI. Use
+`Prepare-UniversalBootstrap.ps1` in a clean **separate worktree** descended from the validated
+source plus reviewed automation. The script is pinned to the first verified candidate,
+Integration `cd181c1f2abca8048fc2d1181dbf9beca9050e21`/run `38420209110`, and CLI
+`a3b272b23fba4e566d7c1fe3bfafa048cca9806c`/run `38420541537`. It checks current `dev` ancestry,
+exact source compatibility and an explicit bootstrap path allowlist. Without `-Stage` it
+only verifies/stages temporary files; with `-Stage` it creates `bootstrap/universal-wss-378a489`
+and stages dependencies/gitlink. It never commits, pushes, opens PRs or merges.
+
+The two `.github/promotion-evidence/*.zip.b64` files preserve original provenance ZIP bytes
+before one-day retention expires. Digests are pinned to official Actions metadata (Integration
+artifact `11826726567`, CLI artifact `11825383860`). Only this fixed bootstrap can use them;
+run success/source identity, the CLI checkout log and producer artifact remain live requirements.
+Routine promotion has no expired-proof fallback.
+
+Each retained proof is 480 Base64 characters representing a 358-byte ZIP whose only
+entry is a 299-byte `candidate.json`. Inspection confirmed exactly the seven public
+candidate provenance fields: no secrets, credentials, logs, WSS binaries or unrelated data.
+Retain both files through the Integration and CLI bootstrap reviews/merges. They can be
+removed in a separately reviewed cleanup after both coordinated migrations finish and
+the pinned bootstrap path is retired. That cleanup must also retire/update its proof-specific
+safety tests; deleting the archives alone would break normal Integration CI. Routine
+promotion restrictions and live approval checks must remain intact.
+
+After authorization to commit the reviewed automation, create a separate Integration worktree
+from that automation commit. Run from the Integration tooling checkout:
+
+```powershell
+./.github/scripts/Prepare-UniversalBootstrap.ps1 -Repository Integration -Worktree <INTEGRATION_BOOTSTRAP_WORKTREE> -ScratchRoot <NEW_SCRATCH_DIRECTORY> -Stage
+```
+
+Inspect staged dependencies and the whole branch diff to `dev`. After separate authorization,
+commit the lib delta, push the bootstrap branch and open an Integration `dev` PR using generated
+`bootstrap-pr-body.md`. This PR includes validated source, reviewed automation and exact binaries.
+Require all normal committed-state Integration CI jobs and human review before manual merge.
+
+Bootstrap deliberately stays outside the routine bot/lib-only merge trigger. After Integration
+merges, create a separate CLI worktree from its reviewed source/automation commit and run:
+
+```powershell
+./.github/scripts/Prepare-UniversalBootstrap.ps1 -Repository CLI -Worktree <CLI_BOOTSTRAP_WORKTREE> -ScratchRoot <ANOTHER_NEW_SCRATCH_DIRECTORY> -IntegrationPr <MERGED_INTEGRATION_PR_NUMBER> -Stage
+```
+
+It verifies the actual Integration merge SHA in `dev`, latest successful normal CI at the PR's
+final head, approved source, committed provenance and universal bytes before staging the gitlink.
+The preflight-only commit cannot be the final target. Publish/review the coordinated CLI PR only
+after authorization; require normal CLI CI before manual merge. Incompatible `dev` advancement
+or unavailable producer/log evidence stops preparation rather than overwriting/substituting.
+
+### Routine updates after bootstrap
+
+Integration uses `automation/wss-<run>-<hash>` with lib-only diffs. Manual merge triggers
+`dispatch-cli-promotion.yml`, using trusted base code and checking bot origin, lib-only scope,
+approval, merge SHA and normal CI. It dispatches CLI on `dev` with `integration_sha`,
+`integration_pr`, `approval_json` and `correlation_id`. CLI validates with trusted Integration
+`dev` tools before creating write credentials, retains gitlink-only PRs, and uses normal CI.
+
+Focused safety checks (normal Integration behavioral CI also runs metadata/scope cases):
+
+```powershell
+./.github/scripts/tests/WssPromotion.Tests.ps1 -ArtifactRoot <VERIFIED_EXTRACTED_WSS_UNIVERSAL_ROOT>
+```
+
 ## Emulator Conformance Mode
 
 `StimulationOptions.Transport` provides four distinct transport choices:

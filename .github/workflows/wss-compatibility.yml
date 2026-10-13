@@ -17,6 +17,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate promotion safety contracts
+        shell: pwsh
+        run: ./.github/scripts/tests/WssPromotion.Tests.ps1
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
