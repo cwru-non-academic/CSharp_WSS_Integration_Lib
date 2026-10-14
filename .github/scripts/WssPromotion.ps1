@@ -141,6 +141,18 @@ function Assert-WssPaths([string[]] $Paths, [string[]] $ExtraAllowed = @()) {
     }
 }
 
+function Assert-WssNewtonsoftTestAlignment([string] $BeforeBlob, [string] $AfterBlob, [string] $CandidateNewtonsoftHash) {
+    # Authorized first-bootstrap correction only: the original validated test project
+    # plus only the Newtonsoft.Json 13.0.3 graph pin (excluding package compile/runtime
+    # assets) and a direct copy-local reference to the candidate DLL. Git blob IDs bind
+    # the whole file, not a path allowlist; the candidate DLL must also match.
+    if ($BeforeBlob -cne 'ac4ca9ca0371f2896f4a29b4f3ec1db55025f363' -or
+        $AfterBlob -cne 'e7bcaa356b22dc7b213c90d8ff2f6c5a8e5d6155' -or
+        $CandidateNewtonsoftHash -cne '8c1dd5c184b4e2e7ead06971ff3ebcb46783be972292d1deb1061744369b4d80') {
+        throw 'Test dependency change is not the exact authorized candidate-matching Newtonsoft alignment.'
+    }
+}
+
 function Assert-WssSource([string] $Worktree, [string] $SourceSha) {
     # Only packaging/promotion automation and documentation may differ from the
     # tested source. Application, dependency references, preflight and tests must match.
@@ -151,6 +163,16 @@ function Assert-WssSource([string] $Worktree, [string] $SourceSha) {
         '.github/universal-bootstrap.json', '.github/promotion-evidence/integration.zip.b64', '.github/promotion-evidence/cli.zip.b64')
     $paths = @(& git -C $Worktree diff --name-only $SourceSha HEAD)
     if ($LASTEXITCODE -ne 0) { throw 'Cannot compare approved source with promotion source.' }
+    $testProject = 'tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj'
+    if ($paths -ccontains $testProject) {
+        $before = (& git -C $Worktree rev-parse "${SourceSha}:$testProject").Trim()
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect validated test-project blob.' }
+        $after = (& git -C $Worktree rev-parse "HEAD:$testProject").Trim()
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect corrected test-project blob.' }
+        $hash = (Get-FileHash -LiteralPath (Join-Path $Worktree 'lib/Newtonsoft.Json.dll')).Hash.ToLowerInvariant()
+        Assert-WssNewtonsoftTestAlignment $before $after $hash
+        $paths = @($paths | Where-Object { $_ -cne $testProject })
+    }
     if ($paths.Count -gt 0) { Assert-WssPaths $paths $allowed }
 }
 

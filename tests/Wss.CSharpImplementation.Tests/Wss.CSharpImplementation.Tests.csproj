@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" ExcludeAssets="compile;runtime" />
     <PackageReference Include="NUnit" Version="3.14.0" />
     <PackageReference Include="NUnit3TestAdapter" Version="4.6.0">
       <PrivateAssets>all</PrivateAssets>
@@ -23,6 +24,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Wss.CSharpImplementation.csproj" />
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(WssArtifactDir)\Newtonsoft.Json.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
     <Reference Include="WSS.Transport.Serial">
       <HintPath>$(WssArtifactDir)\WSS.Transport.Serial.dll</HintPath>
     </Reference>

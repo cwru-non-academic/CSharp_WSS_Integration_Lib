@@ -39,6 +39,15 @@ try {
     Assert-Rejected { Assert-WssPaths @('lib/a.dll', 'src/StimulationController.cs') @('src/Wss.CSharpImplementation.csproj') } 'Unexpected promotion path*'
     $count++
 
+    $originalProject = 'ac4ca9ca0371f2896f4a29b4f3ec1db55025f363'
+    $alignedProject = 'e7bcaa356b22dc7b213c90d8ff2f6c5a8e5d6155'
+    $candidateNewtonsoft = '8c1dd5c184b4e2e7ead06971ff3ebcb46783be972292d1deb1061744369b4d80'
+    Assert-WssNewtonsoftTestAlignment $originalProject $alignedProject $candidateNewtonsoft
+    $count++
+    Assert-Rejected { Assert-WssNewtonsoftTestAlignment ('0'*40) $alignedProject $candidateNewtonsoft } 'Test dependency change is not*'
+    Assert-Rejected { Assert-WssNewtonsoftTestAlignment $originalProject ('0'*40) $candidateNewtonsoft } 'Test dependency change is not*'
+    Assert-Rejected { Assert-WssNewtonsoftTestAlignment $originalProject $alignedProject ('0'*64) } 'Test dependency change is not*'
+
     # Metadata-only fakes: no candidate binaries, workflow dispatches or PRs are created.
     function Invoke-WssGh([string[]] $Arguments) {
         if ($Arguments[1] -like '*/pulls/*') {
