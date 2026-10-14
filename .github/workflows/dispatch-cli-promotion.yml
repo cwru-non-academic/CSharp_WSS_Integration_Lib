@@ -11,6 +11,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  actions: read
 
 concurrency:
   group: dispatch-cli-${{ github.event.pull_request.merge_commit_sha || github.run_id }}
@@ -27,6 +28,11 @@ jobs:
       startsWith(github.event.pull_request.head.ref, 'automation/wss-')
     runs-on: ubuntu-latest
     steps:
+      # pull_request_target uses trusted base code, never executable PR-head code.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Validate promotion metadata
         id: metadata
         shell: pwsh
@@ -35,35 +41,34 @@ jobs:
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
           $ErrorActionPreference = 'Stop'
+          . ./.github/scripts/WssPromotion.ps1
           $event = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
           $body = [string]$event.pull_request.body
 
           if ($env:MERGE_SHA -cnotmatch '^[0-9a-fA-F]{40}$') {
             throw 'The merged PR does not provide a valid resulting Integration SHA.'
           }
-          if ([Regex]::Matches($body, '<!-- wss-promotion:v1 -->').Count -ne 1) {
+          if ([Regex]::Matches($body, '<!-- wss-promotion:v2 -->').Count -ne 1) {
             throw 'The merged automation PR lacks the unique WSS promotion marker.'
           }
 
-          $tagMatch = [Regex]::Match($body, '(?m)^<!-- wss-release-tag:(?<value>[A-Za-z0-9][A-Za-z0-9._-]{0,127}) -->\r?$')
+          $approval = Read-WssApprovalMarker $body "$env:RUNNER_TEMP/approval.json"
           $correlationMatch = [Regex]::Match($body, '(?m)^<!-- correlation-id:(?<value>[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}) -->\r?$')
-          if (-not $tagMatch.Success -or -not $correlationMatch.Success) {
+          if (-not $correlationMatch.Success) {
             throw 'The merged automation PR has missing or invalid promotion metadata.'
           }
-          if ([Regex]::Matches($body, '(?m)^<!-- wss-release-tag:').Count -ne 1 -or
-              [Regex]::Matches($body, '(?m)^<!-- correlation-id:').Count -ne 1) {
+          if ([Regex]::Matches($body, '(?m)^<!-- correlation-id:').Count -ne 1) {
             throw 'The merged automation PR contains ambiguous promotion metadata.'
           }
 
-          $expectedBranch = "automation/wss-$($tagMatch.Groups['value'].Value)"
+          $expectedBranch = Get-WssBranch $approval
           if ($event.pull_request.head.ref -cne $expectedBranch) {
             throw "Promotion metadata does not match the automation branch $expectedBranch."
           }
 
-          $changedFiles = @(& gh api `
-            "repos/$($event.repository.full_name)/pulls/$($event.pull_request.number)/files?per_page=100" |
-            ConvertFrom-Json)
-          if ($LASTEXITCODE -ne 0 -or $changedFiles.Count -eq 0) {
+          $pages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/$($event.repository.full_name)/pulls/$($event.pull_request.number)/files?per_page=100") | ConvertFrom-Json
+          $changedFiles = @($pages | ForEach-Object { $_ })
+          if ($changedFiles.Count -eq 0) {
             throw 'The merged automation PR has no readable changed files.'
           }
           $unexpectedFiles = @($changedFiles | Where-Object { $_.filename -notmatch '^lib/' })
@@ -71,8 +76,10 @@ jobs:
             throw "The merged automation PR changed files outside lib/: $($unexpectedFiles.filename -join ', ')"
           }
 
+          $null = Assert-WssMergedIntegration $env:MERGE_SHA ([string]$event.pull_request.number) $approval
           "integration_sha=$($env:MERGE_SHA.ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "wss_release_tag=$($tagMatch.Groups['value'].Value)" >> $env:GITHUB_OUTPUT
+          "integration_pr=$($event.pull_request.number)" >> $env:GITHUB_OUTPUT
+          "approval_json=$($approval | ConvertTo-Json -Depth 5 -Compress)" >> $env:GITHUB_OUTPUT
           "correlation_id=$($correlationMatch.Groups['value'].Value)" >> $env:GITHUB_OUTPUT
 
       - name: Create CLI Actions token
@@ -90,7 +97,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.cli-token.outputs.token }}
           INTEGRATION_SHA: ${{ steps.metadata.outputs.integration_sha }}
-          WSS_RELEASE_TAG: ${{ steps.metadata.outputs.wss_release_tag }}
+          APPROVAL_JSON: ${{ steps.metadata.outputs.approval_json }}
+          INTEGRATION_PR: ${{ steps.metadata.outputs.integration_pr }}
           CORRELATION_ID: ${{ steps.metadata.outputs.correlation_id }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -98,7 +106,8 @@ jobs:
             --repo cwru-non-academic/CLI_CSharp_WSS_Application `
             --ref dev `
             --field "integration_sha=$($env:INTEGRATION_SHA)" `
-            --field "wss_release_tag=$($env:WSS_RELEASE_TAG)" `
+            --field "approval_json=$($env:APPROVAL_JSON)" `
+            --field "integration_pr=$($env:INTEGRATION_PR)" `
             --field "correlation_id=$($env:CORRELATION_ID)"
           if ($LASTEXITCODE -ne 0) {
             throw 'CLI promote-integration workflow dispatch failed.'
@@ -107,6 +116,6 @@ jobs:
           @(
             'Dispatched CLI promote-integration.yml.'
             "- Integration SHA: ``$($env:INTEGRATION_SHA)``"
-            "- WSS release tag: ``$($env:WSS_RELEASE_TAG)``"
+            "- Merged Integration PR: #$($env:INTEGRATION_PR)"
             "- Correlation ID: ``$($env:CORRELATION_ID)``"
           ) >> $env:GITHUB_STEP_SUMMARY

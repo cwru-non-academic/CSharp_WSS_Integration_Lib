@@ -1,11 +1,11 @@
 name: Promote WSS into Integration
-run-name: Promote WSS ${{ inputs.wss_release_tag }} / ${{ inputs.correlation_id }}
+run-name: Promote universal WSS / ${{ inputs.correlation_id }}
 
 on:
   workflow_dispatch:
     inputs:
-      wss_release_tag:
-        description: Exact WSSCore release tag to promote
+      approval_json:
+        description: Schema-2 candidate and matching downstream preflight approval JSON
         required: true
         type: string
       correlation_id:
@@ -17,30 +17,31 @@ permissions:
   contents: read
 
 concurrency:
-  group: promote-wss-${{ inputs.wss_release_tag }}
+  group: promote-wss-dev
   cancel-in-progress: false
 
 jobs:
   promote:
     name: Create WSS promotion PR
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     steps:
       - name: Validate promotion inputs
         id: inputs
         shell: pwsh
         env:
-          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
+          APPROVAL_JSON: ${{ inputs.approval_json }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:WSS_RELEASE_TAG -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') {
-            throw 'wss_release_tag must contain only letters, digits, periods, underscores, and hyphens.'
-          }
+          $approval = $env:APPROVAL_JSON | ConvertFrom-Json
+          if ([string]$approval.candidate.run_id -cnotmatch '^[1-9][0-9]*$' -or $approval.candidate.sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Invalid candidate branch identity.' }
           if ($env:CORRELATION_ID -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$') {
             throw 'correlation_id must be 1-200 branch-safe, single-line characters.'
           }
 
-          "branch=automation/wss-$($env:WSS_RELEASE_TAG)" >> $env:GITHUB_OUTPUT
+          "branch=automation/wss-$($approval.candidate.run_id)-$($approval.candidate.sha256)" >> $env:GITHUB_OUTPUT
+          "candidate_id=$($approval.candidate.run_id)" >> $env:GITHUB_OUTPUT
 
       - name: Create WSSCore read token
         id: core-token
@@ -51,6 +52,22 @@ jobs:
           owner: cwru-non-academic
           repositories: WSSCore
           permission-contents: read
+          permission-actions: read
+
+      - name: Create preflight evidence read token
+        id: evidence-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: |
+            WSSCore
+            CSharp_WSS_Integration_Lib
+            CLI_CSharp_WSS_Application
+          permission-contents: read
+          permission-actions: read
+          permission-pull-requests: read
 
       - name: Create Integration write token
         id: integration-token
@@ -70,20 +87,36 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.integration-token.outputs.token }}
 
-      - name: Download, verify, and stage the approved release
+      - name: Validate matching preflight approvals
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.evidence-token.outputs.token }}
+          APPROVAL_JSON: ${{ inputs.approval_json }}
+        run: |
+          . ./.github/scripts/WssPromotion.ps1
+          $env:APPROVAL_JSON | Set-Content "$env:RUNNER_TEMP/approval.json"
+          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
+          Write-WssApproval $approval "$env:RUNNER_TEMP/approval.json"
+          Assert-WssApproval $approval "$env:RUNNER_TEMP/evidence"
+          Assert-WssSource '.' $approval.integration.source_sha
+
+      - name: Download, verify, and stage the approved universal candidate
         shell: pwsh
         env:
           GH_TOKEN: ${{ steps.core-token.outputs.token }}
-          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
         run: |
           $ErrorActionPreference = 'Stop'
           $releaseRoot = Join-Path $env:RUNNER_TEMP 'wss-release'
           $desiredLib = Join-Path $env:RUNNER_TEMP 'desired-lib'
+          . ./.github/scripts/WssPromotion.ps1
+          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
           ./.github/scripts/Resolve-WssRelease.ps1 `
-            -ReleaseTag $env:WSS_RELEASE_TAG `
+            -ProducerRepository $approval.candidate.repository -RunId $approval.candidate.run_id `
+            -ExpectedCommit $approval.candidate.commit -ArchiveName $approval.candidate.archive -ExpectedSha256 $approval.candidate.sha256 `
             -OutputRoot $releaseRoot
+          Assert-WssCandidateRecord (Get-Content "$releaseRoot/candidate.json" -Raw | ConvertFrom-Json) $approval
           ./.github/scripts/New-WssLib.ps1 `
-            -BleArtifactDir (Join-Path $releaseRoot 'ble-unified') `
+            -ArtifactRoot (Join-Path $releaseRoot 'extracted/WSS-Universal') -ApprovalFile "$env:RUNNER_TEMP/approval.json" `
             -Destination $desiredLib
 
       - name: Inspect existing automation state
@@ -161,10 +194,12 @@ jobs:
           GH_TOKEN: ${{ steps.integration-token.outputs.token }}
           PR_NUMBER: ${{ steps.existing.outputs.pr_number }}
           PR_URL: ${{ steps.existing.outputs.pr_url }}
-          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
+          CANDIDATE_ID: ${{ steps.inputs.outputs.candidate_id }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
         run: |
           $ErrorActionPreference = 'Stop'
+          . ./.github/scripts/WssPromotion.ps1
+          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
           if (-not [string]::IsNullOrEmpty($env:PR_NUMBER)) {
             $pr = & gh pr view $env:PR_NUMBER `
               --repo cwru-non-academic/CSharp_WSS_Integration_Lib `
@@ -174,8 +209,8 @@ jobs:
             }
 
             $requiredMarkers = @(
-              '<!-- wss-promotion:v1 -->',
-              "<!-- wss-release-tag:$($env:WSS_RELEASE_TAG) -->",
+              '<!-- wss-promotion:v2 -->',
+              (Get-WssApprovalMarker $approval),
               "<!-- correlation-id:$($env:CORRELATION_ID) -->"
             )
             foreach ($marker in $requiredMarkers) {
@@ -183,11 +218,14 @@ jobs:
                 throw "Existing promotion PR has mismatched metadata: $marker"
               }
             }
+            $existingApproval = Read-WssApprovalMarker $pr.body "$env:RUNNER_TEMP/existing-approval.json"
+            if ((Get-WssApprovalMarker $existingApproval) -cne (Get-WssApprovalMarker $approval) -or
+                [Regex]::Matches($pr.body, '<!-- wss-promotion:v2 -->').Count -ne 1 -or
+                [Regex]::Matches($pr.body, '(?m)^<!-- correlation-id:').Count -ne 1) { throw 'Existing PR has ambiguous or mismatched promotion metadata.' }
 
-            $files = @(& gh api `
-              "repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/$($env:PR_NUMBER)/files?per_page=100" |
-              ConvertFrom-Json)
-            if ($LASTEXITCODE -ne 0 -or $files.Count -eq 0) {
+            $pages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/$($env:PR_NUMBER)/files?per_page=100") | ConvertFrom-Json
+            $files = @($pages | ForEach-Object { $_ })
+            if ($files.Count -eq 0) {
               throw 'Existing promotion PR has no readable changed files.'
             }
             $unexpected = @($files | Where-Object { $_.filename -notmatch '^lib/' })
@@ -212,9 +250,10 @@ jobs:
             throw "Existing automation branch changes files outside lib/: $($unexpectedBranchFiles -join ', ')"
           }
 
+          Assert-WssSource 'existing-promotion' $approval.integration.source_sha
           $commitMessage = & git -C existing-promotion log -1 --format=%B
           if ($LASTEXITCODE -ne 0 -or
-              $commitMessage -notcontains "Promote WSS $($env:WSS_RELEASE_TAG)" -or
+              $commitMessage -notcontains "Promote WSS run $($env:CANDIDATE_ID)" -or
               $commitMessage -notcontains "Correlation-ID: $($env:CORRELATION_ID)") {
             throw 'Existing automation branch has mismatched deterministic commit metadata.'
           }
@@ -246,7 +285,7 @@ jobs:
         id: commit
         shell: pwsh
         env:
-          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
+          CANDIDATE_ID: ${{ steps.inputs.outputs.candidate_id }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -289,12 +328,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw 'Promotion diff failed git diff --check.'
           }
+          . ./.github/scripts/WssPromotion.ps1
+          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
+          Assert-WssLib 'lib' "$env:RUNNER_TEMP/wss-release/extracted/WSS-Universal" $approval
           & git diff --cached --stat
 
           & git config user.name 'wss-promotion[bot]'
           & git config user.email 'wss-promotion[bot]@users.noreply.github.com'
           & git commit `
-            -m "Promote WSS $env:WSS_RELEASE_TAG" `
+            -m "Promote WSS run $env:CANDIDATE_ID" `
             -m "Correlation-ID: $env:CORRELATION_ID"
           if ($LASTEXITCODE -ne 0) {
             throw 'Failed to commit the promoted lib.'
@@ -320,23 +362,27 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.integration-token.outputs.token }}
           BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
-          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
+          CANDIDATE_ID: ${{ steps.inputs.outputs.candidate_id }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
         run: |
           $ErrorActionPreference = 'Stop'
+          . ./.github/scripts/WssPromotion.ps1
+          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
           $bodyPath = Join-Path $env:RUNNER_TEMP 'promotion-pr-body.md'
           @(
-            '<!-- wss-promotion:v1 -->'
-            "<!-- wss-release-tag:$($env:WSS_RELEASE_TAG) -->"
+            '<!-- wss-promotion:v2 -->'
+            (Get-WssApprovalMarker $approval)
             "<!-- correlation-id:$($env:CORRELATION_ID) -->"
             ''
-            "Promotes the Integration committed artifacts to WSS release ``$($env:WSS_RELEASE_TAG)``."
+            "Promotes the exact universal candidate from WSSCore run ``$($env:CANDIDATE_ID)``."
             ''
             "- Correlation ID: ``$($env:CORRELATION_ID)``"
-            "- Source release: https://github.com/cwru-non-academic/WSSCore/releases/tag/$($env:WSS_RELEASE_TAG)"
-            '- `lib/` was replaced from the checksum-verified WSS BLE Unified release artifact.'
-            '- The Core and BLE Unified copies of `WSS_Core_Interface.dll` were verified to match.'
-            '- Artifact-provided System.IO.Ports files were excluded; NuGet System.IO.Ports 9.0.0 remains authoritative.'
+            "- Producer: https://github.com/cwru-non-academic/WSSCore/actions/runs/$($approval.candidate.run_id)"
+            "- Producer SHA: ``$($approval.candidate.commit)``; artifact: ``$($approval.candidate.artifact_id)``"
+            "- Archive: ``$($approval.candidate.archive)``; SHA-256: ``$($approval.candidate.sha256)``"
+            "- Integration preflight: https://github.com/cwru-non-academic/CSharp_WSS_Integration_Lib/actions/runs/$($approval.integration.preflight_run_id)"
+            "- CLI preflight: https://github.com/cwru-non-academic/CLI_CSharp_WSS_Application/actions/runs/$($approval.cli.preflight_run_id)"
+            '- Complete universal content and approval metadata are committed in `lib/`; runnable output uses Ports 8.'
             '- Normal Integration PR CI will validate this committed/local state after the PR opens.'
             ''
             'This workflow does not merge the PR.'
@@ -346,7 +392,7 @@ jobs:
             --repo cwru-non-academic/CSharp_WSS_Integration_Lib `
             --base dev `
             --head $env:BRANCH_NAME `
-            --title "Promote WSS $($env:WSS_RELEASE_TAG)" `
+            --title "Promote universal WSS run $($env:CANDIDATE_ID)" `
             --body-file $bodyPath
           if ($LASTEXITCODE -ne 0) {
             throw 'Failed to create the Integration promotion PR.'
