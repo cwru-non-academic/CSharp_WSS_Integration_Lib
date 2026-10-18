@@ -52,9 +52,15 @@ try {
     function Invoke-WssGh([string[]] $Arguments) {
         if ($Arguments[1] -like '*/pulls/*') {
             @{ merged=$script:merged; merge_commit_sha=$script:mergeSha; base=@{ref='dev';repo=@{full_name='cwru-non-academic/CSharp_WSS_Integration_Lib'}};
-                head=@{sha='1'*40;repo=@{full_name='cwru-non-academic/CSharp_WSS_Integration_Lib'}} } | ConvertTo-Json -Depth 5
+                head=@{sha='1'*40;ref='automation/wss-test';repo=@{full_name='cwru-non-academic/CSharp_WSS_Integration_Lib'}} } | ConvertTo-Json -Depth 5
         } elseif ($Arguments[1] -like '*/compare/*') {
             @{status=$script:comparison} | ConvertTo-Json
+        } elseif ($Arguments[-1] -like '*/workflows/wss-compatibility.yml/runs?*') {
+            ConvertTo-Json -InputObject @(@{workflow_runs=$script:normalRuns}) -Depth 8
+        } elseif ($Arguments[-1] -like '*/actions/runs/*/jobs?*') {
+            ConvertTo-Json -InputObject @(@{jobs=$script:normalJobs}) -Depth 5
+        } elseif ($Arguments[1] -like '*/contents/lib/wss-candidate.json?*') {
+            @{content=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($approval | ConvertTo-Json -Depth 5)))} | ConvertTo-Json
         } else { throw 'Unexpected API call in rejection test.' }
     }
     $script:merged = $false
@@ -64,6 +70,49 @@ try {
     Assert-Rejected { Assert-WssMergedIntegration ('3'*40) '1' $approval } 'Gitlink must target*'
     $script:comparison = 'diverged'
     Assert-Rejected { Assert-WssMergedIntegration $script:mergeSha '1' $approval } 'Integration merge is not contained*'
+    # GitHub may omit PR associations after merge; exact run identity remains required.
+    $script:comparison = 'identical'
+    $normalRun = [pscustomobject]@{
+        id=10; repository=@{full_name='cwru-non-academic/CSharp_WSS_Integration_Lib'}
+        head_repository=@{full_name='cwru-non-academic/CSharp_WSS_Integration_Lib'}
+        path='.github/workflows/wss-compatibility.yml'; event='pull_request'
+        head_sha='1'*40; head_branch='automation/wss-test'
+        status='completed'; conclusion='success'; pull_requests=@()
+    }
+    $script:normalRuns = @($normalRun)
+    $script:normalJobs = @('Integration behavioral tests', 'Integration compatibility (Windows)',
+        'Integration compatibility (Ubuntu)', 'Integration compatibility (macOS)') | ForEach-Object {
+        [pscustomobject]@{name=$_;conclusion='success'}
+    }
+    $validated = Assert-WssMergedIntegration $script:mergeSha '1' $approval
+    if ($validated.head.sha -cne ('1'*40)) { throw 'Merged PR final head changed.' }
+    $count++
+    foreach ($field in @('head_sha', 'head_branch', 'event', 'path', 'repository', 'head_repository', 'pull_requests')) {
+        $bad = $normalRun | ConvertTo-Json -Depth 5 | ConvertFrom-Json
+        if ($field -in @('repository', 'head_repository')) { $bad.$field.full_name = 'other/repository' }
+        elseif ($field -ceq 'pull_requests') { $bad.pull_requests = @(@{number=2}) }
+        else { $bad.$field = 'wrong' }
+        $script:normalRuns = @($bad)
+        Assert-Rejected { Assert-WssMergedIntegration $script:mergeSha '1' $approval } 'Merged Integration PR lacks successful latest*'
+    }
+    $mixed = $normalRun | ConvertTo-Json -Depth 5 | ConvertFrom-Json
+    $mixed.pull_requests = @(@{number=1}, @{number=2})
+    $script:normalRuns = @($mixed)
+    Assert-Rejected { Assert-WssMergedIntegration $script:mergeSha '1' $approval } 'Merged Integration PR lacks successful latest*'
+    $normalRun.pull_requests = @(@{number=1})
+    $script:normalRuns = @($normalRun)
+    $null = Assert-WssMergedIntegration $script:mergeSha '1' $approval
+    $count++
+    $normalRun.pull_requests = @()
+    foreach ($state in @('in_progress', 'completed')) {
+        $latest = $normalRun | ConvertTo-Json -Depth 5 | ConvertFrom-Json
+        $latest.id = 11; $latest.status = $state; $latest.conclusion = 'failure'
+        $script:normalRuns = @($normalRun, $latest)
+        Assert-Rejected { Assert-WssMergedIntegration $script:mergeSha '1' $approval } 'Merged Integration PR lacks successful latest*'
+    }
+    $script:normalRuns = @($normalRun)
+    $script:normalJobs[0].conclusion = 'failure'
+    Assert-Rejected { Assert-WssMergedIntegration $script:mergeSha '1' $approval } 'Required normal Integration CI job did not succeed*'
     Remove-Item Function:Invoke-WssGh
     . "$PSScriptRoot/../WssPromotion.ps1"
 
