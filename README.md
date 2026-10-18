@@ -137,11 +137,50 @@ or unavailable producer/log evidence stops preparation rather than overwriting/s
 
 ### Routine updates after bootstrap
 
+An ordinary WSSCore `dev` push now builds the existing universal ZIP once. After all
+producer tests and packaged consumers pass, its final gated job automatically dispatches
+this repository's existing `promote-wss.yml` on `dev`, passing the producer commit, run ID,
+artifact ID and ZIP SHA-256. Integration waits for the **entire producer run** to finish
+successfully, checks its trusted `push`/`dev` identity and all required job results, and
+uses the existing candidate resolver to verify `WSS-Universal-ci.zip`.
+
+The same workflow resolves current Integration and CLI `dev` source SHAs, automatically
+dispatches their existing preflights, and pins CLI's selected Integration source to the
+Integration preflight SHA. A branch move during dispatch is rejected, not silently accepted.
+Both preflights must finish successfully with matching candidate provenance before the
+existing schema-2 approval validator permits promotion. The deterministic correlation ID
+is `wss-<producer-run>-<artifact-id>`. Replays reuse uniquely correlated runs and the exact
+approval rather than dispatching new preflights; failed, missing, ambiguous, expired or
+mismatched evidence stops promotion. GitHub/API errors are never interpreted as absence.
+
 Integration uses `automation/wss-<run>-<hash>` with lib-only diffs. Manual merge triggers
 `dispatch-cli-promotion.yml`, using trusted base code and checking bot origin, lib-only scope,
 approval, merge SHA and normal CI. It dispatches CLI on `dev` with `integration_sha`,
 `integration_pr`, `approval_json` and `correlation_id`. CLI validates with trusted Integration
 `dev` tools before creating write credentials, retains gitlink-only PRs, and uses normal CI.
+
+An identical complete dependency payload is a verified no-op: no metadata-only PR is
+created, existing committed provenance is retained, and the freshly verified schema-2
+approval is retained in the promotion run's `wss-automatic-approval` artifact. An open
+matching PR is reused; an already merged/closed candidate cannot create a replacement or
+rollback PR. Existing branches and unrelated changes are not overwritten or force-pushed.
+
+Deployment prerequisite: publish/review this Integration automation before enabling the
+Core handoff. Existing `WSS_GITHUB_APP_ID` / `WSS_GITHUB_APP_PRIVATE_KEY` must be accessible
+in WSSCore as well as downstream repositories. The Core handoff needs Integration Actions
+write only. Integration needs producer/evidence Actions and Contents read, downstream
+Contents read/Actions write for dispatch, and its existing Contents/PR write for authoring.
+Dispatch/write tokens are created only after their corresponding trust checks. No workflow
+merges PRs, writes `dev` directly, bypasses protections, invokes bootstrap, tags or publishes
+a release. Once deployed and configured, reviewed Integration and CLI PR merges remain the
+only routine human actions (plus the initiating WSSCore PR merge).
+
+The orchestration has a 60-minute bound; timeouts and missing permissions fail explicitly.
+Existing Actions artifact/log retention still applies, including CLI preflight provenance's
+one-day retention: complete the reviewed cascade while its evidence remains available.
+Expired evidence must be investigated/revalidated; no archived bootstrap proof or stale
+committed dependencies are substituted. Hosted Windows/Linux/macOS checks retain their
+existing scope and do not establish physical Linux BLE or stimulation operation.
 
 Focused safety checks (normal Integration behavioral CI also runs metadata/scope cases):
 

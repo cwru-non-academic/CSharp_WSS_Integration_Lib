@@ -156,7 +156,7 @@ function Assert-WssNewtonsoftTestAlignment([string] $BeforeBlob, [string] $After
 function Assert-WssSource([string] $Worktree, [string] $SourceSha) {
     # Only packaging/promotion automation and documentation may differ from the
     # tested source. Application, dependency references, preflight and tests must match.
-    $allowed = @('README.md', '.github/scripts/New-WssLib.ps1', '.github/scripts/WssPromotion.ps1',
+    $allowed = @('README.md', '.github/scripts/New-WssLib.ps1', '.github/scripts/WssPromotion.ps1', '.github/scripts/WssAutomatic.ps1',
         '.github/scripts/Prepare-UniversalBootstrap.ps1', '.github/workflows/promote-wss.yml',
         '.github/workflows/dispatch-cli-promotion.yml', '.github/workflows/promote-integration.yml',
         '.github/workflows/cli-ci.yml', '.github/workflows/wss-compatibility.yml', '.github/scripts/tests/WssPromotion.Tests.ps1',
