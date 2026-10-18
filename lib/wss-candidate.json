@@ -2,18 +2,18 @@
   "schema": 2,
   "candidate": {
     "repository": "cwru-non-academic/WSSCore",
-    "run_id": "39090589411",
-    "artifact_id": "12122732107",
-    "commit": "4621b2c4a4bafa729734455a727bd7291bc1798d",
+    "run_id": "39092192696",
+    "artifact_id": "12123267360",
+    "commit": "5ec22900587587e9e9465ffa53d04d7d1ce13545",
     "archive": "WSS-Universal-ci.zip",
-    "sha256": "d0163e206d2f1efafc2b48300edbd1a31a6a6d69fefda8575238bd0e2f9dc66a"
+    "sha256": "3bc303096594978fa77e95cd80901a8fb72d26c42a7408c38c8668563b6f1a7e"
   },
   "integration": {
-    "source_sha": "f03eb749704f839c9e6420ae5e5b0357f6bc1989",
-    "preflight_run_id": "39090936950"
+    "source_sha": "ded84fce9b06a170adeaa25f54b5a0129000114c",
+    "preflight_run_id": "39092569170"
   },
   "cli": {
     "source_sha": "ab466dd8edde47a9eb5cb5940a40200a2957cc3c",
-    "preflight_run_id": "39090945856"
+    "preflight_run_id": "39092576119"
   }
 }
