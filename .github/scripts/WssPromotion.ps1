@@ -185,14 +185,17 @@ function Assert-WssMergedIntegration([string] $Sha, [string] $PrNumber, $Approva
     $compare = Invoke-WssGh @('api', "repos/$repo/compare/${Sha}...dev") | ConvertFrom-Json
     if ($compare.status -notin @('ahead', 'identical')) { throw 'Integration merge is not contained in dev.' }
     $pages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/$repo/actions/workflows/wss-compatibility.yml/runs?event=pull_request&head_sha=$($pr.head.sha)&per_page=100") | ConvertFrom-Json
-    $ci = @($pages | ForEach-Object { $_.workflow_runs } | Where-Object {
-        $_.status -ceq 'completed' -and $_.conclusion -ceq 'success' -and
-        @($_.pull_requests | Where-Object { [string]$_.number -ceq $PrNumber }).Count -eq 1
-    })
+    # GitHub can return empty pull_requests after merge. Bind evidence to the exact
+    # canonical PR head, branch, event and workflow; reject conflicting associations.
     $allRuns = @($pages | ForEach-Object { $_.workflow_runs } | Where-Object {
-        @($_.pull_requests | Where-Object { [string]$_.number -ceq $PrNumber }).Count -eq 1
+        $_.repository.full_name -ceq $repo -and $_.head_repository.full_name -ceq $repo -and
+        $_.path -ceq '.github/workflows/wss-compatibility.yml' -and $_.event -ceq 'pull_request' -and
+        $_.head_sha -ceq $pr.head.sha -and $_.head_branch -ceq $pr.head.ref -and
+        (@($_.pull_requests).Count -eq 0 -or
+            (@($_.pull_requests).Count -eq 1 -and
+                [string]$_.pull_requests[0].number -ceq $PrNumber))
     } | Sort-Object -Property id -Descending)
-    if ($ci.Count -eq 0 -or $allRuns.Count -eq 0 -or $allRuns[0].status -cne 'completed' -or $allRuns[0].conclusion -cne 'success') {
+    if ($allRuns.Count -eq 0 -or $allRuns[0].status -cne 'completed' -or $allRuns[0].conclusion -cne 'success') {
         throw 'Merged Integration PR lacks successful latest normal committed-state CI at its final head.'
     }
     $jobPages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/$repo/actions/runs/$($allRuns[0].id)/jobs?per_page=100") | ConvertFrom-Json
