@@ -17,6 +17,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate promotion safety contracts
+        shell: pwsh
+        run: ./.github/scripts/tests/WssPromotion.Tests.ps1
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
@@ -92,33 +96,7 @@ jobs:
       - name: Verify committed WSS artifact propagation
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $sourceRoot = (Resolve-Path -LiteralPath 'lib').Path
-          $outputDir = 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
-
-          function Assert-SameHash([string] $SourceFile, [string] $OutputFile) {
-            if (-not (Test-Path -LiteralPath $OutputFile -PathType Leaf)) {
-              throw "Downstream output file is missing: $OutputFile"
-            }
-            $sourceSha = (Get-FileHash -LiteralPath $SourceFile -Algorithm SHA256).Hash
-            $outputSha = (Get-FileHash -LiteralPath $OutputFile -Algorithm SHA256).Hash
-            if (-not $outputSha.Equals($sourceSha, [StringComparison]::OrdinalIgnoreCase)) {
-              throw "Downstream hash mismatch for $OutputFile."
-            }
-          }
-
-          foreach ($sourceFile in Get-ChildItem -LiteralPath $sourceRoot -File -Recurse) {
-            $relativePath = [IO.Path]::GetRelativePath($sourceRoot, $sourceFile.FullName).Replace('\', '/')
-            $isNuGetOwned =
-              $relativePath.Equals('System.IO.Ports.dll', [StringComparison]::OrdinalIgnoreCase) -or
-              ($relativePath.StartsWith('runtimes/', [StringComparison]::OrdinalIgnoreCase) -and
-                $sourceFile.Name.Equals('System.IO.Ports.dll', [StringComparison]::OrdinalIgnoreCase)) -or
-              ($relativePath.StartsWith('runtimes/', [StringComparison]::OrdinalIgnoreCase) -and
-                $sourceFile.Name.StartsWith('libSystem.IO.Ports.Native.', [StringComparison]::OrdinalIgnoreCase))
-            if (-not $isNuGetOwned) {
-              Assert-SameHash $sourceFile.FullName (Join-Path $outputDir $relativePath)
-            }
-          }
+          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot 'lib' -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
 
       - name: Run platform compatibility tests
         shell: pwsh

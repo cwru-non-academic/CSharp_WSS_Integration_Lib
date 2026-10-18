@@ -1,12 +1,24 @@
 name: Promote WSS into Integration
-run-name: Promote WSS ${{ inputs.wss_release_tag }} / ${{ inputs.correlation_id }}
+run-name: Promote universal WSS / ${{ inputs.correlation_id }}
 
 on:
   workflow_dispatch:
     inputs:
-      wss_release_tag:
-        description: Exact WSSCore release tag to promote
-        required: true
+      approval_json:
+        description: Schema-2 candidate and matching downstream preflight approval JSON
+        required: false
+        type: string
+      wss_run_id:
+        description: Automatic handoff from the trusted WSSCore dev producer (exclusive with approval_json)
+        type: string
+      wss_commit:
+        description: Exact automatic producer commit
+        type: string
+      wss_artifact_id:
+        description: Exact automatic universal Actions artifact ID
+        type: string
+      wss_sha256:
+        description: Exact automatic WSS-Universal-ci.zip SHA-256
         type: string
       correlation_id:
         description: Promotion-cascade correlation ID
@@ -17,30 +29,38 @@ permissions:
   contents: read
 
 concurrency:
-  group: promote-wss-${{ inputs.wss_release_tag }}
+  group: promote-wss-dev
   cancel-in-progress: false
 
 jobs:
   promote:
     name: Create WSS promotion PR
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      - name: Validate promotion inputs
-        id: inputs
+      - name: Validate trusted handoff inputs before credentials
         shell: pwsh
         env:
-          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
+          APPROVAL_JSON: ${{ inputs.approval_json }}
+          RUN_ID: ${{ inputs.wss_run_id }}
+          COMMIT: ${{ inputs.wss_commit }}
+          ARTIFACT_ID: ${{ inputs.wss_artifact_id }}
+          SHA256: ${{ inputs.wss_sha256 }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
+          APP_ID: ${{ vars.WSS_GITHUB_APP_ID }}
+          APP_KEY: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:WSS_RELEASE_TAG -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') {
-            throw 'wss_release_tag must contain only letters, digits, periods, underscores, and hyphens.'
-          }
           if ($env:CORRELATION_ID -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$') {
             throw 'correlation_id must be 1-200 branch-safe, single-line characters.'
           }
-
-          "branch=automation/wss-$($env:WSS_RELEASE_TAG)" >> $env:GITHUB_OUTPUT
+          if ($env:RUN_ID) {
+            if ($env:APPROVAL_JSON -or $env:RUN_ID -cnotmatch '^[1-9][0-9]*$' -or
+                $env:ARTIFACT_ID -cnotmatch '^[1-9][0-9]*$' -or $env:COMMIT -cnotmatch '^[0-9a-f]{40}$' -or
+                $env:SHA256 -cnotmatch '^[0-9a-f]{64}$' -or $env:CORRELATION_ID -cne "wss-$env:RUN_ID-$env:ARTIFACT_ID") { throw 'Invalid or mixed automatic handoff inputs.' }
+          } elseif (-not $env:APPROVAL_JSON -or $env:COMMIT -or $env:ARTIFACT_ID -or $env:SHA256) { throw 'Supply either approval_json or the complete automatic producer tuple.' }
+          if (-not $env:APP_ID -or -not $env:APP_KEY) { throw 'WSS GitHub App credentials are unavailable to Integration.' }
 
       - name: Create WSSCore read token
         id: core-token
@@ -51,8 +71,150 @@ jobs:
           owner: cwru-non-academic
           repositories: WSSCore
           permission-contents: read
+          permission-actions: read
 
-      - name: Create Integration write token
+      - name: Create preflight evidence read token
+        id: evidence-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: |
+            WSSCore
+            CSharp_WSS_Integration_Lib
+            CLI_CSharp_WSS_Application
+          permission-contents: read
+          permission-actions: read
+          permission-pull-requests: read
+
+      - name: Check out current Integration dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+          token: ${{ steps.evidence-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Record trusted promotion base
+        id: source
+        shell: pwsh
+        run: |
+          $sha = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve trusted promotion base.' }
+          "sha=$sha" >> $env:GITHUB_OUTPUT
+
+      - name: Wait for successful dev producer and verify exact automatic candidate
+        if: inputs.wss_run_id != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.evidence-token.outputs.token }}
+          RUN_ID: ${{ inputs.wss_run_id }}
+          COMMIT: ${{ inputs.wss_commit }}
+          ARTIFACT_ID: ${{ inputs.wss_artifact_id }}
+          SHA256: ${{ inputs.wss_sha256 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . ./.github/scripts/WssAutomatic.ps1
+          $repo = 'cwru-non-academic/WSSCore'
+          $run = Invoke-WssGh @('api', "repos/$repo/actions/runs/$env:RUN_ID") | ConvertFrom-Json
+          Assert-WssAutomaticProducer $run $env:COMMIT
+          # The producer's final gated job dispatched us; its entire run must now finish green.
+          $run = Wait-WssExactRun $repo $env:RUN_ID $env:COMMIT 'artifacts.yml' 'push'
+          Assert-WssAutomaticProducer $run $env:COMMIT
+          $compare = Invoke-WssGh @('api', "repos/$repo/compare/$env:COMMIT...dev") | ConvertFrom-Json
+          if ($compare.status -notin @('ahead', 'identical')) { throw 'Producer commit is not contained in WSSCore dev.' }
+          $pages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/$repo/actions/runs/$env:RUN_ID/jobs?per_page=100") | ConvertFrom-Json
+          $jobs = @($pages | ForEach-Object { $_.jobs })
+          foreach ($name in @('Core conformance', 'BLE consumer (Linux)', 'BLE consumer (Windows)', 'Build and validate artifacts',
+              'Serial consumer (Linux)', 'Serial consumer (Windows)', 'Serial consumer (macOS)',
+              'Core consumer (Linux)', 'Core consumer (Windows)', 'Core consumer (macOS)', 'Start routine downstream validation')) {
+            if (@($jobs | Where-Object { $_.name -ceq $name -and $_.conclusion -ceq 'success' }).Count -ne 1) { throw "Required producer job did not succeed: $name" }
+          }
+          ./.github/scripts/Resolve-WssRelease.ps1 -RunId $env:RUN_ID -ExpectedCommit $env:COMMIT -ArchiveName WSS-Universal-ci.zip -ExpectedSha256 $env:SHA256 -OutputRoot "$env:RUNNER_TEMP/automatic-candidate"
+          $candidate = Get-Content "$env:RUNNER_TEMP/automatic-candidate/candidate.json" -Raw | ConvertFrom-Json
+          if ([string]$candidate.artifact_id -cne $env:ARTIFACT_ID) { throw 'Automatic producer artifact ID mismatch.' }
+
+      - name: Create downstream preflight dispatch token only after producer trust checks
+        if: inputs.wss_run_id != ''
+        id: preflight-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: |
+            CSharp_WSS_Integration_Lib
+            CLI_CSharp_WSS_Application
+          permission-contents: read
+          permission-actions: write
+
+      - name: Automatically execute or reuse exact correlated downstream preflights
+        if: inputs.wss_run_id != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.preflight-token.outputs.token }}
+          CORRELATION_ID: ${{ inputs.correlation_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . ./.github/scripts/WssAutomatic.ps1
+          $candidate = Get-Content "$env:RUNNER_TEMP/automatic-candidate/candidate.json" -Raw | ConvertFrom-Json
+          $approval = New-WssAutomaticApproval $candidate $env:CORRELATION_ID
+          Write-WssApproval $approval "$env:RUNNER_TEMP/approval.json"
+
+      - name: Normalize automatic or operator-supplied approval
+        id: inputs
+        shell: pwsh
+        env:
+          APPROVAL_JSON: ${{ inputs.approval_json }}
+          RUN_ID: ${{ inputs.wss_run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . ./.github/scripts/WssPromotion.ps1
+          if (-not $env:RUN_ID) { $env:APPROVAL_JSON | Set-Content "$env:RUNNER_TEMP/approval.json" }
+          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
+          Write-WssApproval $approval "$env:RUNNER_TEMP/approval.json"
+          "branch=$(Get-WssBranch $approval)" >> $env:GITHUB_OUTPUT
+          "candidate_id=$($approval.candidate.run_id)" >> $env:GITHUB_OUTPUT
+
+      - name: Validate matching preflight approvals
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.evidence-token.outputs.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . ./.github/scripts/WssPromotion.ps1
+          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
+          Assert-WssApproval $approval "$env:RUNNER_TEMP/evidence"
+          Assert-WssSource '.' $approval.integration.source_sha
+
+      - name: Download, verify, and stage the approved universal candidate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.core-token.outputs.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseRoot = Join-Path $env:RUNNER_TEMP 'wss-release'
+          $desiredLib = Join-Path $env:RUNNER_TEMP 'desired-lib'
+          . ./.github/scripts/WssPromotion.ps1
+          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
+          ./.github/scripts/Resolve-WssRelease.ps1 `
+            -ProducerRepository $approval.candidate.repository -RunId $approval.candidate.run_id `
+            -ExpectedCommit $approval.candidate.commit -ArchiveName $approval.candidate.archive -ExpectedSha256 $approval.candidate.sha256 `
+            -OutputRoot $releaseRoot
+          Assert-WssCandidateRecord (Get-Content "$releaseRoot/candidate.json" -Raw | ConvertFrom-Json) $approval
+          ./.github/scripts/New-WssLib.ps1 `
+            -ArtifactRoot (Join-Path $releaseRoot 'extracted/WSS-Universal') -ApprovalFile "$env:RUNNER_TEMP/approval.json" `
+            -Destination $desiredLib
+
+      - name: Retain verified approval for audit and no-op provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: wss-automatic-approval
+          path: ${{ runner.temp }}/approval.json
+          if-no-files-found: error
+
+      - name: Create Integration write token only after candidate and approval validation
         id: integration-token
         uses: actions/create-github-app-token@v2
         with:
@@ -63,28 +225,12 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - name: Check out current Integration dev
+      - name: Bind authoring checkout to the validated promotion base
         uses: actions/checkout@v4
         with:
-          ref: dev
+          ref: ${{ steps.source.outputs.sha }}
           fetch-depth: 0
           token: ${{ steps.integration-token.outputs.token }}
-
-      - name: Download, verify, and stage the approved release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ steps.core-token.outputs.token }}
-          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $releaseRoot = Join-Path $env:RUNNER_TEMP 'wss-release'
-          $desiredLib = Join-Path $env:RUNNER_TEMP 'desired-lib'
-          ./.github/scripts/Resolve-WssRelease.ps1 `
-            -ReleaseTag $env:WSS_RELEASE_TAG `
-            -OutputRoot $releaseRoot
-          ./.github/scripts/New-WssLib.ps1 `
-            -BleArtifactDir (Join-Path $releaseRoot 'ble-unified') `
-            -Destination $desiredLib
 
       - name: Inspect existing automation state
         id: existing
@@ -94,17 +240,23 @@ jobs:
           BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
         run: |
           $ErrorActionPreference = 'Stop'
+          . ./.github/scripts/WssAutomatic.ps1
+          if (Test-WssPayloadEqual 'lib' "$env:RUNNER_TEMP/wss-release/extracted/WSS-Universal") {
+            'branch_exists=false' >> $env:GITHUB_OUTPUT
+            'pr_number=' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
           $previousNativeErrorPreference = $PSNativeCommandUseErrorActionPreference
           try {
             $PSNativeCommandUseErrorActionPreference = $false
 
             $pullJson = & gh pr list `
               --repo cwru-non-academic/CSharp_WSS_Integration_Lib `
-              --state open `
+              --state all `
               --base dev `
               --head $env:BRANCH_NAME `
               --limit 2 `
-              --json number,url
+              --json number,url,state
             $prListExitCode = $LASTEXITCODE
             if ($prListExitCode -ne 0) {
               throw "Failed to query existing promotion PRs; gh exited with code $prListExitCode."
@@ -112,8 +264,9 @@ jobs:
 
             $pulls = @($pullJson | ConvertFrom-Json)
             if ($pulls.Count -gt 1) {
-              throw "Multiple open promotion PRs use $($env:BRANCH_NAME)."
+              throw "Multiple promotion PRs use $($env:BRANCH_NAME)."
             }
+            if ($pulls.Count -eq 1 -and $pulls[0].state -cne 'OPEN') { throw 'Candidate promotion PR was already merged or closed; refusing a duplicate or dependency rollback PR.' }
             $hasExistingPr = $pulls.Count -eq 1
             "Existing promotion PR: $(if ($hasExistingPr) { 'YES' } else { 'NO' })"
 
@@ -161,10 +314,12 @@ jobs:
           GH_TOKEN: ${{ steps.integration-token.outputs.token }}
           PR_NUMBER: ${{ steps.existing.outputs.pr_number }}
           PR_URL: ${{ steps.existing.outputs.pr_url }}
-          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
+          CANDIDATE_ID: ${{ steps.inputs.outputs.candidate_id }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
         run: |
           $ErrorActionPreference = 'Stop'
+          . ./.github/scripts/WssPromotion.ps1
+          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
           if (-not [string]::IsNullOrEmpty($env:PR_NUMBER)) {
             $pr = & gh pr view $env:PR_NUMBER `
               --repo cwru-non-academic/CSharp_WSS_Integration_Lib `
@@ -174,8 +329,8 @@ jobs:
             }
 
             $requiredMarkers = @(
-              '<!-- wss-promotion:v1 -->',
-              "<!-- wss-release-tag:$($env:WSS_RELEASE_TAG) -->",
+              '<!-- wss-promotion:v2 -->',
+              (Get-WssApprovalMarker $approval),
               "<!-- correlation-id:$($env:CORRELATION_ID) -->"
             )
             foreach ($marker in $requiredMarkers) {
@@ -183,11 +338,14 @@ jobs:
                 throw "Existing promotion PR has mismatched metadata: $marker"
               }
             }
+            $existingApproval = Read-WssApprovalMarker $pr.body "$env:RUNNER_TEMP/existing-approval.json"
+            if ((Get-WssApprovalMarker $existingApproval) -cne (Get-WssApprovalMarker $approval) -or
+                [Regex]::Matches($pr.body, '<!-- wss-promotion:v2 -->').Count -ne 1 -or
+                [Regex]::Matches($pr.body, '(?m)^<!-- correlation-id:').Count -ne 1) { throw 'Existing PR has ambiguous or mismatched promotion metadata.' }
 
-            $files = @(& gh api `
-              "repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/$($env:PR_NUMBER)/files?per_page=100" |
-              ConvertFrom-Json)
-            if ($LASTEXITCODE -ne 0 -or $files.Count -eq 0) {
+            $pages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/$($env:PR_NUMBER)/files?per_page=100") | ConvertFrom-Json
+            $files = @($pages | ForEach-Object { $_ })
+            if ($files.Count -eq 0) {
               throw 'Existing promotion PR has no readable changed files.'
             }
             $unexpected = @($files | Where-Object { $_.filename -notmatch '^lib/' })
@@ -212,9 +370,10 @@ jobs:
             throw "Existing automation branch changes files outside lib/: $($unexpectedBranchFiles -join ', ')"
           }
 
+          Assert-WssSource 'existing-promotion' $approval.integration.source_sha
           $commitMessage = & git -C existing-promotion log -1 --format=%B
           if ($LASTEXITCODE -ne 0 -or
-              $commitMessage -notcontains "Promote WSS $($env:WSS_RELEASE_TAG)" -or
+              $commitMessage -notcontains "Promote WSS run $($env:CANDIDATE_ID)" -or
               $commitMessage -notcontains "Correlation-ID: $($env:CORRELATION_ID)") {
             throw 'Existing automation branch has mismatched deterministic commit metadata.'
           }
@@ -237,6 +396,12 @@ jobs:
             throw 'Failed to create the local automation branch.'
           }
 
+          . ./.github/scripts/WssAutomatic.ps1
+          if (Test-WssPayloadEqual 'lib' "$env:RUNNER_TEMP/wss-release/extracted/WSS-Universal") {
+            'Verified no-op: universal dependency bytes already match dev; committed provenance is preserved, and no metadata-only PR is manufactured. The newly verified approval is retained as an Actions artifact.' >> $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+
           Remove-Item -LiteralPath 'lib' -Recurse -Force
           New-Item -ItemType Directory -Path 'lib' | Out-Null
           Copy-Item -Path (Join-Path $env:RUNNER_TEMP 'desired-lib/*') -Destination 'lib' -Recurse
@@ -246,7 +411,7 @@ jobs:
         id: commit
         shell: pwsh
         env:
-          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
+          CANDIDATE_ID: ${{ steps.inputs.outputs.candidate_id }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -289,12 +454,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw 'Promotion diff failed git diff --check.'
           }
+          . ./.github/scripts/WssPromotion.ps1
+          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
+          Assert-WssLib 'lib' "$env:RUNNER_TEMP/wss-release/extracted/WSS-Universal" $approval
           & git diff --cached --stat
 
           & git config user.name 'wss-promotion[bot]'
           & git config user.email 'wss-promotion[bot]@users.noreply.github.com'
           & git commit `
-            -m "Promote WSS $env:WSS_RELEASE_TAG" `
+            -m "Promote WSS run $env:CANDIDATE_ID" `
             -m "Correlation-ID: $env:CORRELATION_ID"
           if ($LASTEXITCODE -ne 0) {
             throw 'Failed to commit the promoted lib.'
@@ -320,23 +488,27 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.integration-token.outputs.token }}
           BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
-          WSS_RELEASE_TAG: ${{ inputs.wss_release_tag }}
+          CANDIDATE_ID: ${{ steps.inputs.outputs.candidate_id }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
         run: |
           $ErrorActionPreference = 'Stop'
+          . ./.github/scripts/WssPromotion.ps1
+          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
           $bodyPath = Join-Path $env:RUNNER_TEMP 'promotion-pr-body.md'
           @(
-            '<!-- wss-promotion:v1 -->'
-            "<!-- wss-release-tag:$($env:WSS_RELEASE_TAG) -->"
+            '<!-- wss-promotion:v2 -->'
+            (Get-WssApprovalMarker $approval)
             "<!-- correlation-id:$($env:CORRELATION_ID) -->"
             ''
-            "Promotes the Integration committed artifacts to WSS release ``$($env:WSS_RELEASE_TAG)``."
+            "Promotes the exact universal candidate from WSSCore run ``$($env:CANDIDATE_ID)``."
             ''
             "- Correlation ID: ``$($env:CORRELATION_ID)``"
-            "- Source release: https://github.com/cwru-non-academic/WSSCore/releases/tag/$($env:WSS_RELEASE_TAG)"
-            '- `lib/` was replaced from the checksum-verified WSS BLE Unified release artifact.'
-            '- The Core and BLE Unified copies of `WSS_Core_Interface.dll` were verified to match.'
-            '- Artifact-provided System.IO.Ports files were excluded; NuGet System.IO.Ports 9.0.0 remains authoritative.'
+            "- Producer: https://github.com/cwru-non-academic/WSSCore/actions/runs/$($approval.candidate.run_id)"
+            "- Producer SHA: ``$($approval.candidate.commit)``; artifact: ``$($approval.candidate.artifact_id)``"
+            "- Archive: ``$($approval.candidate.archive)``; SHA-256: ``$($approval.candidate.sha256)``"
+            "- Integration preflight: https://github.com/cwru-non-academic/CSharp_WSS_Integration_Lib/actions/runs/$($approval.integration.preflight_run_id)"
+            "- CLI preflight: https://github.com/cwru-non-academic/CLI_CSharp_WSS_Application/actions/runs/$($approval.cli.preflight_run_id)"
+            '- Complete universal content and approval metadata are committed in `lib/`; runnable output uses Ports 8.'
             '- Normal Integration PR CI will validate this committed/local state after the PR opens.'
             ''
             'This workflow does not merge the PR.'
@@ -346,7 +518,7 @@ jobs:
             --repo cwru-non-academic/CSharp_WSS_Integration_Lib `
             --base dev `
             --head $env:BRANCH_NAME `
-            --title "Promote WSS $($env:WSS_RELEASE_TAG)" `
+            --title "Promote universal WSS run $($env:CANDIDATE_ID)" `
             --body-file $bodyPath
           if ($LASTEXITCODE -ne 0) {
             throw 'Failed to create the Integration promotion PR.'

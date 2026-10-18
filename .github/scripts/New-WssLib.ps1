@@ -1,70 +1,27 @@
 param(
-    [Parameter(Mandatory = $true)]
-    [string] $BleArtifactDir,
-
-    [Parameter(Mandatory = $true)]
-    [string] $Destination
+    [Parameter(Mandatory = $true)] [string] $ArtifactRoot,
+    [Parameter(Mandatory = $true)] [string] $ApprovalFile,
+    [Parameter(Mandatory = $true)] [string] $Destination
 )
-
 $ErrorActionPreference = 'Stop'
-Set-StrictMode -Version Latest
-
-if (-not (Test-Path -LiteralPath $BleArtifactDir -PathType Container)) {
-    throw "BLE Unified artifact directory is missing: $BleArtifactDir"
-}
-
-if (Test-Path -LiteralPath $Destination) {
-    Remove-Item -LiteralPath $Destination -Recurse -Force
-}
-New-Item -ItemType Directory -Path $Destination | Out-Null
-
-$sourceRoot = (Resolve-Path -LiteralPath $BleArtifactDir).Path
-$destinationRoot = (Resolve-Path -LiteralPath $Destination).Path
-
-foreach ($sourceFile in Get-ChildItem -LiteralPath $sourceRoot -File -Recurse) {
-    $relativePath = $sourceFile.FullName.Substring($sourceRoot.Length).TrimStart('\', '/').Replace('\', '/')
-    $isExcluded =
-        $relativePath.Equals('System.IO.Ports.dll', [StringComparison]::OrdinalIgnoreCase) -or
-        ($relativePath.StartsWith('runtimes/', [StringComparison]::OrdinalIgnoreCase) -and
-            [IO.Path]::GetFileName($relativePath).Equals('System.IO.Ports.dll', [StringComparison]::OrdinalIgnoreCase)) -or
-        ($relativePath.StartsWith('runtimes/', [StringComparison]::OrdinalIgnoreCase) -and
-            [IO.Path]::GetFileName($relativePath).StartsWith('libSystem.IO.Ports.Native.', [StringComparison]::OrdinalIgnoreCase))
-
-    if ($isExcluded) {
-        continue
-    }
-
-    $destinationFile = Join-Path $destinationRoot $relativePath
-    $destinationParent = Split-Path -Parent $destinationFile
-    New-Item -ItemType Directory -Force -Path $destinationParent | Out-Null
-    Copy-Item -LiteralPath $sourceFile.FullName -Destination $destinationFile
-}
-
-foreach ($requiredFile in @(
-    'WSS_Core_Interface.dll',
-    'Newtonsoft.Json.dll',
-    'WSS.Transport.BLE.dll',
-    'backends/windows/WSS.Transport.BLE.Windows.dll',
-    'backends/linux/WSS.Transport.BLE.Linux.dll'
-)) {
-    if (-not (Test-Path -LiteralPath (Join-Path $destinationRoot $requiredFile) -PathType Leaf)) {
-        throw "Promoted lib is missing required file: $requiredFile"
-    }
-}
-
-$forbiddenFiles = @(Get-ChildItem -LiteralPath $destinationRoot -File -Recurse | Where-Object {
-    $relativePath = $_.FullName.Substring($destinationRoot.Length).TrimStart('\', '/').Replace('\', '/')
-    $relativePath.Equals('System.IO.Ports.dll', [StringComparison]::OrdinalIgnoreCase) -or
-    ($relativePath.StartsWith('runtimes/', [StringComparison]::OrdinalIgnoreCase) -and
-        $_.Name.Equals('System.IO.Ports.dll', [StringComparison]::OrdinalIgnoreCase)) -or
-    ($relativePath.StartsWith('runtimes/', [StringComparison]::OrdinalIgnoreCase) -and
-        $_.Name.StartsWith('libSystem.IO.Ports.Native.', [StringComparison]::OrdinalIgnoreCase))
+. "$PSScriptRoot/WssPromotion.ps1"
+. "$PSScriptRoot/Universal-WssFiles.ps1"
+$approval = Read-WssApproval $ApprovalFile
+$root = (Resolve-Path -LiteralPath $ArtifactRoot).Path
+$files = @(Get-ChildItem -LiteralPath $root -File -Recurse | ForEach-Object {
+    $_.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/')
 })
-
-if ($forbiddenFiles.Count -ne 0) {
-    throw "Promoted lib contains NuGet-owned System.IO.Ports files: $($forbiddenFiles.FullName -join ', ')"
+if (@(Compare-Object $WssUniversalFiles $files -CaseSensitive).Count -ne 0) {
+    throw 'Staging requires the complete exact universal inventory, not an overlay or old package.'
 }
-
-if (@(Get-ChildItem -LiteralPath $destinationRoot -File -Recurse).Count -eq 0) {
-    throw 'Promoted lib contains no files.'
+if (Test-Path -LiteralPath $Destination) { throw 'Destination must be new; existing dependencies will not be overwritten.' }
+New-Item -ItemType Directory -Path $Destination | Out-Null
+foreach ($relative in $WssUniversalFiles) {
+    $target = Join-Path $Destination $relative
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $root $relative) -Destination $target
 }
+# Keep the complete original package, including the net462 alternate. Project copy rules
+# exclude that alternate from runnable output while retaining BOTH platform runtime trees.
+Write-WssApproval $approval (Join-Path $Destination 'wss-candidate.json')
+Assert-WssLib $Destination $root $approval
