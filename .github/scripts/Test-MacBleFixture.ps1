@@ -68,3 +68,4 @@ try {
     missing_declared_native_rejected=$true; physical_ble='not executed'
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $WorkRoot 'fixture-evidence.json')
 'PASS: reviewed-source macOS fixture; actual ABI/load/activation and missing-native rejection. No canonical candidate or hardware operation created.'
+exit 0 # The checked, expected negative test must not leak its native exit code to Actions.
