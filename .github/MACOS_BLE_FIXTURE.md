@@ -29,9 +29,9 @@ No Core or receiver promotion provenance is relaxed to run this test.
 
 Python should pin the reviewed/merged fixture SHA and use the actual immutable
 candidate produced by the genuine Core dev push after the main-to-dev sync merge.
-Its receiver inventory/schema preparations remain separate. The C# promotion
-resolver's exact legacy inventory also remains unchanged here; enabling C# payload
-promotion requires its own reviewed receiver-inventory migration.
+Its receiver inventory/schema preparations remain separate. The narrow C# receiver
+inventory migration is described in `MACOS_RECEIVER_CONTRACT.md`; it accepts only
+the exact legacy set or its two-file macOS extension and preserves promotion gates.
 
 No fixture code initializes CBCentralManager, scans, connects a peripheral or writes
 data. TCC authorization, Bluetooth adapter state and physical BLE I/O remain real

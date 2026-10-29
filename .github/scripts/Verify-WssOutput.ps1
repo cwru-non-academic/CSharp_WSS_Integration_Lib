@@ -4,14 +4,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/Universal-WssFiles.ps1"
-$macFiles = @('backends/macos/WSS.Transport.BLE.MacOS.dll', 'backends/macos/libwss_macos_ble.dylib')
+$selectedFiles = @(Read-WssUniversalFiles $ArtifactRoot -AllowProvenance)
+Assert-WssMacOSPayload $ArtifactRoot $selectedFiles
+$macFiles = $WssMacOSFiles
 $sourceMacCount = @($macFiles | Where-Object { Test-Path -LiteralPath (Join-Path $ArtifactRoot $_) -PathType Leaf }).Count
 $outputMacCount = @($macFiles | Where-Object { Test-Path -LiteralPath (Join-Path $OutputRoot $_) -PathType Leaf }).Count
 if ($sourceMacCount -notin @(0,2) -or $sourceMacCount -ne $outputMacCount) {
     throw 'macOS backend propagation requires both managed adapter and native dylib in source/output; no partial or stale backend is allowed.'
 }
-$filesToVerify = @($WssUniversalFiles)
-if ($sourceMacCount -eq 2) { $filesToVerify += $macFiles }
+$filesToVerify = $selectedFiles
 foreach ($relative in $filesToVerify) {
     # Root net462 Ports is an alternate, not a runnable .NET host implementation.
     if ($relative -ceq 'System.IO.Ports.dll') { continue }

@@ -11,12 +11,11 @@ $root = (Resolve-Path -LiteralPath $ArtifactRoot).Path
 $files = @(Get-ChildItem -LiteralPath $root -File -Recurse | ForEach-Object {
     $_.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/')
 })
-if (@(Compare-Object $WssUniversalFiles $files -CaseSensitive).Count -ne 0) {
-    throw 'Staging requires the complete exact universal inventory, not an overlay or old package.'
-}
+$selectedFiles = @(Get-WssUniversalFiles $files)
+Assert-WssMacOSPayload $root $selectedFiles
 if (Test-Path -LiteralPath $Destination) { throw 'Destination must be new; existing dependencies will not be overwritten.' }
 New-Item -ItemType Directory -Path $Destination | Out-Null
-foreach ($relative in $WssUniversalFiles) {
+foreach ($relative in $selectedFiles) {
     $target = Join-Path $Destination $relative
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
     Copy-Item -LiteralPath (Join-Path $root $relative) -Destination $target
