@@ -22,6 +22,7 @@ jobs:
         run: |
           ./.github/scripts/tests/WssPromotion.Tests.ps1
           ./.github/scripts/tests/WssInventory.Tests.ps1
+          ./.github/scripts/tests/WssReleaseReceipt.Tests.ps1
 
       - uses: actions/setup-dotnet@v4
         with:
