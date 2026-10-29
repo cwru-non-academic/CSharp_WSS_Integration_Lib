@@ -3,7 +3,7 @@ Set-StrictMode -Version Latest
 function Assert-WssReceiptPr($Pr,[string] $Repository,[string] $Sha) {
     if (-not $Pr.merged -or $Pr.state -cne 'closed' -or $Pr.merge_commit_sha -cne $Sha -or
         $Pr.base.ref -cne 'dev' -or $Pr.base.repo.full_name -cne $Repository -or
-        $Pr.head.repo.full_name -cne $Repository -or $Pr.user.type -cne 'Bot') {
+        $Pr.head.repo.full_name -cne $Repository -or $Pr.user.type -cne 'Bot' -or $Pr.merged_by.type -cne 'User') {
         throw 'Receipt requires an actual same-repository bot dependency PR merged into dev.'
     }
 }

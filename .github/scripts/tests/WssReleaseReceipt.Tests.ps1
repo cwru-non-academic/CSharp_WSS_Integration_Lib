@@ -10,13 +10,13 @@ function Reject([scriptblock] $Action) {
 }
 $repo = 'cwru-non-academic/CSharp_WSS_Integration_Lib'
 $sha = '1' * 40
-function Pr { [pscustomobject]@{merged=$true;state='closed';merge_commit_sha=$sha;base=@{ref='dev';repo=@{full_name=$repo}};head=@{repo=@{full_name=$repo}};user=@{type='Bot'}} }
+function Pr { [pscustomobject]@{merged=$true;merged_by=@{type='User'};state='closed';merge_commit_sha=$sha;base=@{ref='dev';repo=@{full_name=$repo}};head=@{repo=@{full_name=$repo}};user=@{type='Bot'}} }
 $p = Pr
 Assert-WssReceiptPr $p $repo $sha
 foreach ($mutate in @(
     { param($p) $p.merged=$false }, { param($p) $p.state='open' },
     { param($p) $p.merge_commit_sha='2'*40 }, { param($p) $p.base.ref='main' },
-    { param($p) $p.head.repo.full_name='fork/test' }, { param($p) $p.user.type='User' }
+    { param($p) $p.head.repo.full_name='fork/test' }, { param($p) $p.user.type='User' }, { param($p) $p.merged_by.type='Bot' }
 )) { $p=Pr; & $mutate $p; Reject { Assert-WssReceiptPr $p $repo $sha } }
 $target = @{workflow='.github/workflows/wss-compatibility.yml';jobs=@('Integration behavioral tests','Integration compatibility (macOS)')}
 function Run { [pscustomobject]@{status='completed';conclusion='success';head_branch='dev';head_sha=$sha;repository=@{full_name=$repo};head_repository=@{full_name=$repo};path=$target.workflow;event='workflow_dispatch'} }
