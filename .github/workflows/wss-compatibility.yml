@@ -107,3 +107,28 @@ jobs:
           --no-restore
           --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.SerialRuntimeSelectionTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.BleBackendLoadingTests"
           -p:TreatWarningsAsErrors=true
+
+      - name: Check out reviewed Core source for declared macOS fixture
+        if: runner.os == 'macOS'
+        uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: 0ac18df22a1371e5ff94d5485c6d3fa4b3e6538f
+          path: .macos-ble-fixture-core
+          persist-credentials: false
+
+      - name: Verify declared macOS native fixture and fail-closed missing payload
+        if: runner.os == 'macOS'
+        shell: pwsh
+        run: ./.github/scripts/Test-MacBleFixture.ps1 -CoreSourceRoot "$env:GITHUB_WORKSPACE/.macos-ble-fixture-core" -WorkRoot "$env:RUNNER_TEMP/macos-ble-fixture"
+
+      - name: Retain macOS fixture evidence
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-ble-fixture-evidence
+          path: |
+            ${{ runner.temp }}/macos-ble-fixture/fixture-evidence.json
+            ${{ runner.temp }}/macos-ble-fixture/missing-native-rejection.log
+            ${{ runner.temp }}/macos-ble-fixture/results/*.trx
+          if-no-files-found: warn

@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using NUnit.Framework;
 using Wss.Transports;
 
@@ -12,8 +13,17 @@ public sealed class BleBackendLoadingTests
     [Test]
     public void FacadeLoadsCurrentPlatformBackendAndDependencies()
     {
-        if (OperatingSystem.IsMacOS())
-            Assert.Ignore("macOS BLE backend is not implemented yet.");
+        bool declaresMacOS = DeclaresMacOSBackend();
+        AssertMacOSPayloadPresence(declaresMacOS);
+        if (OperatingSystem.IsMacOS() && !declaresMacOS)
+        {
+            Assert.Throws<PlatformNotSupportedException>(() =>
+            {
+                using var unsupported = new BleNusTransport(new BleNusTransportOptions { DeviceName = "ci-load-only" });
+            }, "A legacy payload must explicitly reject macOS BLE; this is not runtime support.");
+            TestContext.Progress.WriteLine("Legacy payload: macOS BLE explicitly unsupported (asserted); native BLE operation NOT EXECUTED.");
+            return;
+        }
 
         (string platform, string backendName, string[] dependencyNames) = GetPlatformExpectation();
         string expectedBackendDirectory = Path.GetFullPath(
@@ -72,7 +82,63 @@ public sealed class BleBackendLoadingTests
             }
             finally { NativeLibrary.Free(native); }
         }
+        else if (OperatingSystem.IsMacOS())
+        {
+            Assert.That(backendAssembly.GetCustomAttribute<TargetFrameworkAttribute>()?.FrameworkName,
+                Is.EqualTo(".NETStandard,Version=v2.0"));
+            nint native = NativeLibrary.Load(Path.Combine(expectedBackendDirectory, "libwss_macos_ble.dylib"));
+            try
+            {
+                foreach (string export in new[] { "wss_mac_abi", "wss_mac_create", "wss_mac_destroy", "wss_mac_submit", "wss_mac_cancel" })
+                    Assert.That(NativeLibrary.GetExport(native, export), Is.Not.EqualTo(nint.Zero));
+                var abi = Marshal.GetDelegateForFunctionPointer<MacAbi>(NativeLibrary.GetExport(native, "wss_mac_abi"));
+                Assert.That(abi(), Is.EqualTo(0x00010000u), "macOS native ABI must match the managed adapter.");
+                Type bootstrap = backendAssembly.GetType("Wss.Transports.Backends.MacOS.MacBleBackend", throwOnError: true)!;
+                bootstrap.GetMethod("VerifyNativeAbi")!.Invoke(null, null); // Real managed P/Invoke create/destroy; no CBCentralManager.
+                bootstrap.GetMethod("Register")!.Invoke(null, null);
+                bootstrap.GetMethod("Register")!.Invoke(null, null);
+                using var registered = new BleNusTransport(new BleNusTransportOptions { DeviceName = "ci-load-only" });
+                Assert.That(registered.IsConnected, Is.False);
+            }
+            finally { NativeLibrary.Free(native); }
+            TestContext.Progress.WriteLine("macOS BLE declared backend/native ABI/load/activation: PASS. Bluetooth authorization, adapter and peripheral I/O NOT EXECUTED.");
+        }
     }
+
+    private static bool DeclaresMacOSBackend()
+    {
+        // Read the facade's actual capability mapping. File absence alone cannot
+        // turn a broken, declared macOS distribution into a legacy success.
+        Type loader = typeof(BleNusTransport).Assembly.GetType("Wss.Transports.Backends.BleBackendLoader", throwOnError: true)!;
+        MethodInfo identity = loader.GetMethod("GetBackendIdentity", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new AssertionException("Unknown BLE facade capability contract; cannot infer unsupported macOS.");
+        try
+        {
+            var mapping = ((string AssemblyName, string FactoryName))identity.Invoke(null, ["macos"])!;
+            Assert.That(mapping.AssemblyName, Is.EqualTo("WSS.Transport.BLE.MacOS"));
+            Assert.That(mapping.FactoryName, Is.EqualTo("Wss.Transports.Backends.MacOS.MacBleNusBackendFactory"));
+            return true;
+        }
+        catch (TargetInvocationException exception) when
+            (exception.InnerException is ArgumentOutOfRangeException argument && argument.ParamName == "platform")
+        {
+            return false;
+        }
+    }
+
+    private static void AssertMacOSPayloadPresence(bool declared)
+    {
+        string directory = Path.Combine(AppContext.BaseDirectory, "backends", "macos");
+        string[] files = Directory.Exists(directory)
+            ? Directory.GetFiles(directory, "*", SearchOption.AllDirectories).Select(path => Path.GetRelativePath(directory, path)).ToArray()
+            : [];
+        Assert.That(files, Is.EquivalentTo(declared
+            ? new[] { "WSS.Transport.BLE.MacOS.dll", "libwss_macos_ble.dylib" }
+            : Array.Empty<string>()), "Declared macOS backend requires exactly its managed adapter and native dylib; legacy facades must not carry orphan macOS files.");
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate uint MacAbi();
 
     private static (string Platform, string BackendName, string[] DependencyNames) GetPlatformExpectation()
     {
@@ -92,7 +158,9 @@ public sealed class BleBackendLoadingTests
                 ["Linux.Bluetooth", "Tmds.DBus", "Microsoft.Bcl.AsyncInterfaces",
                  "System.Reflection.Emit", "System.Reflection.Emit.ILGeneration", "System.Threading.Tasks.Extensions"]);
         }
+        if (OperatingSystem.IsMacOS())
+            return ("macos", "WSS.Transport.BLE.MacOS", []);
 
-        throw new PlatformNotSupportedException("The BLE integration smoke supports Windows and Linux only.");
+        throw new PlatformNotSupportedException("The BLE integration smoke supports Windows, Linux and macOS only.");
     }
 }
