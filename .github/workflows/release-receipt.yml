@@ -1,0 +1,60 @@
+name: Emit dev release acceptance receipt
+run-name: WSS acceptance csharp-wrapper ${{ inputs.plan_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      producer_run_id:
+        description: Canonical dev push producer run with frozen plan
+        required: true
+        type: string
+      plan_id:
+        description: Exact frozen wss-propagation-plan/v1 digest
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: acceptance-csharp-wrapper-${{ inputs.plan_id }}
+  cancel-in-progress: false
+jobs:
+  receipt:
+    name: Verify actual wrapper merge and exact candidate acceptance
+    if: github.repository == 'cwru-non-academic/CSharp_WSS_Integration_Lib' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: .tools
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: .validation-tools
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          path: .accepted
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate provenance, paired preflights, actual merge and fresh normal CI
+        id: receipt
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_RUN: ${{ inputs.producer_run_id }}
+          PLAN_ID: ${{ inputs.plan_id }}
+        run: ./.tools/.github/scripts/Write-ReleaseReceipt.ps1 -TargetId csharp-wrapper -ProducerRunId $env:PRODUCER_RUN -PlanId $env:PLAN_ID
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.receipt.outputs.artifact_name }}
+          path: receipt-output/receipt.json
+          if-no-files-found: error
