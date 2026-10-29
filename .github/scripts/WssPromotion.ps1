@@ -124,11 +124,15 @@ function Assert-WssLib([string] $Lib, [string] $ArtifactRoot, $Approval) {
     . "$PSScriptRoot/Universal-WssFiles.ps1"
     $root = (Resolve-Path -LiteralPath $Lib).Path
     $actual = @(Get-ChildItem -LiteralPath $root -File -Recurse | ForEach-Object { $_.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/') })
-    $expected = @($WssUniversalFiles) + @('wss-candidate.json')
-    if (@(Compare-Object $expected $actual -CaseSensitive).Count -ne 0) { throw 'Committed lib inventory is not exactly universal payload plus provenance.' }
+    if ('wss-candidate.json' -cnotin $actual) { throw 'Committed lib provenance is missing.' }
+    $selectedFiles = @(Get-WssUniversalFiles @($actual | Where-Object { $_ -cne 'wss-candidate.json' }))
+    $sourceFiles = @(Read-WssUniversalFiles $ArtifactRoot)
+    if (@(Compare-Object $selectedFiles $sourceFiles -CaseSensitive).Count -ne 0) { throw 'Committed and candidate inventory variants differ.' }
+    Assert-WssMacOSPayload $root $selectedFiles
+    Assert-WssMacOSPayload $ArtifactRoot $sourceFiles
     $record = Read-WssApproval (Join-Path $root 'wss-candidate.json')
     if ((Get-WssApprovalMarker $record) -cne (Get-WssApprovalMarker $Approval)) { throw 'Committed lib approval differs.' }
-    foreach ($relative in $WssUniversalFiles) {
+    foreach ($relative in $selectedFiles) {
         if ((Get-FileHash -LiteralPath (Join-Path $root $relative)).Hash -cne
             (Get-FileHash -LiteralPath (Join-Path $ArtifactRoot $relative)).Hash) { throw "Committed universal bytes differ: $relative" }
     }

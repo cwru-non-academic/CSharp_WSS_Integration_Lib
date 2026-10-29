@@ -86,10 +86,16 @@ function Test-WssPayloadEqual([string] $Lib, [string] $ArtifactRoot) {
     . "$PSScriptRoot/Universal-WssFiles.ps1"
     $root = (Resolve-Path -LiteralPath $Lib).Path
     $actual = @(Get-ChildItem -LiteralPath $root -File -Recurse | ForEach-Object { $_.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/') })
-    if (@(Compare-Object (@($WssUniversalFiles) + @('wss-candidate.json')) $actual -CaseSensitive).Count -ne 0) { return $false }
+    if ('wss-candidate.json' -cnotin $actual) { return $false }
+    try {
+        $selectedFiles = @(Get-WssUniversalFiles @($actual | Where-Object { $_ -cne 'wss-candidate.json' }))
+        $sourceFiles = @(Read-WssUniversalFiles $ArtifactRoot)
+    } catch { return $false }
+    if (@(Compare-Object $selectedFiles $sourceFiles -CaseSensitive).Count -ne 0) { return $false }
+    Assert-WssMacOSPayload $ArtifactRoot $sourceFiles
     # Require valid committed provenance; a no-op preserves it instead of manufacturing a metadata-only PR.
     $null = Read-WssApproval (Join-Path $root 'wss-candidate.json')
-    foreach ($relative in $WssUniversalFiles) {
+    foreach ($relative in $selectedFiles) {
         if ((Get-FileHash -LiteralPath (Join-Path $root $relative)).Hash -cne
             (Get-FileHash -LiteralPath (Join-Path $ArtifactRoot $relative)).Hash) { return $false }
     }
