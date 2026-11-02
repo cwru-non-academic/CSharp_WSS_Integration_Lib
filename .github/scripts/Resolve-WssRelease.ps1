@@ -86,15 +86,19 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [IO.Compression.ZipFile]::OpenRead($archive)
 try {
     $entries = @($zip.Entries | ForEach-Object { $_.FullName })
-    $expectedEntries = @($WssUniversalFiles | ForEach-Object { "WSS-Universal/$_" })
-    if ($entries.Count -ne $expectedEntries.Count -or
-        @($entries | Sort-Object -Unique).Count -ne $entries.Count -or
-        @(Compare-Object $expectedEntries $entries -CaseSensitive).Count -ne 0) {
-        throw 'ZIP does not contain the exact universal inventory under WSS-Universal/.'
+    if (@($entries | Where-Object { -not $_.StartsWith('WSS-Universal/', [StringComparison]::Ordinal) }).Count -ne 0) {
+        throw 'ZIP entries must remain under WSS-Universal/.'
     }
+    $selectedFiles = @(Get-WssUniversalFiles @($entries | ForEach-Object { $_.Substring(14) }))
 } finally { $zip.Dispose() }
 Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $OutputRoot 'extracted')
 $root = (Resolve-Path -LiteralPath (Join-Path $OutputRoot 'extracted/WSS-Universal')).Path
+Assert-WssMacOSPayload $root $selectedFiles
+if ($WssMacOSFiles[0] -cin $selectedFiles) {
+    $pages = Invoke-Gh @('api', '--paginate', '--slurp', "repos/$ProducerRepository/actions/runs/$RunId/jobs?per_page=100") | ConvertFrom-Json
+    $jobs = @($pages | ForEach-Object { $_.jobs })
+    Assert-WssMacOSProducerJobs $jobs
+}
 $provenance = [ordered]@{
     repository = $ProducerRepository; run_id = $RunId; artifact_id = $artifactId
     commit = $ExpectedCommit.ToLowerInvariant(); release_tag = $ReleaseTag
