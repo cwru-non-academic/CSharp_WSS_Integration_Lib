@@ -42,6 +42,7 @@ foreach ($relative in $replacementFiles.Keys) {
     Copy-Item -LiteralPath (Join-Path $CoreSourceRoot $replacementFiles[$relative]) -Destination $destination -Force
 }
 $project = Join-Path $integrationRoot 'tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj'
+& "$PSScriptRoot/tests/WssInventory.Tests.ps1" -ArtifactRoot $payload
 $properties = @("-p:WSS_ARTIFACT_DIR=$payload", "-p:WSS_BLE_ARTIFACT_DIR=$payload", '-p:TreatWarningsAsErrors=true')
 $results = Join-Path $WorkRoot 'results'
 Push-Location $integrationRoot
