@@ -16,7 +16,7 @@ All documentation about the API and other implementations can be found in [GitHu
 
 ## Build
 
-Install the .NET 9 SDK first. The library targets `net9.0` and supports the WSS unified BLE distribution on Windows and Linux.
+Install the .NET 9 SDK first. The library targets `net9.0`. The unified BLE distribution has Windows, Linux and macOS backends; the macOS adapter requires a 64-bit macOS 11 or newer host and its matching universal native library.
 
 ```bash
 dotnet restore Wss.CSharpImplementation.sln
@@ -35,7 +35,7 @@ dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.
 
 Both artifact properties must identify the same root. The project references Core, Serial,
 and the Standard 2.0 BLE facade directly. System.IO.Ports NuGet 8.0.0 selects the runnable
-host implementation; the root net462 alternate is not copied over it. Both backend trees,
+host implementation; the root net462 alternate is not copied over it. All declared backend trees,
 the Windows native wrapper/production DLL, shared dependencies, and all runtime trees
 propagate to build and publish outputs. Preflight verifies their hashes against the candidate.
 
@@ -223,7 +223,7 @@ by WSS Core's `IWssConformance`.
 - Serial transport remains available through the vendor serial stack.
 - Test transport remains available for simulated runs.
 - BLE transport is exposed through `BleNusTransport` and is intended for Nordic UART Service-compatible devices.
-- The universal artifact provides platform backends for Windows and Linux; macOS supports Core/Serial only.
+- The universal artifact provides Windows, Linux and macOS BLE backends. A facade that declares macOS support must ship both `backends/macos/WSS.Transport.BLE.MacOS.dll` and `libwss_macos_ble.dylib`; a missing declared backend is a failure, not an unsupported-platform skip.
 - The current WSS BLE path assumes an unpaired, unencrypted NUS connection and does not request BLE pairing.
 
 ## Runtime Ownership
