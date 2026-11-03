@@ -1,7 +1,18 @@
 name: Dispatch CLI Integration promotion
-run-name: Dispatch CLI promotion for ${{ github.event.pull_request.merge_commit_sha }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('Resume application promotion / wss-{0}', inputs.producer_run_id) || format('Dispatch CLI promotion for {0}', github.event.pull_request.merge_commit_sha) }}
 
 on:
+  workflow_dispatch:
+    inputs:
+      producer_run_id:
+        required: true
+        type: string
+      barrier_run_id:
+        required: true
+        type: string
+      barrier_attempt:
+        required: true
+        type: string
   pull_request_target:
     types:
       - closed
@@ -21,11 +32,12 @@ jobs:
   dispatch:
     name: Dispatch CLI promotion
     if: >-
-      github.event.pull_request.merged == true &&
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.pull_request.merged == true &&
       github.event.pull_request.base.ref == 'dev' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.type == 'Bot' &&
-      startsWith(github.event.pull_request.head.ref, 'automation/wss-')
+      startsWith(github.event.pull_request.head.ref, 'automation/wss-'))
     runs-on: ubuntu-latest
     steps:
       # pull_request_target uses trusted base code, never executable PR-head code.
@@ -33,16 +45,34 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - uses: actions/checkout@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: main
+          path: .core-stage
+          persist-credentials: false
+      - name: Require staged integration barrier or verified legacy producer
+        id: stage
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
+          BARRIER_RUN_ID: ${{ inputs.barrier_run_id }}
+          BARRIER_ATTEMPT: ${{ inputs.barrier_attempt }}
+        run: ./.github/scripts/Prepare-StagedApplicationFanout.ps1 -Receiver csharp -RecordPath lib/wss-candidate.json -WorkRoot "$env:RUNNER_TEMP/cli-stage"
       - name: Validate promotion metadata
+        if: steps.stage.outputs.dispatch_allowed == 'true'
         id: metadata
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          MERGE_SHA: ${{ steps.stage.outputs.merge_sha }}
+          FANOUT_EVENT: ${{ steps.stage.outputs.event_path }}
         run: |
           $ErrorActionPreference = 'Stop'
           . ./.github/scripts/WssPromotion.ps1
-          $event = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
+          $event = Get-Content -LiteralPath $env:FANOUT_EVENT -Raw | ConvertFrom-Json
           $body = [string]$event.pull_request.body
 
           if ($env:MERGE_SHA -cnotmatch '^[0-9a-fA-F]{40}$') {
@@ -83,6 +113,7 @@ jobs:
           "correlation_id=$($correlationMatch.Groups['value'].Value)" >> $env:GITHUB_OUTPUT
 
       - name: Create CLI Actions token
+        if: steps.stage.outputs.dispatch_allowed == 'true'
         id: cli-token
         uses: actions/create-github-app-token@v2
         with:
@@ -93,6 +124,7 @@ jobs:
           permission-actions: write
 
       - name: Dispatch CLI promotion workflow
+        if: steps.stage.outputs.dispatch_allowed == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ steps.cli-token.outputs.token }}
