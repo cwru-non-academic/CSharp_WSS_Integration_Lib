@@ -279,14 +279,14 @@ try {
     foreach ($key in @('GITHUB_ACTIONS','GITHUB_REPOSITORY','GITHUB_EVENT_NAME','GITHUB_REF','PRODUCER_RUN_ID','BARRIER_RUN_ID','BARRIER_ATTEMPT','GITHUB_OUTPUT','RUNNER_TEMP')) {
         $savedEnvironment[$key] = [Environment]::GetEnvironmentVariable($key)
     }
-    $script:lateMain = 'a'*40; $script:lateInvalid = $false; $script:lateDenied = $false
-    $script:lateCalls = 0; $script:lateWrites = 0
+    $global:wssTestlateMain = 'a'*40; $global:wssTestlateInvalid = $false; $global:wssTestlateDenied = $false
+    $global:wssTestlateCalls = 0; $global:wssTestlateWrites = 0
     function gh {
         $global:LASTEXITCODE = 0
-        if ('POST' -cin $args) { $script:lateWrites++; throw 'Metadata fixture must never write.' }
-        if ($script:lateDenied) { $global:LASTEXITCODE = 1; return '{}' }
+        if ('POST' -cin $args) { $global:wssTestlateWrites++; throw 'Metadata fixture must never write.' }
+        if ($global:wssTestlateDenied) { $global:LASTEXITCODE = 1; return '{}' }
         switch ($args[-1]) {
-            'repos/cwru-non-academic/WSSCore/git/ref/heads/main' { @{object=@{sha=$script:lateMain}} | ConvertTo-Json -Depth 4 }
+            'repos/cwru-non-academic/WSSCore/git/ref/heads/main' { @{object=@{sha=$global:wssTestlateMain}} | ConvertTo-Json -Depth 4 }
             'repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/40' {
                 @{merged=$true;state='closed';merge_commit_sha=('b'*40);user=@{type='Bot'};
                     base=@{ref='dev';repo=@{full_name=$env:GITHUB_REPOSITORY}};
@@ -295,11 +295,11 @@ try {
             default { throw "Unexpected late-check read: $($args[-1])" }
         }
     }
-    function git { $global:LASTEXITCODE = 0; $script:lateMain }
+    function git { $global:LASTEXITCODE = 0; $global:wssTestlateMain }
     function node {
-        $script:lateCalls++
+        $global:wssTestlateCalls++
         if (($args[1..4] -join ',') -cne 'verify-barrier,123,456,1') { throw 'Late check changed exact correlation inputs.' }
-        $global:LASTEXITCODE = if ($script:lateInvalid) { 1 } else { 0 }
+        $global:LASTEXITCODE = if ($global:wssTestlateInvalid) { 1 } else { 0 }
         @{integrations=@{csharp=@{repository=$env:GITHUB_REPOSITORY;pr_number='40';head_sha=('b'*40)}}} | ConvertTo-Json -Depth 6
     }
     Push-Location "$PSScriptRoot/../../.."
@@ -310,12 +310,12 @@ try {
         $env:GITHUB_OUTPUT=Join-Path $temp 'late-output'; $env:RUNNER_TEMP=Join-Path $temp 'late-valid'
         $null = & $lateCheck
         if (!(Test-Path (Join-Path $env:RUNNER_TEMP 'cli-stage-recheck/fanout-event.json'))) { throw 'Valid late barrier did not retain the authorized merge event.' }
-        $script:lateInvalid=$true; $env:RUNNER_TEMP=Join-Path $temp 'late-moved'
+        $global:wssTestlateInvalid=$true; $env:RUNNER_TEMP=Join-Path $temp 'late-moved'
         Assert-Rejected { & $lateCheck } 'Trusted Core integration barrier verification failed*'
         if (Test-Path (Join-Path $env:RUNNER_TEMP 'cli-stage-recheck/fanout-event.json')) { throw 'A moved barrier emitted a dispatch event.' }
-        $script:lateInvalid=$false; $script:lateDenied=$true
+        $global:wssTestlateInvalid=$false; $global:wssTestlateDenied=$true
         Assert-Rejected { & $lateCheck } 'Read-only GitHub lookup failed*'
-        if ($script:lateCalls -ne 2 -or $script:lateWrites -ne 0) { throw 'Rejection retried the verifier or attempted a write.' }
+        if ($global:wssTestlateCalls -ne 2 -or $global:wssTestlateWrites -ne 0) { throw 'Rejection retried the verifier or attempted a write.' }
     } finally {
         Pop-Location
         Remove-Item Function:gh, Function:git, Function:node
