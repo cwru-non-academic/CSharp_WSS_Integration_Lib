@@ -259,6 +259,71 @@ try {
     if (Test-WssPayloadEqual $lib $payload) { throw 'Incomplete/extra committed dependencies were treated as a no-op.' }
     $count++
 
+    # Exercise the actual late workflow command with metadata-only API stubs.
+    # These checks authorize no token, remote request or runtime acceptance.
+    $workflow = Get-Content "$PSScriptRoot/../../workflows/dispatch-cli-promotion.yml" -Raw
+    $stepName = 'Recheck integration barrier immediately before CLI writes'
+    $step = [regex]::Match($workflow, "(?ms)^      - name: $stepName\r?\n(?<body>.*?)(?=^      - )")
+    $validateAt = $workflow.IndexOf('name: Validate promotion metadata')
+    $checkAt = $workflow.IndexOf("name: $stepName")
+    $tokenAt = $workflow.IndexOf('name: Create CLI Actions token')
+    $postAt = $workflow.IndexOf('name: Dispatch CLI promotion workflow')
+    if (!$step.Success -or $validateAt -lt 0 -or $checkAt -le $validateAt -or $tokenAt -le $checkAt -or $postAt -le $tokenAt -or
+        !$step.Groups['body'].Value.Contains("if: github.event_name == 'workflow_dispatch' && steps.stage.outputs.dispatch_allowed == 'true'")) {
+        throw 'The staged recheck must gate write credentials after metadata validation, preserving the legacy path.'
+    }
+    $command = [regex]::Match($step.Groups['body'].Value, '(?m)^        run: (?<command>.+)\r?$')
+    if (!$command.Success) { throw 'Late barrier command missing.' }
+    $lateCheck = [scriptblock]::Create($command.Groups['command'].Value)
+    $savedEnvironment = @{}
+    foreach ($key in @('GITHUB_ACTIONS','GITHUB_REPOSITORY','GITHUB_EVENT_NAME','GITHUB_REF','PRODUCER_RUN_ID','BARRIER_RUN_ID','BARRIER_ATTEMPT','GITHUB_OUTPUT','RUNNER_TEMP')) {
+        $savedEnvironment[$key] = [Environment]::GetEnvironmentVariable($key)
+    }
+    $global:wssTestlateMain = 'a'*40; $global:wssTestlateInvalid = $false; $global:wssTestlateDenied = $false
+    $global:wssTestlateCalls = 0; $global:wssTestlateWrites = 0
+    function gh {
+        $global:LASTEXITCODE = 0
+        if ('POST' -cin $args) { $global:wssTestlateWrites++; throw 'Metadata fixture must never write.' }
+        if ($global:wssTestlateDenied) { $global:LASTEXITCODE = 1; return '{}' }
+        switch ($args[-1]) {
+            'repos/cwru-non-academic/WSSCore/git/ref/heads/main' { @{object=@{sha=$global:wssTestlateMain}} | ConvertTo-Json -Depth 4 }
+            'repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/40' {
+                @{merged=$true;state='closed';merge_commit_sha=('b'*40);user=@{type='Bot'};
+                    base=@{ref='dev';repo=@{full_name=$env:GITHUB_REPOSITORY}};
+                    head=@{repo=@{full_name=$env:GITHUB_REPOSITORY}}} | ConvertTo-Json -Depth 6
+            }
+            default { throw "Unexpected late-check read: $($args[-1])" }
+        }
+    }
+    function git { $global:LASTEXITCODE = 0; $global:wssTestlateMain }
+    function node {
+        $global:wssTestlateCalls++
+        if (($args[1..4] -join ',') -cne 'verify-barrier,123,456,1') { throw 'Late check changed exact correlation inputs.' }
+        $global:LASTEXITCODE = if ($global:wssTestlateInvalid) { 1 } else { 0 }
+        @{integrations=@{csharp=@{repository=$env:GITHUB_REPOSITORY;pr_number='40';head_sha=('b'*40)}}} | ConvertTo-Json -Depth 6
+    }
+    Push-Location "$PSScriptRoot/../../.."
+    try {
+        $env:GITHUB_ACTIONS='true'; $env:GITHUB_REPOSITORY='cwru-non-academic/CSharp_WSS_Integration_Lib'
+        $env:GITHUB_EVENT_NAME='workflow_dispatch'; $env:GITHUB_REF='refs/heads/main'
+        $env:PRODUCER_RUN_ID='123'; $env:BARRIER_RUN_ID='456'; $env:BARRIER_ATTEMPT='1'
+        $env:GITHUB_OUTPUT=Join-Path $temp 'late-output'; $env:RUNNER_TEMP=Join-Path $temp 'late-valid'
+        $null = & $lateCheck
+        if (!(Test-Path (Join-Path $env:RUNNER_TEMP 'cli-stage-recheck/fanout-event.json'))) { throw 'Valid late barrier did not retain the authorized merge event.' }
+        $global:wssTestlateInvalid=$true; $env:RUNNER_TEMP=Join-Path $temp 'late-moved'
+        Assert-Rejected { & $lateCheck } 'Trusted Core integration barrier verification failed*'
+        if (Test-Path (Join-Path $env:RUNNER_TEMP 'cli-stage-recheck/fanout-event.json')) { throw 'A moved barrier emitted a dispatch event.' }
+        $global:wssTestlateInvalid=$false; $global:wssTestlateDenied=$true
+        Assert-Rejected { & $lateCheck } 'Read-only GitHub lookup failed*'
+        if ($global:wssTestlateCalls -ne 2 -or $global:wssTestlateWrites -ne 0) { throw 'Rejection retried the verifier or attempted a write.' }
+    } finally {
+        Pop-Location
+        Remove-Item Function:gh, Function:git, Function:node
+        foreach ($key in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($key,$savedEnvironment[$key]) }
+        $global:LASTEXITCODE=0
+    }
+    $count++
+
     if ($ArtifactRoot) {
         Write-WssApproval $approval (Join-Path $temp 'approval.json')
         & "$PSScriptRoot/../New-WssLib.ps1" -ArtifactRoot $ArtifactRoot -ApprovalFile (Join-Path $temp 'approval.json') -Destination (Join-Path $temp 'first')
