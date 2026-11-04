@@ -187,6 +187,8 @@ jobs:
           $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
           Assert-WssApproval $approval "$env:RUNNER_TEMP/evidence"
           Assert-WssSource '.' $approval.integration.source_sha
+          . ./.github/scripts/WssAutomatic.ps1
+          Assert-WssCandidateNotOlder $approval.candidate '${{ steps.source.outputs.sha }}'
 
       - name: Download, verify, and stage the approved universal candidate
         shell: pwsh
@@ -473,9 +475,13 @@ jobs:
         if: steps.existing.outputs.branch_exists == 'false' && steps.commit.outputs.no_change == 'false'
         shell: pwsh
         env:
+          GH_TOKEN: ${{ steps.evidence-token.outputs.token }}
           BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
         run: |
-          & git push origin "HEAD:refs/heads/$($env:BRANCH_NAME)"
+          . ./.github/scripts/WssAutomatic.ps1
+          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
+          Assert-WssCandidateNotOlder $approval.candidate '${{ steps.source.outputs.sha }}'
+          & git -c push.followTags=false push --no-follow-tags origin "HEAD:refs/heads/$($env:BRANCH_NAME)"
           if ($LASTEXITCODE -ne 0) {
             throw 'Failed to push the automation branch without force.'
           }
@@ -487,6 +493,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ steps.integration-token.outputs.token }}
+          WSS_READ_TOKEN: ${{ steps.evidence-token.outputs.token }}
           BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
           CANDIDATE_ID: ${{ steps.inputs.outputs.candidate_id }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
@@ -494,6 +501,12 @@ jobs:
           $ErrorActionPreference = 'Stop'
           . ./.github/scripts/WssPromotion.ps1
           $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
+          . ./.github/scripts/WssAutomatic.ps1
+          $writeToken = $env:GH_TOKEN
+          try {
+            $env:GH_TOKEN = $env:WSS_READ_TOKEN
+            Assert-WssCandidateNotOlder $approval.candidate '${{ steps.source.outputs.sha }}'
+          } finally { $env:GH_TOKEN = $writeToken }
           $bodyPath = Join-Path $env:RUNNER_TEMP 'promotion-pr-body.md'
           @(
             '<!-- wss-promotion:v2 -->'

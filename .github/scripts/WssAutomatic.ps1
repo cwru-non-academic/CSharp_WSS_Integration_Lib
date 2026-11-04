@@ -1,8 +1,32 @@
 Set-StrictMode -Version Latest
 . "$PSScriptRoot/WssPromotion.ps1"
 
+function Assert-WssCandidateNotOlder($Candidate, [string] $ExpectedReceiverSha) {
+    $repo='cwru-non-academic/CSharp_WSS_Integration_Lib'
+    $head=Invoke-WssGh @('api',"repos/$repo/git/ref/heads/dev") | ConvertFrom-Json
+    if ($ExpectedReceiverSha -cnotmatch '^[0-9a-f]{40}$' -or $head.object.sha -cne $ExpectedReceiverSha) { throw 'Integration dev moved since candidate validation; require fresh evidence.' }
+    $file=Invoke-WssGh @('api',"repos/$repo/contents/lib/wss-candidate.json?ref=$ExpectedReceiverSha") | ConvertFrom-Json
+    if ($file.type -cne 'file' -or $file.encoding -cne 'base64') { throw 'Installed candidate provenance is unreadable.' }
+    $record=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($file.content)) | ConvertFrom-Json
+    $installed=$record.candidate
+    if ($record.schema -ne 2 -or $installed.repository -cne 'cwru-non-academic/WSSCore' -or $Candidate.repository -cne $installed.repository -or
+        $installed.commit -cnotmatch '^[0-9a-f]{40}$' -or $Candidate.commit -cnotmatch '^[0-9a-f]{40}$' -or
+        [string]$installed.run_id -cnotmatch '^[1-9][0-9]*$' -or [string]$Candidate.run_id -cnotmatch '^[1-9][0-9]*$') { throw 'Installed/candidate producer identities are invalid.' }
+    if ($Candidate.run_id -ceq $installed.run_id) {
+        Assert-WssCandidateRecord $installed ([pscustomobject]@{candidate=$Candidate})
+        return
+    }
+    if ($Candidate.commit -ceq $installed.commit) {
+        if ([bigint]$Candidate.run_id -lt [bigint]$installed.run_id) { throw 'Candidate would roll back the installed producer run.' }
+        return
+    }
+    $comparison=Invoke-WssGh @('api',"repos/cwru-non-academic/WSSCore/compare/$($installed.commit)...$($Candidate.commit)") | ConvertFrom-Json
+    if ($comparison.status -cne 'ahead' -or $comparison.base_commit.sha -cne $installed.commit -or $comparison.merge_base_commit.sha -cne $installed.commit) { throw 'Candidate would roll back or diverge from the installed Core source.' }
+}
+
 function Assert-WssAutomaticProducer($Run, [string] $Commit) {
     if ($Run.repository.full_name -cne 'cwru-non-academic/WSSCore' -or
+        $Run.head_repository.full_name -cne 'cwru-non-academic/WSSCore' -or
         $Run.path -cne '.github/workflows/artifacts.yml' -or $Run.event -cne 'push' -or
         $Run.head_branch -cne 'dev' -or $Run.head_sha -cne $Commit) {
         throw 'Automatic promotion requires the exact trusted WSSCore dev push producer.'
@@ -14,7 +38,8 @@ function Wait-WssExactRun([string] $Repository, [string] $RunId, [string] $Sourc
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
         $run = Invoke-WssGh @('api', "repos/$Repository/actions/runs/$RunId") | ConvertFrom-Json
-        if ($run.repository.full_name -cne $Repository -or $run.path -cne ".github/workflows/$Workflow" -or
+        if ($run.repository.full_name -cne $Repository -or $run.head_repository.full_name -cne $Repository -or
+            $run.head_branch -cne 'dev' -or $run.path -cne ".github/workflows/$Workflow" -or
             $run.head_sha -cne $SourceSha -or $run.event -cne $Event) { throw 'Run identity/source mismatch; promotion stopped.' }
         if ($run.status -ceq 'completed') {
             if ($run.conclusion -cne 'success') { throw "Required run $Repository/$RunId failed: $($run.conclusion)." }

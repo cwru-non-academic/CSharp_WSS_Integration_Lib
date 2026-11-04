@@ -25,7 +25,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: dispatch-cli-${{ github.event.pull_request.merge_commit_sha || github.run_id }}
+  group: csharp-cli-fanout
   cancel-in-progress: false
 
 jobs:
@@ -112,18 +112,41 @@ jobs:
           "approval_json=$($approval | ConvertTo-Json -Depth 5 -Compress)" >> $env:GITHUB_OUTPUT
           "correlation_id=$($correlationMatch.Groups['value'].Value)" >> $env:GITHUB_OUTPUT
 
+      - name: Prepare exact CLI dispatch or verify successful reuse
+        if: steps.stage.outputs.dispatch_allowed == 'true'
+        id: intent
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INTEGRATION_SHA: ${{ steps.metadata.outputs.integration_sha }}
+          INTEGRATION_PR: ${{ steps.metadata.outputs.integration_pr }}
+          CORRELATION_ID: ${{ steps.metadata.outputs.correlation_id }}
+        run: |
+          . ./.github/scripts/WssFanout.ps1
+          New-WssCliDispatchRequest $env:INTEGRATION_SHA $env:INTEGRATION_PR $env:CORRELATION_ID "$env:RUNNER_TEMP/approval.json" "$env:RUNNER_TEMP/cli-dispatch.json"
+
+      - name: Record CLI dispatch intent before write credentials
+        if: steps.intent.outputs.dispatch_needed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: csharp-cli-dispatch-${{ steps.metadata.outputs.integration_sha }}
+          path: ${{ runner.temp }}/cli-dispatch.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Recheck integration barrier immediately before CLI writes
-        if: github.event_name == 'workflow_dispatch' && steps.stage.outputs.dispatch_allowed == 'true'
+        if: github.event_name == 'workflow_dispatch' && steps.intent.outputs.dispatch_needed == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
           BARRIER_RUN_ID: ${{ inputs.barrier_run_id }}
           BARRIER_ATTEMPT: ${{ inputs.barrier_attempt }}
-        run: ./.github/scripts/Prepare-StagedApplicationFanout.ps1 -Receiver csharp -RecordPath lib/wss-candidate.json -WorkRoot "$env:RUNNER_TEMP/cli-stage-recheck"
+          EXPECTED_MERGE_SHA: ${{ steps.metadata.outputs.integration_sha }}
+        run: ./.github/scripts/Prepare-StagedApplicationFanout.ps1 -Receiver csharp -RecordPath lib/wss-candidate.json -WorkRoot "$env:RUNNER_TEMP/cli-stage-recheck" -ExpectedMergeSha $env:EXPECTED_MERGE_SHA
 
       - name: Create CLI Actions token
-        if: steps.stage.outputs.dispatch_allowed == 'true'
+        if: steps.intent.outputs.dispatch_needed == 'true'
         id: cli-token
         uses: actions/create-github-app-token@v2
         with:
@@ -134,30 +157,11 @@ jobs:
           permission-actions: write
 
       - name: Dispatch CLI promotion workflow
-        if: steps.stage.outputs.dispatch_allowed == 'true'
+        if: steps.intent.outputs.dispatch_needed == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ steps.cli-token.outputs.token }}
-          INTEGRATION_SHA: ${{ steps.metadata.outputs.integration_sha }}
-          APPROVAL_JSON: ${{ steps.metadata.outputs.approval_json }}
-          INTEGRATION_PR: ${{ steps.metadata.outputs.integration_pr }}
-          CORRELATION_ID: ${{ steps.metadata.outputs.correlation_id }}
+          WSS_CLI_DISPATCH_READ_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          & gh workflow run promote-integration.yml `
-            --repo cwru-non-academic/CLI_CSharp_WSS_Application `
-            --ref dev `
-            --field "integration_sha=$($env:INTEGRATION_SHA)" `
-            --field "approval_json=$($env:APPROVAL_JSON)" `
-            --field "integration_pr=$($env:INTEGRATION_PR)" `
-            --field "correlation_id=$($env:CORRELATION_ID)"
-          if ($LASTEXITCODE -ne 0) {
-            throw 'CLI promote-integration workflow dispatch failed.'
-          }
-
-          @(
-            'Dispatched CLI promote-integration.yml.'
-            "- Integration SHA: ``$($env:INTEGRATION_SHA)``"
-            "- Merged Integration PR: #$($env:INTEGRATION_PR)"
-            "- Correlation ID: ``$($env:CORRELATION_ID)``"
-          ) >> $env:GITHUB_STEP_SUMMARY
+          . ./.github/scripts/WssFanout.ps1
+          Send-WssCliDispatch "$env:RUNNER_TEMP/cli-dispatch.json" $env:WSS_CLI_DISPATCH_READ_TOKEN $env:GH_TOKEN
