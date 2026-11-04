@@ -4,7 +4,7 @@ Reusable .NET wrapper around the WSS stimulation stack.
 
 Requires the .NET 9 SDK.
 
-This repository now owns the integration/library layer only. The CLI application should live in a separate repo and consume this library as a git submodule.
+This repository owns the integration/library layer. The [CLI application](https://github.com/cwru-non-academic/CLI_CSharp_WSS_Application) consumes it as a git submodule.
 
 All documentation about the API and other implementations can be found in [GitHub Pages](https://cwru-non-academic.github.io/WSS_Documentation/).
 
@@ -12,7 +12,8 @@ All documentation about the API and other implementations can be found in [GitHu
 
 - `src/` - library project containing `StimulationController` and `StimulationOptions`
 - `lib/` - vendor-provided and compatibility `.dll` dependencies required by the library
-- `temp/CLI_CSharp_WSS_Application/` - temporary handoff copy of the files that belong in the separate CLI repo
+- `tests/` - NUnit behavior, conformance and platform compatibility tests
+- `.github/` - CI, verification, promotion tooling and machine-readable evidence
 
 ## Build
 
@@ -62,14 +63,7 @@ the producer run/artifact ID, commit and archive hash.
 Use exactly the same candidate inputs for CLI preflight, with `integration_sha` selecting
 the updated Integration source. No submodule promotion is required for this test.
 
-**Transition coordination:** committed `lib/` still contains the old distribution. Normal
-Integration CI cannot pass with that payload and the new references/tests; preflight must
-use the explicit universal candidate. Do not overlay old DLLs or add compatibility shims.
-After preflights pass, a separate promotion phase must update committed artifacts and the
-promotion scripts. The shared resolver now requires candidate provenance, so existing
-promotion calls supplying only a release tag are intentionally not runnable unchanged.
-
-## Universal promotion and first bootstrap
+## Universal promotion
 
 Routine `promote-wss.yml` retains **lib-only** bot PRs to `dev`. Dispatch it on `dev` with
 `approval_json` and `correlation_id`. Schema 2 is illustrated by `.github/universal-bootstrap.json`:
@@ -79,61 +73,35 @@ Both preflight provenance records and the CLI checkout-verification log must mat
 comparison allows only explicitly listed promotion/CI automation and documentation changes
 from the tested source; application, reference and preflight changes require new evidence.
 
-`New-WssLib.ps1` deterministically stages all 25 universal files plus `lib/wss-candidate.json`.
+`New-WssLib.ps1` deterministically stages the exact selected universal inventory plus `lib/wss-candidate.json` (25 legacy files or those files plus the two macOS backend files).
 No DLL overlay or Ports runtime exclusion is used. Existing PR/branch reuse requires identical
 bytes, source, approval and correlation. Native branch probing still distinguishes exit 2
 (absence) from API/authentication failures. No force push or auto-merge is used.
 
-### First coordinated migration
+<details>
+<summary>Maintainer reference: historical bootstrap provenance</summary>
 
-Do not merge source-only changes first or relax normal CI. Use
-`Prepare-UniversalBootstrap.ps1` in a clean **separate worktree** descended from the validated
-source plus reviewed automation. The script is pinned to the first verified candidate,
-Integration `cd181c1f2abca8048fc2d1181dbf9beca9050e21`/run `38420209110`, and CLI
-`a3b272b23fba4e566d7c1fe3bfafa048cca9806c`/run `38420541537`. It checks current `dev` ancestry,
-exact source compatibility and an explicit bootstrap path allowlist. Without `-Stage` it
-only verifies/stages temporary files; with `-Stage` it creates `bootstrap/universal-wss-378a489`
-and stages dependencies/gitlink. It never commits, pushes, opens PRs or merges.
+The universal bootstrap was merged in commit `00d8567` (#12).
+`.github/universal-bootstrap.json` records that frozen approval, not a current candidate.
+`Prepare-UniversalBootstrap.ps1` is restricted to the original migration. Its tested
+Integration source was `cd181c1f2abca8048fc2d1181dbf9beca9050e21`/run `38420209110`,
+and CLI source `a3b272b23fba4e566d7c1fe3bfafa048cca9806c`/run `38420541537`.
+These identifiers bind the original preflights to the exact sources used in the migration.
 
-The two `.github/promotion-evidence/*.zip.b64` files preserve original provenance ZIP bytes
-before one-day retention expires. Digests are pinned to official Actions metadata (Integration
-artifact `11826726567`, CLI artifact `11825383860`). Only this fixed bootstrap can use them;
-run success/source identity, the CLI checkout log and producer artifact remain live requirements.
-Routine promotion has no expired-proof fallback.
+The two `.github/promotion-evidence/*.zip.b64` files preserve original provenance ZIP
+bytes before one-day retention expired. Their digests are pinned to official Actions
+metadata (Integration artifact `11826726567`, CLI artifact `11825383860`).
+Only this fixed bootstrap can use them; run success/source identity, the CLI checkout
+log and producer artifact remain live requirements. Routine promotion has no expired-proof fallback.
 
-Each retained proof is 480 Base64 characters representing a 358-byte ZIP whose only
-entry is a 299-byte `candidate.json`. Inspection confirmed exactly the seven public
-candidate provenance fields: no secrets, credentials, logs, WSS binaries or unrelated data.
-Retain both files through the Integration and CLI bootstrap reviews/merges. They can be
-removed in a separately reviewed cleanup after both coordinated migrations finish and
-the pinned bootstrap path is retired. That cleanup must also retire/update its proof-specific
-safety tests; deleting the archives alone would break normal Integration CI. Routine
-promotion restrictions and live approval checks must remain intact.
+Each proof is 480 Base64 characters representing a 358-byte ZIP containing only a
+299-byte `candidate.json` with seven public candidate provenance fields. They contain
+no secrets, credentials, logs, WSS binaries or unrelated data. The archives are still
+referenced by bootstrap tooling and promotion safety tests. Retiring them requires a
+coordinated code/test cleanup; deleting the archives alone breaks normal Integration CI.
+Routine promotion restrictions and live approval checks remain in force.
 
-After authorization to commit the reviewed automation, create a separate Integration worktree
-from that automation commit. Run from the Integration tooling checkout:
-
-```powershell
-./.github/scripts/Prepare-UniversalBootstrap.ps1 -Repository Integration -Worktree <INTEGRATION_BOOTSTRAP_WORKTREE> -ScratchRoot <NEW_SCRATCH_DIRECTORY> -Stage
-```
-
-Inspect staged dependencies and the whole branch diff to `dev`. After separate authorization,
-commit the lib delta, push the bootstrap branch and open an Integration `dev` PR using generated
-`bootstrap-pr-body.md`. This PR includes validated source, reviewed automation and exact binaries.
-Require all normal committed-state Integration CI jobs and human review before manual merge.
-
-Bootstrap deliberately stays outside the routine bot/lib-only merge trigger. After Integration
-merges, create a separate CLI worktree from its reviewed source/automation commit and run:
-
-```powershell
-./.github/scripts/Prepare-UniversalBootstrap.ps1 -Repository CLI -Worktree <CLI_BOOTSTRAP_WORKTREE> -ScratchRoot <ANOTHER_NEW_SCRATCH_DIRECTORY> -IntegrationPr <MERGED_INTEGRATION_PR_NUMBER> -Stage
-```
-
-It verifies the actual Integration merge SHA in `dev`, latest successful normal CI at the PR's
-final head, approved source, committed provenance and universal bytes before staging the gitlink.
-The preflight-only commit cannot be the final target. Publish/review the coordinated CLI PR only
-after authorization; require normal CLI CI before manual merge. Incompatible `dev` advancement
-or unavailable producer/log evidence stops preparation rather than overwriting/substituting.
+</details>
 
 ### Routine updates after bootstrap
 
@@ -165,14 +133,13 @@ approval is retained in the promotion run's `wss-automatic-approval` artifact. A
 matching PR is reused; an already merged/closed candidate cannot create a replacement or
 rollback PR. Existing branches and unrelated changes are not overwritten or force-pushed.
 
-Deployment prerequisite: publish/review this Integration automation before enabling the
-Core handoff. Existing `WSS_GITHUB_APP_ID` / `WSS_GITHUB_APP_PRIVATE_KEY` must be accessible
+The existing `WSS_GITHUB_APP_ID` / `WSS_GITHUB_APP_PRIVATE_KEY` must be accessible
 in WSSCore as well as downstream repositories. The Core handoff needs Integration Actions
 write only. Integration needs producer/evidence Actions and Contents read, downstream
 Contents read/Actions write for dispatch, and its existing Contents/PR write for authoring.
 Dispatch/write tokens are created only after their corresponding trust checks. No workflow
 merges PRs, writes `dev` directly, bypasses protections, invokes bootstrap, tags or publishes
-a release. Once deployed and configured, reviewed Integration and CLI PR merges remain the
+a release. Reviewed Integration and CLI PR merges remain the
 only routine human actions (plus the initiating WSSCore PR merge).
 
 The orchestration has a 60-minute bound; timeouts and missing permissions fail explicitly.
@@ -232,3 +199,196 @@ by WSS Core's `IWssConformance`.
 - CLI-owned: app entrypoint, operator workflow, environment-variable handling, and `Config/` runtime JSON files
 
 The WSS core, params layer, and model layer all receive `ConfigPath` during construction, so applications should resolve the final config directory before constructing `StimulationController`.
+
+## macOS BLE shared compatibility fixture
+
+`BleBackendLoadingTests` is shared by C#, Python and other consumers. It reads the
+loaded BLE facade's existing backend capability mapping before choosing behavior.
+A legacy facade that does not declare `macos` must have no orphan macOS files and,
+on macOS, must throw `PlatformNotSupportedException`. That is an asserted legacy
+unsupported contract, never a skip or a claim of operational BLE support.
+
+A facade declaring `macos` must carry exactly the managed adapter
+`backends/macos/WSS.Transport.BLE.MacOS.dll` and native
+`backends/macos/libwss_macos_ble.dylib`. Missing either fails on every platform.
+On macOS the existing compatibility test also requires actual native load, ABI
+`0x00010000`, all five production C exports, managed P/Invoke context creation and
+destruction, automatic backend activation and idempotent explicit registration.
+The original shared identity/ALC and Windows/Linux assertions remain in place.
+
+`Verify-WssOutput.ps1` hashes both macOS files whenever they are present in the
+source, rejects partial/stale propagation, and preserves the original legacy
+inventory verification. Existing recursive project copy rules already include
+dylibs.
+
+<details>
+<summary>Maintainer reference: synthetic fixture source and evidence limits</summary>
+
+The fixture SHA below pins reviewed synthetic test source so a moving Core branch cannot silently change the test. The macOS compatibility
+job first tests the committed payload. It then builds the reviewed Core
+source `0ac18df22a1371e5ff94d5485c6d3fa4b3e6538f` as **synthetic test data**,
+exercises the declared-native path, and verifies that removing the output dylib
+fails instead of becoming an unsupported/skip result. Its evidence explicitly
+marks this as test data; it is not a universal release or eligible producer tuple.
+No Core or receiver promotion provenance is relaxed to run this test.
+
+No fixture code initializes CBCentralManager, scans, connects a peripheral or writes
+data. TCC authorization, Bluetooth adapter state and physical BLE I/O remain real
+Mac/peripheral acceptance work; this fixture proves package/runtime compatibility.
+
+</details>
+
+## macOS universal receiver contract
+
+The receiver accepts exactly one of two inventories: the original 25 universal
+files, or those same files plus exactly:
+
+* `backends/macos/WSS.Transport.BLE.MacOS.dll`
+* `backends/macos/libwss_macos_ble.dylib`
+
+ZIP entries must use the exact `WSS-Universal/` prefix and canonical case. Duplicate
+or case-colliding paths, partial pairs, traversal paths and any additional files
+fail. Committed payloads additionally require the unchanged `wss-candidate.json`
+approval schema. There is no general extension allowlist or directory wildcard.
+
+After the existing producer/run/commit/artifact/checksum verification, the new
+inventory requires the managed adapter identity/version and two nonoverlapping,
+matching 64-bit Mach-O dylib slices for x86_64 and arm64. It also requires unique
+successful producer jobs `Build macOS universal BLE bridge`, `BLE consumer (macOS
+arm64)` and `BLE consumer (macOS x86_64)`. The macOS preflight's existing shared
+fixture checks actual exports, ABI `0x00010000`, native load and managed activation.
+A declared facade with missing native files fails; it cannot become legacy success.
+
+Resolution, fresh staging, committed-payload validation, no-op comparison and output
+verification use the same exact inventory selector. Both new files participate in
+byte-for-byte comparisons and output hashing. No-op detection preserves existing
+valid provenance instead of creating metadata-only dependency updates.
+
+The new inventory tests cover both allowed sets, rejected unknown/partial/duplicate
+sets, required producer gates, actual universal binary structure and identity,
+staging/no-op preservation and native-byte tampering. The macOS CI fixture supplies
+reviewed-source synthetic data; its evidence is not a promotion approval. Provenance, negative, replay and human-merge safety checks remain in force.
+
+## Development guide
+
+This repo is a .NET 9 integration library that hosts the WSS stimulation stack (core -> params -> model)
+via the native WSS interface assembly in `lib/`.
+
+### Repo Layout
+
+- `Wss.CSharpImplementation.sln` - solution containing the library and NUnit integration tests
+- `src/Wss.CSharpImplementation.csproj` - .NET 9 class library
+- `src/StimulationController.cs` - wrapper around WSS modules + background tick loop
+- `tests/Wss.CSharpImplementation.Tests/` - NUnit tests for released WSS artifact compatibility and conformance
+- `lib/` - third-party/native `.dll` dependencies referenced by the project
+
+### Build / Run / Test Commands
+
+All commands assume you run them from the repo root.
+
+Restore/build/run:
+```bash
+dotnet restore Wss.CSharpImplementation.sln
+dotnet build Wss.CSharpImplementation.sln -c Release
+dotnet build Wss.CSharpImplementation.sln -c Release -p:TreatWarningsAsErrors=true
+```
+
+Tests:
+```bash
+dotnet test Wss.CSharpImplementation.sln -c Release
+dotnet test -c Release --list-tests
+dotnet test -c Release --filter FullyQualifiedName~Namespace.ClassName.TestMethod
+dotnet test -c Release --filter Name~SomeSubstring
+```
+
+Lint/format (no repo config present; use if available):
+```bash
+dotnet format Wss.CSharpImplementation.sln
+dotnet format Wss.CSharpImplementation.sln --verify-no-changes
+```
+
+### Code Style Guidelines
+
+#### General
+
+- Target `net9.0`; keep behavior deterministic/scriptable; prefer small explicit changes (this code touches hardware).
+- Nullable reference types are enabled; avoid weakening nullability to "make warnings go away".
+- Prefer minimal allocations and clear control flow in the tick path.
+
+#### Imports / Usings
+
+- Keep `using` directives at the top; avoid mid-file usings.
+- Rely on implicit usings; add explicit usings only when required.
+- Remove unused usings.
+
+#### Formatting
+
+- Use file-scoped namespaces (`namespace Wss.CSharpImplementation;`).
+- 4-space indentation; keep braces for multi-line blocks.
+- Prefer `switch` expressions and guard clauses when they improve clarity.
+
+#### Types / Nullability
+
+- Treat `null` as a real state: model it with `T?` and handle it explicitly.
+- Avoid `!` null-forgiving unless you can prove the invariant locally.
+- Use `TryXxx` for parsing/validation of user input; keep exceptions for programmer errors.
+
+#### Naming
+
+- Default to .NET naming:
+  - `PascalCase` for types/methods/properties.
+  - `camelCase` for locals/parameters.
+  - `_camelCase` for private fields.
+- Interop exception: `src/StimulationController.cs` intentionally exposes some Unity/WSS-legacy names
+  (e.g., `releaseRadio`, `resetRadio`, `load`, `started`, `isModeValid`). Preserve these when compatibility matters.
+  If you add new public surface area, prefer .NET naming.
+
+#### Error Handling
+
+- Throw for programmer errors (`ArgumentException`, `ArgumentOutOfRangeException`, `InvalidOperationException`).
+- Startup/host applications should fail fast with a clear message.
+- Tick loop should log and continue on recoverable faults (see `EnsureTickLoop` in `src/StimulationController.cs`).
+- Avoid broad `catch { }`; if you must ignore an exception, keep it narrowly scoped and intentional.
+
+#### Logging
+
+- Use WSS `Log.Error(...)` for core/tick failures; keep messages actionable.
+- Avoid logging secrets; avoid spamming logs in the tick loop (one failure per tick is already noisy).
+
+#### Concurrency / Threading
+
+- Keep `_wss`, `_basicWss`, and tick-loop state mutations under `_gate`.
+- Don't block the tick loop with long work; prefer async waits (already uses `Task.Delay`).
+- Validate `TickIntervalMs` and keep it > 0.
+
+#### Shutdown / Dispose
+
+- Prefer explicit `Shutdown()`; it stops ticking and tears down the connection.
+- Host applications should ensure cancellation closes radio/serial cleanly.
+- Avoid leaving background tasks running after shutdown.
+
+#### Host / CLI Integration
+
+- Treat host input as untrusted; validate and provide usage hints instead of crashing.
+- Resolve the final `ConfigPath` before constructing `StimulationController`; the core and layers receive it during construction.
+- Keep CLI-specific parsing and REPL concerns in the separate application repo.
+
+#### Dependencies (`lib/` and NuGet)
+
+- `src/Wss.CSharpImplementation.csproj` references binaries in `lib/` (e.g., `WSS_Core_Interface.dll`).
+  Builds will fail if these files are missing.
+- Prefer NuGet when possible; use `lib/` for vendor-provided binaries that must match the device stack.
+- When adding a new `lib/` DLL, add a `<Reference>` with a `<HintPath>` and keep it relative.
+
+### Hardware / Runtime Notes
+
+- Default behavior in host apps is live Serial hardware unless they select another `StimulationOptions.Transport` value.
+- Serial port names are OS-specific (e.g., `COM3` on Windows, `/dev/ttyUSB0` on Linux).
+- `StimulationController.Initialize()` must be called before using most APIs; otherwise `EnsureWss()` throws.
+
+### Running Focused Tests
+
+```bash
+dotnet test -c Release --filter FullyQualifiedName~Wss.CSharpImplementation.Tests.SomeClassTests.SomeTest
+dotnet test -c Release --filter Name~SomeTestSubstring
+```
