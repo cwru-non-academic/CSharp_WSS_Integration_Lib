@@ -1,6 +1,64 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . "$PSScriptRoot/../WssReleaseReceipt.ps1"
+
+# Hosted configuration contract: cross-repository evidence uses only the
+# existing, explicitly scoped read-only WSS App token.
+function Assert-WssReceiptEvidenceWorkflow([string] $Workflow, [string] $ExpectedRepository) {
+    $tokens=[regex]::Matches($Workflow,'(?ms)^      - name: Create receipt evidence read token\r?\n(?<body>.*?)(?=^      - |\z)')
+    $validation=[regex]::Match($Workflow,'(?ms)^      - name: Validate provenance,[^\r\n]*\r?\n(?<body>.*?)(?=^      - |\z)')
+    if ($tokens.Count -ne 1 -or !$validation.Success -or $tokens[0].Index -ge $validation.Index -or
+        [regex]::Matches($Workflow,'(?m)^\s+uses: actions/create-github-app-token@').Count -ne 1) { throw 'Receipt evidence token must be minted once before validation.' }
+    $body=$tokens[0].Groups['body'].Value
+    foreach ($line in @(
+        '        id: receipt-evidence',
+        '        uses: actions/create-github-app-token@v2',
+        ('          app-id: '+'$'+'{{ vars.WSS_GITHUB_APP_ID }}'),
+        ('          private-key: '+'$'+'{{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}'),
+        '          owner: cwru-non-academic'
+    )) { if (!(($body -split '\r?\n') -ccontains $line)) { throw 'Receipt token must use the existing WSS App configuration.' } }
+    $repositories=[regex]::Matches($body,'(?m)^          repositories: \|\r?\n(?<items>(?:            \S+\r?\n)+)')
+    if ($repositories.Count -ne 1) { throw 'Receipt token requires an explicit repository list.' }
+    $actual=@($repositories[0].Groups['items'].Value.Trim() -split '\r?\n' | ForEach-Object { $_.Trim() })
+    $required=@('WSSCore','CSharp_WSS_Integration_Lib','CLI_CSharp_WSS_Application')
+    if ($actual.Count -ne 3 -or @(Compare-Object $required $actual -CaseSensitive).Count) { throw 'Receipt evidence token repository scope changed.' }
+    $permissions=[regex]::Matches($body,'(?m)^\s+permission-(?<name>[a-z-]+): (?<level>\S+)\r?$')
+    if ($permissions.Count -ne 3) { throw 'Receipt evidence token permissions must be exactly the three read permissions.' }
+    foreach ($name in @('contents','actions','pull-requests')) {
+        $matching=@($permissions | Where-Object { $_.Groups['name'].Value -ceq $name -and $_.Groups['level'].Value -ceq 'read' })
+        if ($matching.Count -ne 1) { throw 'Receipt evidence token cannot request missing, duplicate or write permissions.' }
+    }
+    $expectedToken='          GH_TOKEN: '+'$'+'{{ steps.receipt-evidence.outputs.token }}'
+    if (!(($validation.Groups['body'].Value -split '\r?\n') -ccontains $expectedToken) -or
+        [regex]::Matches($Workflow,'(?m)^\s+GH_TOKEN:').Count -ne 1) { throw 'Receipt validation must use only the scoped evidence token.' }
+    if (!$Workflow.Contains("    if: github.repository == '$ExpectedRepository' && github.ref == 'refs/heads/dev'")) { throw 'Receipt execution must remain canonical-repository and dev-only.' }
+}
+$receiptWorkflow=Get-Content "$PSScriptRoot/../../workflows/release-receipt.yml" -Raw
+$receiptRepository=if ($receiptWorkflow.Contains('run-name: WSS acceptance csharp-wrapper ')) {
+    'cwru-non-academic/CSharp_WSS_Integration_Lib'
+} elseif ($receiptWorkflow.Contains('run-name: WSS acceptance csharp-cli ')) {
+    'cwru-non-academic/CLI_CSharp_WSS_Application'
+} else { throw 'Unknown C# receipt workflow target.' }
+Assert-WssReceiptEvidenceWorkflow $receiptWorkflow $receiptRepository
+$evidenceRejections=0
+foreach ($mutate in @(
+    {param($w)$w.Replace(('GH_TOKEN: '+'$'+'{{ steps.receipt-evidence.outputs.token }}'),('GH_TOKEN: '+'$'+'{{ github.token }}'))},
+    {param($w)$w.Replace('          owner: cwru-non-academic','          owner: another-owner')},
+    {param($w)$w.Replace('            WSSCore',('            OtherRepository'+[Environment]::NewLine+'            WSSCore'))},
+    {param($w)$w.Replace('permission-actions: read','permission-actions: write')},
+    {param($w)$w.Replace('permission-pull-requests: read','permission-issues: read')},
+    {param($w)$w.Replace("github.ref == 'refs/heads/dev'","github.ref == 'refs/heads/main'")},
+    {param($w)$token=[regex]::Match($w,'(?ms)^      - name: Create receipt evidence read token\r?\n.*?(?=^      - |\z)').Value; $w.Replace($token,'')+$token}
+)) {
+    $invalid=& $mutate $receiptWorkflow
+    if ($invalid -ceq $receiptWorkflow) { throw 'Evidence-token regression fixture did not change the workflow.' }
+    $rejected=$false
+    try { Assert-WssReceiptEvidenceWorkflow $invalid $receiptRepository } catch { $rejected=$true }
+    if (!$rejected) { throw 'Unsafe evidence-token workflow was accepted.' }
+    $evidenceRejections++
+}
+"Hosted receipt evidence-token contracts passed ($evidenceRejections unsafe configurations rejected)."
+
 $count = 0
 function Reject([scriptblock] $Action) {
     $failed = $false
