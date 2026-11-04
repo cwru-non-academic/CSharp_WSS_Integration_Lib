@@ -20,6 +20,7 @@ jobs:
       - name: Validate promotion safety contracts
         shell: pwsh
         run: |
+          ./.github/scripts/tests/MacOSBleEvidence.Tests.ps1
           ./.github/scripts/tests/WssPromotion.Tests.ps1
           ./.github/scripts/tests/WssInventory.Tests.ps1
           ./.github/scripts/tests/WssReleaseReceipt.Tests.ps1
@@ -69,8 +70,6 @@ jobs:
             os: windows-latest
           - name: Ubuntu
             os: ubuntu-latest
-          - name: macOS
-            os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -137,3 +136,142 @@ jobs:
             ${{ runner.temp }}/macos-ble-fixture/missing-native-rejection.log
             ${{ runner.temp }}/macos-ble-fixture/results/*.trx
           if-no-files-found: warn
+
+  macos_architecture:
+    name: macOS BLE detail (${{ matrix.cpu }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            label: macOS
+            os: macos-15-intel
+            arch: x64
+            test_platform: x64
+            cpu: Intel x86_64
+          - name: macOS
+            label: macOS
+            os: macos-15
+            arch: arm64
+            test_platform: ARM64
+            cpu: Apple Silicon arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Verify native macOS and dotnet architecture
+        shell: pwsh
+        env:
+          DOTNET_CLI_UI_LANGUAGE: en-US
+        run: |
+          . ./.github/scripts/MacOSBleEvidence.ps1
+          Initialize-WssMacOSEvidence '${{ matrix.arch }}' 'wrapper-normal' "$env:RUNNER_TEMP/macos-evidence"
+      - name: Clean outputs
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path src, tests -Directory -Recurse -Force |
+            Where-Object Name -in @('bin', 'obj') |
+            Remove-Item -Recurse -Force
+
+      - name: Restore committed Integration state
+        shell: pwsh
+        run: dotnet restore tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+
+      - name: Build committed Integration state
+        shell: pwsh
+        run: >-
+          dotnet build tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          -c Release
+          --no-restore
+          -p:TreatWarningsAsErrors=true
+
+      - name: Verify committed WSS artifact propagation
+        shell: pwsh
+        run: |
+          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot 'lib' -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
+
+      - name: Run platform compatibility tests
+        shell: pwsh
+        run: |
+          & dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.SerialRuntimeSelectionTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.BleBackendLoadingTests" -p:TreatWarningsAsErrors=true --logger 'console;verbosity=detailed' --logger 'trx;LogFileName=macos-platform.trx' --results-directory "$env:RUNNER_TEMP/macos-results" -- RunConfiguration.TargetPlatform=${{ matrix.test_platform }} | Tee-Object -FilePath "$env:RUNNER_TEMP/macos-platform.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Canonical platform tests failed.' }
+
+      - name: Record canonical packaged BLE result before any synthetic fixture
+        if: always()
+        shell: pwsh
+        run: |
+          . ./.github/scripts/MacOSBleEvidence.ps1
+          Write-WssMacOSEvidence '${{ matrix.arch }}' 'wrapper-normal' "$env:RUNNER_TEMP/macos-evidence" "$env:RUNNER_TEMP/macos-results/macos-platform.trx" "$env:RUNNER_TEMP/macos-platform.log" 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
+
+      - name: Check out reviewed Core source for declared macOS fixture
+        if: runner.os == 'macOS'
+        uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: 0ac18df22a1371e5ff94d5485c6d3fa4b3e6538f
+          path: .macos-ble-fixture-core
+          persist-credentials: false
+
+      - name: Verify declared macOS native fixture and fail-closed missing payload
+        if: runner.os == 'macOS'
+        shell: pwsh
+        run: ./.github/scripts/Test-MacBleFixture.ps1 -CoreSourceRoot "$env:GITHUB_WORKSPACE/.macos-ble-fixture-core" -WorkRoot "$env:RUNNER_TEMP/macos-ble-fixture"
+
+      - name: Retain macOS fixture evidence
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-ble-fixture-evidence-${{ matrix.arch }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/macos-ble-fixture/fixture-evidence.json
+            ${{ runner.temp }}/macos-ble-fixture/missing-native-rejection.log
+            ${{ runner.temp }}/macos-ble-fixture/results/*.trx
+          if-no-files-found: warn
+
+      - name: Finalize architecture evidence including all worker steps
+        if: always()
+        shell: pwsh
+        env:
+          WORKER_RESULT: ${{ job.status }}
+        run: |
+          . ./.github/scripts/MacOSBleEvidence.ps1
+          Finalize-WssMacOSEvidence '${{ matrix.arch }}' 'wrapper-normal' "$env:RUNNER_TEMP/macos-evidence" $env:WORKER_RESULT
+      - name: Retain architecture-specific canonical evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wss-macos-wrapper-normal-${{ matrix.arch }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/macos-evidence/*.json
+            ${{ runner.temp }}/macos-results/*.trx
+            ${{ runner.temp }}/macos-platform.log
+            ${{ runner.temp }}/macos-cli.log
+          if-no-files-found: error
+
+  macos_compatibility:
+    name: Integration compatibility (macOS)
+    needs: macos_architecture
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Gather both native architecture records
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: wss-macos-wrapper-normal-*-a${{ github.run_attempt }}
+          path: macos-evidence
+      - name: Require Intel and Apple Silicon success and show failures separately
+        if: always()
+        shell: pwsh
+        env:
+          WORKER_RESULT: ${{ needs.macos_architecture.result }}
+        run: |
+          . ./.github/scripts/MacOSBleEvidence.ps1
+          Complete-WssMacOSGate 'macos-evidence' 'wrapper-normal' $env:WORKER_RESULT
