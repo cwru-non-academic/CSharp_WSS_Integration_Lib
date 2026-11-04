@@ -45,11 +45,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Create receipt evidence read token
+        id: receipt-evidence
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: |
+            WSSCore
+            CSharp_WSS_Integration_Lib
+            CLI_CSharp_WSS_Application
+          permission-contents: read
+          permission-actions: read
+          permission-pull-requests: read
       - name: Validate provenance, paired preflights, actual merge and fresh normal CI
         id: receipt
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.receipt-evidence.outputs.token }}
           PRODUCER_RUN: ${{ inputs.producer_run_id }}
           PLAN_ID: ${{ inputs.plan_id }}
         run: ./.tools/.github/scripts/Write-ReleaseReceipt.ps1 -TargetId csharp-wrapper -ProducerRunId $env:PRODUCER_RUN -PlanId $env:PLAN_ID
