@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory)][ValidateSet('csharp','unity')][string]$Receiver,
     [Parameter(Mandatory)][string]$RecordPath,
     [Parameter(Mandatory)][string]$WorkRoot,
-    [string]$CoreRoot = '.core-stage'
+    [string]$CoreRoot = '.core-stage',
+    [string]$ExpectedMergeSha = ''
 )
 $ErrorActionPreference = 'Stop'
 $core = 'cwru-non-academic/WSSCore'
@@ -17,6 +18,9 @@ function Read-RepositoryJson([string]$Repository, [string]$Commit, [string]$Path
     return ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($file.content)) | ConvertFrom-Json)
 }
 function Write-ReadyEvent($PullRequest) {
+    if ($ExpectedMergeSha -and ($ExpectedMergeSha -cnotmatch '^[0-9a-f]{40}$' -or $PullRequest.merge_commit_sha -cne $ExpectedMergeSha)) {
+        throw 'Shared barrier integration changed before CLI write credentials.'
+    }
     if (!$PullRequest.merged -or $PullRequest.state -cne 'closed' -or
         $PullRequest.base.ref -cne 'dev' -or $PullRequest.base.repo.full_name -cne $env:GITHUB_REPOSITORY -or
         $PullRequest.head.repo.full_name -cne $env:GITHUB_REPOSITORY -or $PullRequest.user.type -cne 'Bot') {
