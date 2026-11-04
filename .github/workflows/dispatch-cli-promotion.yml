@@ -112,6 +112,16 @@ jobs:
           "approval_json=$($approval | ConvertTo-Json -Depth 5 -Compress)" >> $env:GITHUB_OUTPUT
           "correlation_id=$($correlationMatch.Groups['value'].Value)" >> $env:GITHUB_OUTPUT
 
+      - name: Recheck integration barrier immediately before CLI writes
+        if: github.event_name == 'workflow_dispatch' && steps.stage.outputs.dispatch_allowed == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
+          BARRIER_RUN_ID: ${{ inputs.barrier_run_id }}
+          BARRIER_ATTEMPT: ${{ inputs.barrier_attempt }}
+        run: ./.github/scripts/Prepare-StagedApplicationFanout.ps1 -Receiver csharp -RecordPath lib/wss-candidate.json -WorkRoot "$env:RUNNER_TEMP/cli-stage-recheck"
+
       - name: Create CLI Actions token
         if: steps.stage.outputs.dispatch_allowed == 'true'
         id: cli-token
