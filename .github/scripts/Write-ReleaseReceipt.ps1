@@ -25,6 +25,22 @@ function Git([string] $Root,[string[]] $Arguments) {
     if ($LASTEXITCODE -ne 0) { throw 'Git evidence request failed.' }
     $result
 }
+function Assert-WssReceiptTooling($Plan, [string] $TargetId, $Target, [string] $ToolsRoot, [string] $ValidatorRoot, [string] $AcceptedRoot, [string] $IntegrationRoot) {
+    # The frozen target describes accepted dev, including its branch-specific CI.
+    foreach ($path in $Target.trusted_paths) {
+        if ((Git $AcceptedRoot @('rev-parse',"HEAD:$path")) -cne $Plan.target_snapshots.$TargetId.trusted.$path) { throw "Accepted receiver tooling differs: $path" }
+    }
+    # Main executes only these receiver files. Compare them individually so
+    # unrelated branch-specific scripts and normal CI need not be identical.
+    foreach ($path in @('.github/workflows/release-receipt.yml', '.github/scripts/Write-ReleaseReceipt.ps1', '.github/scripts/WssReleaseReceipt.ps1')) {
+        if ((Git $ToolsRoot @('rev-parse',"HEAD:$path")) -cne (Git $AcceptedRoot @('rev-parse',"HEAD:$path"))) { throw "Trusted main receipt tooling differs: $path" }
+    }
+    $wrapperRoot = if ($TargetId -ceq 'csharp-wrapper') { $AcceptedRoot } else { $IntegrationRoot }
+    if ((Git $wrapperRoot @('rev-parse','HEAD:.github/scripts')) -cne $Plan.target_snapshots.'csharp-wrapper'.trusted.'.github/scripts') { throw 'Accepted wrapper validators differ from frozen code.' }
+    foreach ($path in @('.github/scripts/WssPromotion.ps1', '.github/scripts/Universal-WssFiles.ps1', '.github/scripts/Resolve-WssRelease.ps1')) {
+        if ((Git $ValidatorRoot @('rev-parse',"HEAD:$path")) -cne (Git $wrapperRoot @('rev-parse',"HEAD:$path"))) { throw "Shared C# validator differs from frozen code: $path" }
+    }
+}
 function Download([string] $Repository,[string] $Run,[string] $Name,[string] $Directory,[string] $File) {
     $a = @(Pages "repos/$Repository/actions/runs/$Run/artifacts?per_page=100" 'artifacts' | Where-Object name -CEQ $Name)
     if ($a.Count -ne 1 -or $a[0].expired -or [string]$a[0].workflow_run.id -cne $Run) { throw 'Missing/ambiguous/expired evidence artifact.' }
@@ -61,17 +77,16 @@ if ($LASTEXITCODE -ne 0) { throw 'Frozen plan/manifest digest mismatch.' }
 $target = @($plan.manifest.targets | Where-Object id -CEQ $TargetId)
 if ($target.Count -ne 1 -or $target[0].repository -cne $repository -or $target[0].branch -cne 'dev') { throw 'Required target policy mismatch.' }
 $target = $target[0]
-foreach ($path in $target.trusted_paths) {
-    if ((Git $ToolsRoot @('rev-parse',"HEAD:$path")) -cne $plan.target_snapshots.$TargetId.trusted.$path) { throw "Trusted receipt tooling differs: $path" }
-}
-if ((Git $ValidatorRoot @('rev-parse','HEAD:.github/scripts')) -cne $plan.target_snapshots.'csharp-wrapper'.trusted.'.github/scripts') { throw 'Shared C# validator differs from frozen code.' }
+Assert-WssReceiptTooling $plan $TargetId $target $ToolsRoot $ValidatorRoot $AcceptedRoot $IntegrationRoot
 . (Join-Path $ValidatorRoot '.github/scripts/WssPromotion.ps1')
 . (Join-Path $ToolsRoot '.github/scripts/WssReleaseReceipt.ps1')
+Assert-WssReceiptPolicy $TargetId $target
 $acceptedSha = Git $AcceptedRoot @('rev-parse','HEAD')
 $current = Api "repos/$repository/git/ref/heads/dev"
 if ($acceptedSha -cne $current.object.sha -or $acceptedSha -cne $env:GITHUB_SHA) { throw 'Accepted checkout/emitter/current dev differ.' }
 $pr = MergedPr $repository $acceptedSha
 $approval = Read-WssApprovalMarker ([string]$pr.body) (Join-Path $work 'approval.json')
+Assert-WssReceiptSources $approval $plan
 Assert-WssCandidateRecord $plan.candidate $approval
 $files = @(Pages "repos/$repository/pulls/$($pr.number)/files?per_page=100")
 Assert-WssReceiptChangedFiles $TargetId $files
@@ -87,9 +102,9 @@ if ($TargetId -ceq 'csharp-wrapper') {
     $integrationPr = MergedPr $wrapper $integrationSha
     $null = Assert-WssMergedIntegration $integrationSha ([string]$integrationPr.number) $approval
     if ([Regex]::Matches([string]$pr.body,"(?m)^- Integration PR: #$($integrationPr.number)\r?$").Count -ne 1) { throw 'CLI metadata differs from actual wrapper merge.' }
-    Assert-WssSource $AcceptedRoot $approval.cli.source_sha
+    Assert-WssSource $AcceptedRoot $approval.cli.source_sha -Consumer cli
 }
-Assert-WssApproval $approval (Join-Path $work 'preflight-proof')
+Assert-WssApproval $approval (Join-Path $work 'preflight-proof') -RequireCanonicalDev
 Assert-WssSource $IntegrationRoot $approval.integration.source_sha
 & (Join-Path $ValidatorRoot '.github/scripts/Resolve-WssRelease.ps1') -RunId $approval.candidate.run_id -ProducerRepository $core -ExpectedCommit $approval.candidate.commit -ArchiveName $approval.candidate.archive -ExpectedSha256 $approval.candidate.sha256 -OutputRoot (Join-Path $work 'release')
 Assert-WssLib (Join-Path $IntegrationRoot 'lib') (Join-Path $work 'release/extracted/WSS-Universal') $approval
@@ -99,6 +114,13 @@ if ($runs.Count -eq 0) { throw 'Fresh exact-merge normal CI has not run yet.' }
 $normal = $runs[0]
 $jobs = @(Pages "repos/$repository/actions/runs/$($normal.id)/attempts/$($normal.run_attempt)/jobs?per_page=100" 'jobs')
 Assert-WssReceiptNormalRun $normal $repository $target $acceptedSha $jobs
+if ([DateTimeOffset]::Parse($normal.created_at) -lt [DateTimeOffset]::Parse($pr.merged_at)) { throw 'Normal CI predates the accepted merge.' }
+$latestRuns = @(Pages "repos/$repository/actions/workflows/$workflow/runs?event=workflow_dispatch&head_sha=$acceptedSha&per_page=100" 'workflow_runs' | Sort-Object id -Descending)
+if ($latestRuns.Count -eq 0) { throw 'Normal CI disappeared during receipt validation.' }
+$liveNormal = Api "repos/$repository/actions/runs/$($normal.id)"
+$liveJobs = @(Pages "repos/$repository/actions/runs/$($normal.id)/attempts/$($normal.run_attempt)/jobs?per_page=100" 'jobs')
+Assert-WssReceiptNormalFresh $normal $latestRuns[0] $liveNormal $repository $target $acceptedSha $liveJobs
+if ($TargetId -ceq 'csharp-cli' -and (Api "repos/$wrapper/git/ref/heads/dev").object.sha -cne $integrationSha) { throw 'Accepted wrapper moved during receipt validation.' }
 if ((Api "repos/$repository/git/ref/heads/dev").object.sha -cne $acceptedSha) { throw 'Target moved during validation.' }
 $parents = @{}
 if ($TargetId -ceq 'csharp-cli') { $parents['csharp-wrapper'] = $integrationSha }
