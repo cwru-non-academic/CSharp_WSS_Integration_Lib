@@ -151,7 +151,7 @@ foreach ($targetId in @('csharp-wrapper', 'csharp-cli')) {
     $script:receiptObjects['.tools|HEAD:.github/scripts'] = 'main-other-scripts'
     $script:receiptObjects['.validation-tools|HEAD:.github/scripts'] = 'main-other-validator-scripts'
     foreach ($path in @('.github/workflows/release-receipt.yml', '.github/scripts/Write-ReleaseReceipt.ps1', '.github/scripts/WssReleaseReceipt.ps1', '.github/scripts/wss-ci')) {
-        $value = if ($path -ceq '.github/workflows/release-receipt.yml') { 'receipt-workflow' } else { "receiver-file:$path" }
+        $value = if ($path -ceq '.github/workflows/release-receipt.yml') { 'receipt-workflow' } elseif ($path -ceq '.github/scripts/wss-ci') { "wrapper-file:$path" } else { "receiver-file:$path" }
         $script:receiptObjects[".accepted|HEAD:$path"] = $value
         $script:receiptObjects[".tools|HEAD:$path"] = $value
     }
