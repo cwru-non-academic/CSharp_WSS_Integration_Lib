@@ -44,3 +44,8 @@ jobs:
         env:
           TARGET_REPOSITORY: ${{ github.event.repository.name }}
         run: node .wss-core/tools/ci/sync-tooling.mjs check "$TARGET_REPOSITORY" "$GITHUB_WORKSPACE"
+      - name: Reject stale executable integration pins
+        env:
+          TARGET_REPOSITORY: ${{ github.event.repository.name }}
+          GH_TOKEN: ${{ github.token }}
+        run: node .wss-core/tools/ci/adapter-pins.mjs check "$TARGET_REPOSITORY" "$GITHUB_WORKSPACE"
