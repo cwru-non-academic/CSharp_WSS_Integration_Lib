@@ -88,7 +88,7 @@ $work=$WorkRoot
 Assert-WssReceiptTooling $plan $TargetId $target $ToolsRoot $ValidatorRoot $AcceptedRoot $IntegrationRoot
 . (Join-Path $ValidatorRoot '.github/scripts/WssPromotion.ps1')
 . (Join-Path $ToolsRoot '.github/scripts/WssReleaseReceipt.ps1')
-Assert-WssReceiptPolicy $TargetId $target
+Assert-WssReceiptPolicy $TargetId $ContextPath $ToolsRoot
 $approval = Read-WssApprovalMarker ([string]$pr.body) (Join-Path $work 'approval.json')
 Assert-WssReceiptSources $approval $plan
 Assert-WssCandidateRecord $plan.candidate $approval
