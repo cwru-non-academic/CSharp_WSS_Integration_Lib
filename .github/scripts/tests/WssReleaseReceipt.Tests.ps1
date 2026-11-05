@@ -177,29 +177,135 @@ foreach ($targetId in @('csharp-wrapper', 'csharp-cli')) {
 Remove-Item Function:Invoke-ReceiptGit
 "Branch-aware receipt tooling tests passed (two divergent-CI targets; $toolingRejections exact-object rejections)."
 
-# Receiver-owned policy cannot be weakened by a producer-supplied manifest.
-foreach ($policyId in @('csharp-wrapper','csharp-cli')) {
-    $isWrapper=$policyId -ceq 'csharp-wrapper'
-    $policy=[pscustomobject]@{
-        repository=$(if ($isWrapper) { 'cwru-non-academic/CSharp_WSS_Integration_Lib' } else { 'cwru-non-academic/CLI_CSharp_WSS_Application' })
-        branch='dev'; kind=$(if ($isWrapper) { 'payload' } else { 'gitlink' })
-        workflow=$(if ($isWrapper) { '.github/workflows/wss-compatibility.yml' } else { '.github/workflows/cli-ci.yml' })
-        jobs=$(if ($isWrapper) { @('Integration behavioral tests','Integration compatibility (Windows)','Integration compatibility (Ubuntu)','Integration compatibility (macOS)') } else { @('CLI general conformance','CLI platform compatibility (Windows)','CLI platform compatibility (Ubuntu)','CLI platform compatibility (macOS)') })
-        parents=$(if ($isWrapper) { [pscustomobject]@{} } else { [pscustomobject]@{'csharp-wrapper'='SubModules/HFI_WSS_Csharp_Implementation'} })
-        trusted_paths=@('.github/scripts','.github/workflows/release-receipt.yml',$(if ($isWrapper) { '.github/workflows/wss-compatibility.yml' } else { '.github/workflows/cli-ci.yml' }))
-        coverage=@('canonical-conformance','packaged-macos-ble-load')
+# Exercise the real PowerShell -> Node import using canonical owned profiles.
+# This deliberately runs outside workflow_dispatch: accidentally executing the
+# receipt CLI instead of importing targetPolicy must fail the positive tests.
+$policyRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+$profiles=Get-Content (Join-Path $policyRoot '.github/scripts/wss-ci/receipt-targets.json') -Raw | ConvertFrom-Json
+$policyWork=Join-Path ([IO.Path]::GetTempPath()) ('wss policy '+[char]0x03bb+' '+[guid]::NewGuid().ToString('N'))
+$null=New-Item -ItemType Directory -Path $policyWork
+$policyContextPath=Join-Path $policyWork 'receipt.mjs'
+function Invoke-PolicyContext($Context,[string]$Role,[switch]$KeepDigests) {
+    [IO.File]::WriteAllText($policyContextPath,($Context | ConvertTo-Json -Depth 50),[Text.UTF8Encoding]::new($false))
+    if (!$KeepDigests -and $null -ne $Context.plan) {
+        # Seal policy mutations so rejection proves owned-policy enforcement,
+        # rather than merely detecting a stale fixture digest.
+        $seal = @"
+import {readFileSync,writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
+const [,,file,root]=process.argv;
+const {digest}=await import(pathToFileURL(join(root,'.github/scripts/wss-ci/verify.mjs')).href);
+const c=JSON.parse(readFileSync(file,'utf8'));
+c.plan.manifest_sha256=digest(c.plan.manifest);
+const {plan_id,...body}=c.plan;c.plan.plan_id=digest(body);
+writeFileSync(file,JSON.stringify(c));
+"@
+        & node --input-type=module --eval $seal -- 'policy-test-fixture' $policyContextPath $policyRoot
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to seal receipt policy test fixture.' }
     }
-    Assert-WssReceiptPolicy $policyId $policy
-    foreach ($mutation in @(
-        {param($p)$p.jobs=@($p.jobs[0])}, {param($p)$p.workflow='.github/workflows/wss-preflight.yml'},
-        {param($p)$p.branch='main'}, {param($p)$p.repository='other/repository'},
-        {param($p)$p.coverage=@('canonical-conformance')}, {param($p)$p.trusted_paths=@('.github/scripts')},
-        {param($p)$p.parents=[pscustomobject]@{'csharp-wrapper'='other/gitlink'}}
-    )) {
-        $bad=$policy | ConvertTo-Json -Depth 8 | ConvertFrom-Json
-        & $mutation $bad
-        Reject { Assert-WssReceiptPolicy $policyId $bad }
+    Assert-WssReceiptPolicy $Role $policyContextPath $policyRoot
+}
+try {
+    foreach ($policyId in @('csharp-wrapper','csharp-cli')) {
+        $profile=$profiles.$policyId
+        $declared=$profile.target | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+        $target=$declared | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+        $target | Add-Member -NotePropertyName role -NotePropertyValue $profile.role
+        $context=[pscustomobject]@{
+            plan=@{
+                schema='wss-propagation-plan/v1';channel='dev'
+                candidate=@{repository='cwru-non-academic/WSSCore';commit=('a'*40);run_id='123';artifact_id='456';archive='WSS-Universal-ci.zip';sha256=('b'*64)}
+                manifest=@{schema='wss-required-targets/v1';channel='dev';release_kind='beta';stable_enabled=$false;targets=@($profiles.PSObject.Properties | ForEach-Object { $_.Value.target });excluded=@()}
+                target_snapshots=@{}
+            }
+            target=$target;paths=@{toolsRoot=$policyRoot}
+        }
+        # Each fixture has the actual nine profiles, not a manually duplicated
+        # C# policy table. Snapshot identities are synthetic contract data.
+        $context.plan.manifest.targets=@($context.plan.manifest.targets | ForEach-Object { if ($_.id -ceq $policyId) { $declared } else { $_ } })
+        foreach ($entry in $context.plan.manifest.targets) {
+            $trusted=@{};foreach ($path in $entry.trusted_paths) { $trusted[$path]='c'*40 }
+            $context.plan.target_snapshots[$entry.id]=@{head_sha=('d'*40);trusted=$trusted}
+        }
+        if ($policyId -ceq 'csharp-wrapper' -and '.github/workflows/notify-core-stage.yml' -cnotin $target.trusted_paths) { throw 'Canonical wrapper profile must cover its notifier.' }
+        Invoke-PolicyContext $context $policyId
+        $targetIndex=@($context.plan.manifest.targets.id).IndexOf($policyId)
+        foreach ($mutation in @(
+            {param($c)$c.plan.manifest.targets[$targetIndex].jobs=@($c.plan.manifest.targets[$targetIndex].jobs[0])},
+            {param($c)$c.plan.manifest.targets[$targetIndex].workflow='.github/workflows/wss-preflight.yml'},
+            {param($c)$c.plan.manifest.targets[$targetIndex].branch='main'},
+            {param($c)$c.plan.manifest.targets[$targetIndex].repository='other/repository'},
+            {param($c)$c.plan.manifest.targets[$targetIndex].kind='other'},
+            {param($c)$c.plan.manifest.targets[$targetIndex].coverage=@('canonical-conformance')},
+            {param($c)$c.plan.manifest.targets[$targetIndex].trusted_paths=@('.github/scripts')},
+            {param($c)$c.plan.manifest.targets[$targetIndex].parents=[pscustomobject]@{'csharp-wrapper'='other/gitlink'}},
+            {param($c)$c.plan.manifest.targets[$targetIndex] | Add-Member -NotePropertyName role -NotePropertyValue 'other'},
+            {param($c)$c.plan.manifest.targets+=@($c.plan.manifest.targets[$targetIndex])},
+            {param($c)$c.plan.manifest.excluded=@(@{id=$c.target.id})},
+            {param($c)$c.plan.channel='main'}, {param($c)$c.plan.manifest.channel='main'},
+            {param($c)$c.target.jobs=@('unverified')}, {param($c)$c.target.role='other'},
+            {param($c)$c.paths.toolsRoot=Join-Path $policyRoot 'different-tools'},
+            {param($c)$c.plan=$null}, {param($c)$c.target=$null}, {param($c)$c.paths=$null}
+        )) {
+            $bad=$context | ConvertTo-Json -Depth 50 | ConvertFrom-Json
+            & $mutation $bad
+            Reject { Invoke-PolicyContext $bad $policyId }
+        }
+        if ($policyId -ceq 'csharp-wrapper') {
+            $bad=$context | ConvertTo-Json -Depth 50 | ConvertFrom-Json
+            $bad.plan.manifest.targets[$targetIndex].trusted_paths=@($bad.plan.manifest.targets[$targetIndex].trusted_paths | Where-Object { $_ -cne '.github/workflows/notify-core-stage.yml' })
+            $bad.target.trusted_paths=$bad.plan.manifest.targets[$targetIndex].trusted_paths
+            $bad.plan.target_snapshots.$policyId.trusted.PSObject.Properties.Remove('.github/workflows/notify-core-stage.yml')
+            Reject { Invoke-PolicyContext $bad $policyId }
+        }
+        Invoke-PolicyContext $context $policyId
+        $sealed=Get-Content -LiteralPath $policyContextPath -Raw | ConvertFrom-Json
+        foreach ($field in @('plan_id','manifest_sha256')) {
+            $bad=$sealed | ConvertTo-Json -Depth 50 | ConvertFrom-Json
+            $bad.plan.$field='0'*64
+            Reject { Invoke-PolicyContext $bad $policyId -KeepDigests }
+        }
+        $bad=$sealed | ConvertTo-Json -Depth 50 | ConvertFrom-Json
+        $bad.plan.candidate.sha256='invalid'
+        Reject { Invoke-PolicyContext $bad $policyId }
+        Reject { Invoke-PolicyContext $context 'python-wrapper' }
     }
+    # Prove successful assertion needs no network, subprocess or receipt writes.
+    Invoke-PolicyContext $context $policyId
+    $sealed=Get-Content -LiteralPath $policyContextPath -Raw | ConvertFrom-Json
+    $denyEffects=Join-Path $policyWork 'deny-effects.mjs'
+    [IO.File]::WriteAllText($denyEffects,@'
+import fs from 'node:fs';
+import cp from 'node:child_process';
+import net from 'node:net';
+import http from 'node:http';
+import https from 'node:https';
+import {syncBuiltinESMExports} from 'node:module';
+const deny=()=>{throw Error('Policy assertion attempted a forbidden side effect');};
+for(const k of ['writeFileSync','appendFileSync','mkdirSync','rmSync']) fs[k]=deny;
+for(const k of ['execFileSync','execSync','spawnSync','execFile','exec','spawn']) cp[k]=deny;
+net.connect=net.createConnection=http.request=http.get=https.request=https.get=deny;
+globalThis.fetch=deny;syncBuiltinESMExports();
+'@,[Text.UTF8Encoding]::new($false))
+    $oldNodeOptions=$env:NODE_OPTIONS
+    try {
+        $env:NODE_OPTIONS=($oldNodeOptions+' --import="'+([Uri]::new($denyEffects).AbsoluteUri)+'"').Trim()
+        Invoke-PolicyContext $sealed $policyId -KeepDigests
+    } finally { $env:NODE_OPTIONS=$oldNodeOptions;Remove-Item -LiteralPath $denyEffects }
+    # A native process failure must never be mistaken for successful assertion.
+    try {
+        function node { $global:LASTEXITCODE=19 }
+        Reject { Assert-WssReceiptPolicy $policyId $policyContextPath $policyRoot }
+    } finally { Remove-Item Function:node }
+    Invoke-PolicyContext $sealed $policyId -KeepDigests
+    [IO.File]::WriteAllText($policyContextPath,'{not JSON',[Text.UTF8Encoding]::new($false))
+    Reject { Assert-WssReceiptPolicy 'csharp-wrapper' $policyContextPath $policyRoot }
+    [IO.File]::WriteAllText($policyContextPath,'null',[Text.UTF8Encoding]::new($false))
+    Reject { Assert-WssReceiptPolicy 'csharp-wrapper' $policyContextPath $policyRoot }
+} finally {
+    Remove-Item -LiteralPath $policyContextPath -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $policyWork
 }
 $normalTarget=@{workflow='.github/workflows/cli-ci.yml';jobs=@('CLI general conformance')}
 $normalRepo='cwru-non-academic/CLI_CSharp_WSS_Application'
@@ -217,7 +323,7 @@ $latestNormal.run_attempt=1; $liveNormal.run_attempt=2
 Reject { Assert-WssReceiptNormalFresh $originalNormal $latestNormal $liveNormal $normalRepo $normalTarget $normalSha $normalJobs }
 $liveNormal.run_attempt=1; $liveNormal.conclusion='failure'
 Reject { Assert-WssReceiptNormalFresh $originalNormal $latestNormal $liveNormal $normalRepo $normalTarget $normalSha $normalJobs }
-"Receiver-owned policy and final CI identity tests passed (18 new rejections)."
+"Canonical policy bridge and final CI identity tests passed."
 
 # Exercise production command wrappers without network, credentials, or receipt emission.
 & {
@@ -268,3 +374,7 @@ Reject { Assert-WssReceiptNormalFresh $originalNormal $latestNormal $liveNormal 
     }
 }
 "Receipt command dispatch contracts passed (no native-name collision; complete argument arrays; fail-closed exit codes)."
+
+# Expected native rejection cases above leave a nonzero process status; all
+# assertions have completed successfully if execution reaches this point.
+$global:LASTEXITCODE=0
