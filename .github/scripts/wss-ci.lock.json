@@ -2,12 +2,20 @@
   "schema": "wss-shared-ci/v1",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "217eb499a19ceeb24596f780d6de5522d6489e87",
-  "source_ref": "refs/heads/ci/tooling/217eb499a19ceeb24596f780d6de5522d6489e87",
+  "source_commit": "7724afcb5e60f4943e0516daab378ce828ec57b6",
+  "source_ref": "refs/heads/ci/tooling/7724afcb5e60f4943e0516daab378ce828ec57b6",
   "files": {
     ".github/scripts/wss-ci/verify.mjs": {
       "source": "tools/release/verify.mjs",
       "sha256": "7c35b06cce84e4e2f52ecb8e2928d7738745b5901c1e8f36cc1d1a8978925f8c"
+    },
+    ".github/scripts/wss-ci/producer-jobs.mjs": {
+      "source": "tools/release/producer-jobs.mjs",
+      "sha256": "6a653c65e80032fe7814682188b9da2f8e346886e75928a10cb1711ee6406a14"
+    },
+    ".github/scripts/wss-ci/Producer.ps1": {
+      "source": "tools/ci/shared/Producer.ps1",
+      "sha256": "548210d2787d911957a9cac8eb272eec80ab9fe2fd0120777aefb3f78291c02b"
     },
     ".github/scripts/wss-ci/github.mjs": {
       "source": "tools/release/github.mjs",

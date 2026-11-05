@@ -95,9 +95,14 @@ Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $OutputRoot 'ex
 $root = (Resolve-Path -LiteralPath (Join-Path $OutputRoot 'extracted/WSS-Universal')).Path
 Assert-WssMacOSPayload $root $selectedFiles
 if ($WssMacOSFiles[0] -cin $selectedFiles) {
-    $pages = Invoke-Gh -Arguments @('api', '--paginate', '--slurp', "repos/$ProducerRepository/actions/runs/$RunId/jobs?per_page=100") | ConvertFrom-Json
+    if ($run.run_attempt -lt 1) { throw 'Exact producer attempt is required.' }
+    $pages = Invoke-Gh -Arguments @('api', '--paginate', '--slurp', "repos/$ProducerRepository/actions/runs/$RunId/attempts/$($run.run_attempt)/jobs?per_page=100") | ConvertFrom-Json
     $jobs = @($pages | ForEach-Object { $_.jobs })
     Assert-WssMacOSProducerJobs $jobs
+    if ($ArchiveName -ceq 'WSS-Universal-ci.zip') {
+        . "$PSScriptRoot/wss-ci/Producer.ps1"
+        Assert-WssCiProducerJobs $jobs 'macos-ble-v1'
+    }
 }
 $provenance = [ordered]@{
     repository = $ProducerRepository; run_id = $RunId; artifact_id = $artifactId
