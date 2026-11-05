@@ -2,14 +2,14 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "815479cd2b7d7c3eb5aa3e499080163e53d09a57",
-  "source_ref": "refs/heads/ci/tooling/815479cd2b7d7c3eb5aa3e499080163e53d09a57",
+  "source_commit": "8caa238c7ccfb7825695e1b8fb69602519935442",
+  "source_ref": "refs/heads/ci/tooling/8caa238c7ccfb7825695e1b8fb69602519935442",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "21ea1f7eaf2b0b812eabf429163eb9234df3f195",
-      "ref": "refs/heads/ci/tooling/21ea1f7eaf2b0b812eabf429163eb9234df3f195"
+      "commit": "82e52b49af0224313231eaea50867bab1cd66e11",
+      "ref": "refs/heads/ci/tooling/82e52b49af0224313231eaea50867bab1cd66e11"
     }
   },
   "files": {
@@ -131,12 +131,22 @@
     ".github/scripts/wss-ci/notify-family.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/notify-family.mjs",
-      "sha256": "170659b6f0d7afc9f31153444e0dee7a4657973cfe681855dc0f146e3d6b393a"
+      "sha256": "ba4c04023ccc1a6cb5a005a8c724298f180403593436d02bdff1b9634778c867"
     },
     ".github/workflows/notify-core-stage.yml": {
       "origin": "integration",
       "source": ".github/workflows/notify-core-stage.yml",
-      "sha256": "c8165a8db6d450b5d8c6ba05eb4ccf6751ebcadd4f9469ccddc2935e9f170164"
+      "sha256": "e50aaec3afc06253262489863c2cb4413f30b409d4c4ee9ac6dd51c5f60c0ffb"
+    },
+    ".github/scripts/wss-ci/preflight.mjs": {
+      "origin": "integration",
+      "source": ".github/scripts/wss-ci/preflight.mjs",
+      "sha256": "789e709998b1cb8673f7ab79a3e8e92d3394df0a031f22f4ff18ae05371dcf32"
+    },
+    ".github/scripts/wss-ci/Preflight.ps1": {
+      "origin": "integration",
+      "source": ".github/scripts/wss-ci/Preflight.ps1",
+      "sha256": "6f6b57bfb891a0b4e7576fba8a4c75eec0afdcf575203567535aaec182748bb2"
     }
   }
 }

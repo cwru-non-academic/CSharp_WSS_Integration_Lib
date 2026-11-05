@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+. "$PSScriptRoot/wss-ci/Preflight.ps1"
 . "$PSScriptRoot/WssPromotion.ps1"
 
 function Assert-WssCandidateNotOlder($Candidate, [string] $ExpectedReceiverSha) {
@@ -33,63 +34,17 @@ function Assert-WssAutomaticProducer($Run, [string] $Commit) {
     }
 }
 
-function Wait-WssExactRun([string] $Repository, [string] $RunId, [string] $SourceSha,
-    [string] $Workflow, [string] $Event, [int] $TimeoutSeconds = 2400) {
-    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-    do {
-        $run = Invoke-WssGh -Arguments @('api', "repos/$Repository/actions/runs/$RunId") | ConvertFrom-Json
-        if ($run.repository.full_name -cne $Repository -or $run.head_repository.full_name -cne $Repository -or
-            $run.head_branch -cne 'dev' -or $run.path -cne ".github/workflows/$Workflow" -or
-            $run.head_sha -cne $SourceSha -or $run.event -cne $Event) { throw 'Run identity/source mismatch; promotion stopped.' }
-        if ($run.status -ceq 'completed') {
-            if ($run.conclusion -cne 'success') { throw "Required run $Repository/$RunId failed: $($run.conclusion)." }
-            return $run
-        }
-        if ([DateTime]::UtcNow -ge $deadline) { throw "Timed out waiting for $Repository/$RunId; no promotion authorized." }
-        Start-Sleep -Seconds 15
-    } while ($true)
+function Wait-WssExactRun([string]$Repository,[string]$RunId,[string]$SourceSha,[string]$Workflow,[string]$Event,[int]$TimeoutSeconds=2400) {
+    Wait-WssCiRun $Repository $RunId $SourceSha $Workflow $Event $TimeoutSeconds
 }
 
-function Get-WssCorrelatedPreflight([string] $Repository, [string] $Title) {
-    $pages = Invoke-WssGh -Arguments @('api', '--paginate', '--slurp', "repos/$Repository/actions/workflows/wss-preflight.yml/runs?event=workflow_dispatch&per_page=100") | ConvertFrom-Json
-    $runs = @($pages | ForEach-Object { $_.workflow_runs } | Where-Object { $_.display_title -ceq $Title })
-    if ($runs.Count -gt 1) { throw "Ambiguous correlated preflight in $Repository; refusing to select a green run." }
-    if ($runs.Count -eq 1) { return $runs[0] }
-    return $null
-}
 
-function Invoke-WssDispatch([string] $Repository, [string] $Body) {
-    $Body | & gh api --method POST "repos/$Repository/actions/workflows/wss-preflight.yml/dispatches" --input -
-    if ($LASTEXITCODE -ne 0) { throw "Preflight dispatch failed in $Repository; check App Actions-write permission. Dispatch is not retried automatically." }
-}
 
-function Start-WssCorrelatedPreflight([string] $Repository, $Candidate, [string] $CorrelationId,
-    [string] $IntegrationSha = '', [int] $DiscoverySeconds = 180) {
-    $title = "WSS preflight $($Candidate.run_id) / $CorrelationId"
-    $existing = Get-WssCorrelatedPreflight $Repository $title
-    # Replays retain original tested sources even after dev advances. Never redispatch a failed run.
-    if ($null -ne $existing) { return $existing }
-    $branch = Invoke-WssGh -Arguments @('api', "repos/$Repository/branches/dev") | ConvertFrom-Json
-    $sha = $branch.commit.sha
-    if ($sha -cnotmatch '^[0-9a-f]{40}$') { throw 'Cannot resolve exact downstream dev source.' }
-    $inputs = @{
-        wss_producer_repository = $Candidate.repository; wss_run_id = [string]$Candidate.run_id
-        wss_commit = $Candidate.commit; wss_archive = $Candidate.archive; wss_sha256 = $Candidate.sha256
-        correlation_id = $CorrelationId
-    }
-    if ($IntegrationSha) { $inputs.integration_sha = $IntegrationSha }
-    $body = @{ ref = 'dev'; inputs = $inputs } | ConvertTo-Json -Depth 4 -Compress
-    Invoke-WssDispatch $Repository $body
-    $deadline = [DateTime]::UtcNow.AddSeconds($DiscoverySeconds)
-    do {
-        $run = Get-WssCorrelatedPreflight $Repository $title
-        if ($null -ne $run) {
-            if ($run.head_sha -cne $sha) { throw 'Downstream dev moved during dispatch; refusing an unpinned source.' }
-            return $run
-        }
-        if ([DateTime]::UtcNow -ge $deadline) { throw "Dispatched preflight missing in $Repository; inspect before replaying. No promotion authorized." }
-        Start-Sleep -Seconds 5
-    } while ($true)
+
+
+function Start-WssCorrelatedPreflight([string]$Repository,$Candidate,[string]$CorrelationId,[string]$IntegrationSha='',[int]$DiscoverySeconds=180) {
+    if($Repository -cnotin @('cwru-non-academic/CSharp_WSS_Integration_Lib','cwru-non-academic/CLI_CSharp_WSS_Application')){throw 'Unknown C# preflight repository.'}
+    Start-WssCiPreflight -Repository $Repository -Candidate $Candidate -WrapperSha $IntegrationSha -CorrelationId $CorrelationId -DiscoverySeconds $DiscoverySeconds -DispatchToken $env:GH_TOKEN
 }
 
 function New-WssAutomaticApproval($Candidate, [string] $CorrelationId) {
