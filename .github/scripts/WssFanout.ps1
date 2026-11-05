@@ -19,6 +19,7 @@ function Get-WssCliDispatchReuse($Approval,[string]$IntegrationSha,[string]$Corr
 }
 
 function Assert-WssCliDispatchIntent([string]$IntegrationSha,[switch]$RequireCurrent) {
+    if($env:GITHUB_REPOSITORY -cne 'cwru-non-academic/CSharp_WSS_Integration_Lib'){throw 'Dispatch recovery requires canonical wrapper execution.'}
     . "$PSScriptRoot/wss-ci/DispatchProof.ps1"
     $name="csharp-cli-dispatch-$IntegrationSha"
     $pages=Invoke-WssGh -Arguments @('api','--paginate','--slurp',"repos/cwru-non-academic/CSharp_WSS_Integration_Lib/actions/artifacts?name=$name&per_page=100")|ConvertFrom-Json

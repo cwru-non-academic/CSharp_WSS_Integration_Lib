@@ -2,8 +2,8 @@
   "schema": "wss-shared-ci/v1",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "917802c51905afd796575683dbb7ad277a8996b7",
-  "source_ref": "refs/heads/ci/tooling/917802c51905afd796575683dbb7ad277a8996b7",
+  "source_commit": "1bb24c06791acdcb3de2f008cb506b47c5849aea",
+  "source_ref": "refs/heads/ci/tooling/1bb24c06791acdcb3de2f008cb506b47c5849aea",
   "files": {
     ".github/scripts/wss-ci/verify.mjs": {
       "source": "tools/release/verify.mjs",
@@ -63,7 +63,7 @@
     },
     ".github/scripts/wss-ci/Evidence.ps1": {
       "source": "tools/ci/shared/Evidence.ps1",
-      "sha256": "a86e2c0140d67f5cf0232c688b71bf582292e18add5cac088a91f29178524cf5"
+      "sha256": "fed9854965b9f89c0ac3accd187cb0f27d14b6dbb27725460e82bdc494153065"
     },
     ".github/scripts/wss-ci/README.md": {
       "source": "tools/ci/shared/README.md",

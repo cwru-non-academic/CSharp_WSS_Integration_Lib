@@ -78,7 +78,8 @@ function Assert-WssMacOSGate($Records,[string]$Context,[string]$WorkerResult,[st
         $matching=@($Records | Where-Object architecture -CEQ $arch)
         if ($matching.Count -ne 1) { $problems.Add("$arch : missing or duplicate architecture evidence"); continue }
         $r=$matching[0]
-        Assert-WssCiEvidenceFields $r @{schema='wss-macos-ble-consumer/v1';context=$Context;run_id=$RunId;attempt=$Attempt;source_sha=$SourceSha}
+        try { Assert-WssCiEvidenceFields $r @{schema='wss-macos-ble-consumer/v1';context=$Context;run_id=$RunId;attempt=$Attempt;source_sha=$SourceSha} }
+        catch { throw "$arch : $($_.Exception.Message)" }
         if (
             !$r.passed -or $r.job_result -cne 'success' -or $r.hardware_ble -cne 'not-executed' -or $r.synthetic_fixture -or
             $r.coverage -cnotin @('packaged-native-abi-load','legacy-unsupported-asserted') -or !$r.host -or $r.host.rosetta -or

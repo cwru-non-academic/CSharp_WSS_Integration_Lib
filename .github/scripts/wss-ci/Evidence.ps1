@@ -20,8 +20,8 @@ function Assert-WssCiEvidenceFiles([string]$Root,[System.Collections.IDictionary
     }
 }
 function Assert-WssCiArchitecturePair($Records,[string[]]$Architectures) {
-    if(@($Records).Count -ne $Architectures.Count){throw 'Missing/extra architecture evidence.'}
     foreach($architecture in $Architectures) {
         if(@($Records|Where-Object architecture -CEQ $architecture).Count -ne 1){throw "Missing/duplicate architecture evidence: $architecture"}
     }
+    if(@($Records).Count -ne $Architectures.Count){throw 'Missing/extra architecture evidence.'}
 }
