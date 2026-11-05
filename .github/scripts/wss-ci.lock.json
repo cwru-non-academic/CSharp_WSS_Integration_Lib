@@ -2,11 +2,72 @@
   "schema": "wss-shared-ci/v1",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "1718ad94ada5ddba84e6370d0923d8174a314208",
+  "source_commit": "917802c51905afd796575683dbb7ad277a8996b7",
+  "source_ref": "refs/heads/ci/tooling/917802c51905afd796575683dbb7ad277a8996b7",
   "files": {
     ".github/scripts/wss-ci/verify.mjs": {
       "source": "tools/release/verify.mjs",
       "sha256": "7c35b06cce84e4e2f52ecb8e2928d7738745b5901c1e8f36cc1d1a8978925f8c"
+    },
+    ".github/scripts/wss-ci/github.mjs": {
+      "source": "tools/release/github.mjs",
+      "sha256": "98d4586010c9f9dba7a12d2eee1d3431f21a4b013771a148110b0d7589e6a286"
+    },
+    ".github/scripts/wss-ci/policy.mjs": {
+      "source": "tools/release/policy.mjs",
+      "sha256": "c4d3469fc0e2816bbf51daf810bf67ffbc30cc8a74919a9aa3c9f4fd084307de"
+    },
+    ".github/scripts/wss-ci/receipt.mjs": {
+      "source": "tools/release/receipt.mjs",
+      "sha256": "f64b6e0284f7d25631b05ea04963d47eb33162d98fa92b38d381aab89a507b74"
+    },
+    ".github/scripts/wss-ci/promotion.mjs": {
+      "source": "tools/release/promotion.mjs",
+      "sha256": "7025622d6355fc1660af81fa2eb1e5fd324f90e9d1e2b7278e2b35331eaad8f7"
+    },
+    ".github/scripts/wss-ci/dispatch-proof.mjs": {
+      "source": "tools/release/dispatch-proof.mjs",
+      "sha256": "bf477b869185bee975dfde84bb282c0f0e5c8d38dadf16758250f91f39287ef6"
+    },
+    ".github/scripts/wss-ci/DispatchProof.ps1": {
+      "source": "tools/ci/shared/DispatchProof.ps1",
+      "sha256": "5a889750fa81881ec9897d20a1e172ef3f6175c34567040bd90bd010c61c6999"
+    },
+    ".github/scripts/wss-ci/receipt-targets.json": {
+      "source": "tools/release/receipt-targets.json",
+      "sha256": "075298558e2685d56384274d43249f00a05b1b3a844cfd99319055664a71527d"
+    },
+    ".github/scripts/wss-ci/staging.mjs": {
+      "source": "tools/release/staging.mjs",
+      "sha256": "9c60545391d4ab65859f4876b10e8c1b3a7a1c250283ed4e2d66943d09fad165"
+    },
+    ".github/scripts/wss-ci/staging-targets.json": {
+      "source": "tools/release/staging-targets.json",
+      "sha256": "8bbc9d81f4ba0a56b3102281077c133ec9c8b7eabaa52f3d8e711bb01a925f84"
+    },
+    ".github/scripts/wss-ci/Staging.ps1": {
+      "source": "tools/ci/shared/Staging.ps1",
+      "sha256": "276dd8d6f5ac1ccbfbb88626e18bb1429283d22b67fd69e7245ba71d0a574c3f"
+    },
+    ".github/scripts/wss-ci/Prepare-StagedApplicationFanout.ps1": {
+      "source": "tools/ci/shared/Prepare-StagedApplicationFanout.ps1",
+      "sha256": "2e92b494189906588cdd2de10ceb7d8fbca1780a0c801679eaf09a8c92cadf14"
+    },
+    ".github/scripts/wss-ci/normalize-candidate.mjs": {
+      "source": "tools/release/normalize-candidate.mjs",
+      "sha256": "2936a033363115d2e6c89e70c1f375a9bdf7e231e182b09afad04fdbf30f6d8d"
+    },
+    ".github/scripts/wss-ci/Process.ps1": {
+      "source": "tools/ci/shared/Process.ps1",
+      "sha256": "8e36d88c15ee8aa5af98ee1e018ffed914d56f595f681dd8a34bf1c7192f8949"
+    },
+    ".github/scripts/wss-ci/Evidence.ps1": {
+      "source": "tools/ci/shared/Evidence.ps1",
+      "sha256": "a86e2c0140d67f5cf0232c688b71bf582292e18add5cac088a91f29178524cf5"
+    },
+    ".github/scripts/wss-ci/README.md": {
+      "source": "tools/ci/shared/README.md",
+      "sha256": "06e094d16c6bcb60735bacb2037141be6676028120c9e6f2342afd4d6b164d37"
     },
     ".github/scripts/wss-ci/normal-ci.mjs": {
       "source": "tools/release/normal-ci.mjs",
@@ -26,7 +87,7 @@
     },
     ".github/workflows/shared-ci.yml": {
       "source": "tools/ci/shared/shared-ci.yml",
-      "sha256": "b6cb4673843a123922df7e41bc91c721c61a3049de0fb968343731ce8e853ec2"
+      "sha256": "82b2cd29b663ccf745337ec4551ed2eacfba9c7409082fee308ff0d8d0863c02"
     }
   }
 }

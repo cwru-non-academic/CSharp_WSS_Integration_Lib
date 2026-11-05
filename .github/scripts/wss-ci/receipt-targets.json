@@ -1,0 +1,291 @@
+{
+  "csharp-wrapper": {
+    "family": "csharp",
+    "role": "wrapper",
+    "wrapper": "csharp-wrapper",
+    "preflights": 2,
+    "target": {
+      "id": "csharp-wrapper",
+      "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
+      "branch": "dev",
+      "kind": "payload",
+      "workflow": ".github/workflows/wss-compatibility.yml",
+      "jobs": [
+        "Integration behavioral tests",
+        "Integration compatibility (Windows)",
+        "Integration compatibility (Ubuntu)",
+        "Integration compatibility (macOS)"
+      ],
+      "parents": {},
+      "trusted_paths": [
+        ".github/workflows/release-receipt.yml",
+        ".github/scripts",
+        ".github/workflows/wss-compatibility.yml"
+      ],
+      "coverage": [
+        "canonical-conformance",
+        "packaged-macos-ble-load"
+      ]
+    }
+  },
+  "csharp-cli": {
+    "family": "csharp",
+    "role": "cli",
+    "wrapper": "csharp-wrapper",
+    "preflights": 2,
+    "target": {
+      "id": "csharp-cli",
+      "repository": "cwru-non-academic/CLI_CSharp_WSS_Application",
+      "branch": "dev",
+      "kind": "gitlink",
+      "workflow": ".github/workflows/cli-ci.yml",
+      "jobs": [
+        "CLI general conformance",
+        "CLI platform compatibility (Windows)",
+        "CLI platform compatibility (Ubuntu)",
+        "CLI platform compatibility (macOS)"
+      ],
+      "parents": {
+        "csharp-wrapper": "SubModules/HFI_WSS_Csharp_Implementation"
+      },
+      "trusted_paths": [
+        ".github/workflows/release-receipt.yml",
+        ".github/scripts",
+        ".github/workflows/cli-ci.yml"
+      ],
+      "coverage": [
+        "canonical-conformance",
+        "packaged-macos-ble-load"
+      ]
+    }
+  },
+  "unity-wrapper": {
+    "family": "unity",
+    "role": "wrapper",
+    "wrapper": "unity-wrapper",
+    "preflights": 2,
+    "target": {
+      "id": "unity-wrapper",
+      "repository": "cwru-non-academic/Unity_WSS_Integration_Lib",
+      "branch": "dev",
+      "kind": "payload",
+      "workflow": ".github/workflows/unity-compatibility.yml",
+      "jobs": [
+        "Integration behavioral tests",
+        "Integration compatibility (Windows)",
+        "Integration compatibility (Ubuntu)",
+        "Integration compatibility (macOS)"
+      ],
+      "parents": {},
+      "trusted_paths": [
+        ".github/workflows/release-receipt.yml",
+        ".github/scripts",
+        ".github/unity-ci.json",
+        ".github/workflows/unity-compatibility.yml"
+      ],
+      "coverage": [
+        "canonical-conformance",
+        "packaged-macos-ble-load",
+        "dotnet-harness-not-unity-editor"
+      ]
+    }
+  },
+  "unity-gui": {
+    "family": "unity",
+    "role": "gui",
+    "wrapper": "unity-wrapper",
+    "preflights": 3,
+    "target": {
+      "id": "unity-gui",
+      "repository": "cwru-non-academic/GUI_Unity_WSS_Application",
+      "branch": "dev",
+      "kind": "gitlink",
+      "workflow": ".github/workflows/unity-ci.yml",
+      "jobs": [
+        "GUI general conformance",
+        "GUI platform compatibility (Windows)",
+        "GUI platform compatibility (Ubuntu)",
+        "GUI platform compatibility (macOS)"
+      ],
+      "parents": {
+        "unity-wrapper": "Assets/SubModules/WSSInterfacingModule"
+      },
+      "trusted_paths": [
+        ".github/workflows/release-receipt.yml",
+        ".github/scripts",
+        ".github/workflows/unity-ci.yml"
+      ],
+      "coverage": [
+        "canonical-conformance",
+        "packaged-macos-ble-load",
+        "dotnet-harness-not-unity-editor"
+      ]
+    }
+  },
+  "python-wrapper": {
+    "family": "python",
+    "role": "wrapper",
+    "wrapper": "python-wrapper",
+    "preflights": 3,
+    "target": {
+      "id": "python-wrapper",
+      "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
+      "branch": "dev",
+      "kind": "payload",
+      "workflow": ".github/workflows/wss-compatibility.yml",
+      "jobs": [
+        "Resolve committed sources",
+        "Integration behavioral tests",
+        "Integration compatibility (Windows)",
+        "Integration compatibility (Ubuntu)",
+        "Integration compatibility (macOS)",
+        "Promotion safety contracts"
+      ],
+      "parents": {},
+      "trusted_paths": [
+        ".github/workflows/release-receipt.yml",
+        ".github/scripts",
+        ".github/python-ci.json",
+        ".github/workflows/wss-compatibility.yml"
+      ],
+      "coverage": [
+        "canonical-conformance",
+        "packaged-macos-ble-load"
+      ]
+    }
+  },
+  "python-cli": {
+    "family": "python",
+    "role": "cli",
+    "wrapper": "python-wrapper",
+    "preflights": 4,
+    "target": {
+      "id": "python-cli",
+      "repository": "cwru-non-academic/CLI_Python_WSS_Application",
+      "branch": "dev",
+      "kind": "gitlink",
+      "workflow": ".github/workflows/cli-ci.yml",
+      "jobs": [
+        "Resolve committed sources",
+        "CLI general conformance",
+        "CLI platform compatibility (Windows)",
+        "CLI platform compatibility (Ubuntu)",
+        "CLI platform compatibility (macOS)"
+      ],
+      "parents": {
+        "python-wrapper": "external/wss-py-wrapper"
+      },
+      "trusted_paths": [
+        ".github/workflows/release-receipt.yml",
+        ".github/scripts",
+        ".github/workflows/cli-ci.yml"
+      ],
+      "coverage": [
+        "canonical-conformance",
+        "packaged-macos-ble-load"
+      ]
+    }
+  },
+  "python-ros": {
+    "family": "python",
+    "role": "ros",
+    "wrapper": "python-wrapper",
+    "preflights": 4,
+    "target": {
+      "id": "python-ros",
+      "repository": "cwru-non-academic/ROS_Python_WSS_Application",
+      "branch": "dev",
+      "kind": "gitlink",
+      "workflow": ".github/workflows/ros-ci.yml",
+      "jobs": [
+        "Stage verified ROS inputs",
+        "ROS platform compatibility (Windows)",
+        "ROS platform compatibility (Ubuntu)",
+        "ROS platform compatibility (macOS)",
+        "ROS-specific compatibility (Humble)",
+        "ROS general conformance"
+      ],
+      "parents": {
+        "python-wrapper": "HFI_WSS_Python_Interface"
+      },
+      "trusted_paths": [
+        ".github/workflows/release-receipt.yml",
+        ".github/scripts",
+        ".github/workflows/ros-ci.yml"
+      ],
+      "coverage": [
+        "canonical-conformance",
+        "packaged-macos-ble-load",
+        "ros-native-humble"
+      ]
+    }
+  },
+  "matlab-wrapper": {
+    "family": "matlab",
+    "role": "wrapper",
+    "wrapper": "matlab-wrapper",
+    "preflights": 2,
+    "target": {
+      "id": "matlab-wrapper",
+      "repository": "cwru-non-academic/Matlab_WSS_Integration_Lib",
+      "branch": "dev",
+      "kind": "payload",
+      "workflow": ".github/workflows/wss-compatibility.yml",
+      "jobs": [
+        "Integration behavioral tests",
+        "Integration compatibility (Windows)",
+        "Integration compatibility (Ubuntu)",
+        "Integration compatibility (macOS)"
+      ],
+      "parents": {},
+      "trusted_paths": [
+        ".github/workflows/release-receipt.yml",
+        ".github/scripts",
+        ".github/workflows/wss-compatibility.yml",
+        ".github/actions",
+        ".github/matlab-ci.json",
+        "ci",
+        "conformance"
+      ],
+      "coverage": [
+        "canonical-conformance",
+        "packaged-macos-ble-load"
+      ]
+    }
+  },
+  "matlab-cli": {
+    "family": "matlab",
+    "role": "cli",
+    "wrapper": "matlab-wrapper",
+    "preflights": 3,
+    "target": {
+      "id": "matlab-cli",
+      "repository": "cwru-non-academic/CLI_Matlab_WSS_Application",
+      "branch": "dev",
+      "kind": "gitlink",
+      "workflow": ".github/workflows/cli-ci.yml",
+      "jobs": [
+        "CLI general conformance",
+        "CLI platform compatibility (Windows)",
+        "CLI platform compatibility (Ubuntu)",
+        "CLI platform compatibility (macOS)"
+      ],
+      "parents": {
+        "matlab-wrapper": "external/wss-matlab-wrapper"
+      },
+      "trusted_paths": [
+        ".github/workflows/release-receipt.yml",
+        ".github/scripts",
+        ".github/workflows/cli-ci.yml",
+        ".github/actions",
+        ".github/matlab-ci.json",
+        "ci",
+        "conformance"
+      ],
+      "coverage": [
+        "canonical-conformance",
+        "packaged-macos-ble-load"
+      ]
+    }
+  }
+}

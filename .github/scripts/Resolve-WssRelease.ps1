@@ -19,10 +19,9 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . "$PSScriptRoot/Universal-WssFiles.ps1"
 
-function Invoke-Gh([string[]] $Arguments) {
-    $result = & gh @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "gh failed ($LASTEXITCODE): $($Arguments -join ' ')" }
-    return $result
+function Invoke-Gh([string[]]$Arguments) {
+    . "$PSScriptRoot/wss-ci/Process.ps1"
+    Invoke-WssCiProcess -Executable gh -Arguments $Arguments -FailureMessage 'GitHub operation failed'
 }
 
 if ($ProducerRepository -cne 'cwru-non-academic/WSSCore') {
@@ -37,11 +36,11 @@ $artifactId = $null
 if ($ReleaseTag) {
     if ($ReleaseTag -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' -or
         $ArchiveName -cne "WSS-Universal-$ReleaseTag.zip") { throw 'Invalid universal release tag/archive pair.' }
-    $commit = Invoke-Gh @('api', "repos/$ProducerRepository/commits/$ReleaseTag") | ConvertFrom-Json
+    $commit = Invoke-Gh -Arguments @('api', "repos/$ProducerRepository/commits/$ReleaseTag") | ConvertFrom-Json
     if ($commit.sha -ine $ExpectedCommit) { throw 'Release tag does not resolve to ExpectedCommit.' }
-    $release = Invoke-Gh @('api', "repos/$ProducerRepository/releases/tags/$ReleaseTag") | ConvertFrom-Json
+    $release = Invoke-Gh -Arguments @('api', "repos/$ProducerRepository/releases/tags/$ReleaseTag") | ConvertFrom-Json
     if ($release.draft -or $release.tag_name -cne $ReleaseTag) { throw 'Release is not published for the requested tag.' }
-    $pages = Invoke-Gh @('api', '--paginate', '--slurp', "repos/$ProducerRepository/actions/workflows/artifacts.yml/runs?event=push&head_sha=$ExpectedCommit&per_page=100") | ConvertFrom-Json
+    $pages = Invoke-Gh -Arguments @('api', '--paginate', '--slurp', "repos/$ProducerRepository/actions/workflows/artifacts.yml/runs?event=push&head_sha=$ExpectedCommit&per_page=100") | ConvertFrom-Json
     $runs = @($pages | ForEach-Object { $_.workflow_runs } | Where-Object {
         $_.head_branch -ceq $ReleaseTag -and $_.status -ceq 'completed' -and $_.conclusion -ceq 'success'
     })
@@ -51,7 +50,7 @@ if ($ReleaseTag) {
 
 if ($RunId) {
     if ($RunId -notmatch '^[1-9][0-9]*$') { throw 'RunId must be a positive integer.' }
-    $run = Invoke-Gh @('api', "repos/$ProducerRepository/actions/runs/$RunId") | ConvertFrom-Json
+    $run = Invoke-Gh -Arguments @('api', "repos/$ProducerRepository/actions/runs/$RunId") | ConvertFrom-Json
     if ($run.repository.full_name -cne $ProducerRepository -or
         $run.path -cne '.github/workflows/artifacts.yml' -or
         $run.status -cne 'completed' -or $run.conclusion -cne 'success') {
@@ -60,7 +59,7 @@ if ($RunId) {
     if ($run.head_sha -ine $ExpectedCommit) { throw "Producer commit mismatch: $($run.head_sha)" }
     # PR runs are merge-ref candidates, not proof of the merged dev revision.
     if ($run.event -notin @('workflow_dispatch', 'push')) { throw 'PR artifacts are not accepted as merged candidates.' }
-    $artifacts = Invoke-Gh @('api', '--paginate', '--slurp', "repos/$ProducerRepository/actions/runs/$RunId/artifacts?per_page=100") | ConvertFrom-Json
+    $artifacts = Invoke-Gh -Arguments @('api', '--paginate', '--slurp', "repos/$ProducerRepository/actions/runs/$RunId/artifacts?per_page=100") | ConvertFrom-Json
     $matches = @($artifacts | ForEach-Object { $_.artifacts } | Where-Object { $_.name -ceq 'universal-release-assets' })
     if ($matches.Count -ne 1 -or $matches[0].expired) { throw 'Exactly one unexpired universal-release-assets artifact is required.' }
     $artifactId = $matches[0].id
@@ -69,7 +68,7 @@ if ($RunId) {
 $downloadDir = Join-Path $OutputRoot 'downloads'
 New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
 # Even tag selection consumes the immutable Actions archive, never manually attached release assets.
-Invoke-Gh @('run', 'download', $RunId, '--repo', $ProducerRepository, '--name', 'universal-release-assets', '--dir', $downloadDir)
+Invoke-Gh -Arguments @('run', 'download', $RunId, '--repo', $ProducerRepository, '--name', 'universal-release-assets', '--dir', $downloadDir)
 $files = @(Get-ChildItem -LiteralPath $downloadDir -File -Recurse)
 if ($files.Count -ne 2 -or -not (Test-Path -LiteralPath (Join-Path $downloadDir $ArchiveName) -PathType Leaf) -or
     -not (Test-Path -LiteralPath (Join-Path $downloadDir 'SHA256SUMS.txt') -PathType Leaf)) {
@@ -96,7 +95,7 @@ Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $OutputRoot 'ex
 $root = (Resolve-Path -LiteralPath (Join-Path $OutputRoot 'extracted/WSS-Universal')).Path
 Assert-WssMacOSPayload $root $selectedFiles
 if ($WssMacOSFiles[0] -cin $selectedFiles) {
-    $pages = Invoke-Gh @('api', '--paginate', '--slurp', "repos/$ProducerRepository/actions/runs/$RunId/jobs?per_page=100") | ConvertFrom-Json
+    $pages = Invoke-Gh -Arguments @('api', '--paginate', '--slurp', "repos/$ProducerRepository/actions/runs/$RunId/jobs?per_page=100") | ConvertFrom-Json
     $jobs = @($pages | ForEach-Object { $_.jobs })
     Assert-WssMacOSProducerJobs $jobs
 }
@@ -105,7 +104,9 @@ $provenance = [ordered]@{
     commit = $ExpectedCommit.ToLowerInvariant(); release_tag = $ReleaseTag
     archive = $ArchiveName; sha256 = $ExpectedSha256.ToLowerInvariant()
 }
-$provenance | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutputRoot 'candidate.json')
+$provenance | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutputRoot 'selection.json')
+& node (Join-Path $PSScriptRoot 'wss-ci/normalize-candidate.mjs') (Join-Path $OutputRoot 'selection.json') (Join-Path $OutputRoot 'candidate.json')
+if ($LASTEXITCODE -ne 0) { throw 'Shared candidate normalization failed.' }
 if ($env:GITHUB_ENV) {
     "WSS_ARTIFACT_DIR=$root" >> $env:GITHUB_ENV
     "WSS_BLE_ARTIFACT_DIR=$root" >> $env:GITHUB_ENV

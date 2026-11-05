@@ -408,7 +408,7 @@ jobs:
           New-Item -ItemType Directory -Path 'lib' | Out-Null
           Copy-Item -Path (Join-Path $env:RUNNER_TEMP 'desired-lib/*') -Destination 'lib' -Recurse
 
-      - name: Validate and commit the lib-only diff
+      - name: Validate and stage the lib-only diff
         if: steps.existing.outputs.branch_exists == 'false'
         id: commit
         shell: pwsh
@@ -461,31 +461,11 @@ jobs:
           Assert-WssLib 'lib' "$env:RUNNER_TEMP/wss-release/extracted/WSS-Universal" $approval
           & git diff --cached --stat
 
-          & git config user.name 'wss-promotion[bot]'
-          & git config user.email 'wss-promotion[bot]@users.noreply.github.com'
-          & git commit `
-            -m "Promote WSS run $env:CANDIDATE_ID" `
-            -m "Correlation-ID: $env:CORRELATION_ID"
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Failed to commit the promoted lib.'
-          }
           'no_change=false' >> $env:GITHUB_OUTPUT
 
-      - name: Push automation branch
-        if: steps.existing.outputs.branch_exists == 'false' && steps.commit.outputs.no_change == 'false'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ steps.evidence-token.outputs.token }}
-          BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
-        run: |
-          . ./.github/scripts/WssAutomatic.ps1
-          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
-          Assert-WssCandidateNotOlder $approval.candidate '${{ steps.source.outputs.sha }}'
-          & git -c push.followTags=false push --no-follow-tags origin "HEAD:refs/heads/$($env:BRANCH_NAME)"
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Failed to push the automation branch without force.'
-          }
-
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Open promotion pull request
         if: >-
           steps.existing.outputs.pr_number == '' &&
@@ -494,6 +474,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.integration-token.outputs.token }}
           WSS_READ_TOKEN: ${{ steps.evidence-token.outputs.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          EXISTING_BRANCH: ${{ steps.existing.outputs.branch_exists }}
           BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
           CANDIDATE_ID: ${{ steps.inputs.outputs.candidate_id }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
@@ -527,13 +509,13 @@ jobs:
             'This workflow does not merge the PR.'
           ) | Set-Content -LiteralPath $bodyPath
 
-          $url = & gh pr create `
-            --repo cwru-non-academic/CSharp_WSS_Integration_Lib `
-            --base dev `
-            --head $env:BRANCH_NAME `
-            --title "Promote universal WSS run $($env:CANDIDATE_ID)" `
-            --body-file $bodyPath
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Failed to create the Integration promotion PR.'
-          }
-          "Created promotion PR: $url" >> $env:GITHUB_STEP_SUMMARY
+          $root=if($env:EXISTING_BRANCH -ceq 'true'){'existing-promotion'}else{'.'}
+          $descriptor=@{target_id='csharp-wrapper';repository_root=[IO.Path]::GetFullPath($root);source_sha=$env:SOURCE_SHA;candidate=$approval.candidate;branch=$env:BRANCH_NAME;allowed_paths=@();markers=@('<!-- wss-promotion:v2 -->',(Get-WssApprovalMarker $approval),"<!-- correlation-id:$($env:CORRELATION_ID) -->");gitlinks=@{};parent_heads=@{};precommitted=($env:EXISTING_BRANCH -ceq 'true');body_path=$bodyPath;title="Promote universal WSS run $($env:CANDIDATE_ID)";commit_message="Promote WSS run $env:CANDIDATE_ID`n`nCorrelation-ID: $env:CORRELATION_ID"}
+          $descriptorPath=Join-Path $env:RUNNER_TEMP 'publication.json'
+          $descriptor|ConvertTo-Json -Depth 12|Set-Content -LiteralPath $descriptorPath
+          $env:WSS_PUSH_TOKEN=$writeToken
+          $env:GH_TOKEN=$env:WSS_READ_TOKEN
+          try {
+            & node ./.github/scripts/wss-ci/promotion.mjs $descriptorPath
+            if($LASTEXITCODE -ne 0){throw 'Common promotion publication failed or is uncertain; inspect before retry.'}
+          } finally {$env:GH_TOKEN=$writeToken; $env:WSS_PUSH_TOKEN=$null}

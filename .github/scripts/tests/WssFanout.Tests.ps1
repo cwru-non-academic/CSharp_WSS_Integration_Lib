@@ -47,7 +47,7 @@ try {
     if ($request.ref -cne 'dev' -or $request.inputs.integration_sha -cne $sha -or $script:posts -ne 0) { throw 'Read-only preparation changed the dispatch target or wrote remotely.' }
     Reject { Send-WssCliDispatch $requestPath '' 'write-fixture' } 'Separate read*'
     Reject { Send-WssCliDispatch $requestPath 'read-fixture' '' } 'Separate read*'
-    Reject { Send-WssCliDispatch $requestPath 'read-fixture' 'write-fixture' } 'Durable current CLI dispatch intent required*'
+    Reject { Send-WssCliDispatch $requestPath 'read-fixture' 'write-fixture' } 'Common application dispatch proof failed*'
     $script:intents=@($currentIntent)
     Send-WssCliDispatch $requestPath 'read-fixture' 'write-fixture'
     if ($script:posts -ne 1 -or $env:GH_TOKEN -cne 'original-fixture') { throw 'Expected exactly one POST and restored read environment.' }
@@ -58,27 +58,27 @@ try {
     foreach ($field in @('head_sha','head_branch','path','event','display_title','repository','head_repository')) {
         $before=$script:priorRun[$field]
         $script:priorRun[$field]=if ($field -cin @('repository','head_repository')) { @{full_name='other/repo'} } else { 'wrong' }
-        Reject { Get-WssCliDispatchReuse $approval $sha $correlation } 'Prior CLI dispatch identity mismatch*'
+        Reject { Get-WssCliDispatchReuse $approval $sha $correlation } 'Common application dispatch proof failed*'
         $script:priorRun[$field]=$before
     }
     $script:priorRun.conclusion='failure'
-    Reject { Send-WssCliDispatch $requestPath 'read-fixture' 'write-fixture' } 'Prior CLI dispatch failed or remains uncertain*'
+    Reject { Send-WssCliDispatch $requestPath 'read-fixture' 'write-fixture' } 'Common application dispatch proof failed*'
     $script:priorRun.conclusion='success'; $script:priorRun.status='in_progress'
-    Reject { Get-WssCliDispatchReuse $approval $sha $correlation } 'Prior CLI dispatch failed or remains uncertain*'
+    Reject { Get-WssCliDispatchReuse $approval $sha $correlation } 'Common application dispatch proof failed*'
     $script:priorRun.status='completed'; $script:runs+= $script:runs[0]
-    Reject { Get-WssCliDispatchReuse $approval $sha $correlation } 'Ambiguous prior CLI dispatch*'
+    Reject { Get-WssCliDispatchReuse $approval $sha $correlation } 'Common application dispatch proof failed*'
     $script:runs=@()
 
     $env:GITHUB_RUN_ATTEMPT='2'
-    Reject { Send-WssCliDispatch $requestPath 'read-fixture' 'write-fixture' } 'Dispatch recovery requires inspection*'
+    Reject { Send-WssCliDispatch $requestPath 'read-fixture' 'write-fixture' } 'Common application dispatch proof failed*'
     $env:GITHUB_RUN_ATTEMPT='1'
     foreach ($mutation in @({param($a)$a.workflow_run.id=98},{param($a)$a.expired=$true},{param($a)$a.workflow_run.head_sha='e'*40})) {
         $bad=$currentIntent | ConvertTo-Json -Depth 5 | ConvertFrom-Json
         & $mutation $bad; $script:intents=@($bad)
-        Reject { Send-WssCliDispatch $requestPath 'read-fixture' 'write-fixture' } 'Prior or uncertain CLI dispatch intent exists*'
+        Reject { Send-WssCliDispatch $requestPath 'read-fixture' 'write-fixture' } 'Common application dispatch proof failed*'
     }
     $script:intents=@($currentIntent,$currentIntent)
-    Reject { Send-WssCliDispatch $requestPath 'read-fixture' 'write-fixture' } 'Prior or uncertain CLI dispatch intent exists*'
+    Reject { Send-WssCliDispatch $requestPath 'read-fixture' 'write-fixture' } 'Common application dispatch proof failed*'
     $script:intents=@($currentIntent); $script:wrapperHead='e'*40
     Reject { Send-WssCliDispatch $requestPath 'read-fixture' 'write-fixture' } 'Fanout source moved:*'
     $script:wrapperHead=$sha; $script:moveOnIntent=$true
@@ -99,3 +99,5 @@ try {
     foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key,$saved[$key]) }
     Remove-Item -LiteralPath $temp -Recurse -Force
 }
+
+$global:LASTEXITCODE=0 # Expected common recovery rejection fixtures completed.

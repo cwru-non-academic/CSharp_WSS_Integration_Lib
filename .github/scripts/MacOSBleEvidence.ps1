@@ -1,3 +1,4 @@
+. "$PSScriptRoot/wss-ci/Evidence.ps1"
 Set-StrictMode -Version Latest
 function Initialize-WssMacOSEvidence([string]$Architecture,[string]$Context,[string]$Directory) {
     if ($Architecture -cnotin @('arm64','x64') -or !$IsMacOS) { throw 'Native macOS Intel/Apple Silicon execution required.' }
@@ -72,11 +73,13 @@ function Finalize-WssMacOSEvidence([string]$Architecture,[string]$Context,[strin
 }
 function Assert-WssMacOSGate($Records,[string]$Context,[string]$WorkerResult,[string]$RunId,[string]$Attempt,[string]$SourceSha) {
     $problems=[Collections.Generic.List[string]]::new()
+    Assert-WssCiArchitecturePair $Records @('x64','arm64')
     foreach ($arch in @('x64','arm64')) {
         $matching=@($Records | Where-Object architecture -CEQ $arch)
         if ($matching.Count -ne 1) { $problems.Add("$arch : missing or duplicate architecture evidence"); continue }
         $r=$matching[0]
-        if ($r.schema -cne 'wss-macos-ble-consumer/v1' -or $r.context -cne $Context -or $r.run_id -cne $RunId -or $r.attempt -cne $Attempt -or $r.source_sha -cne $SourceSha -or
+        Assert-WssCiEvidenceFields $r @{schema='wss-macos-ble-consumer/v1';context=$Context;run_id=$RunId;attempt=$Attempt;source_sha=$SourceSha}
+        if (
             !$r.passed -or $r.job_result -cne 'success' -or $r.hardware_ble -cne 'not-executed' -or $r.synthetic_fixture -or
             $r.coverage -cnotin @('packaged-native-abi-load','legacy-unsupported-asserted') -or !$r.host -or $r.host.rosetta -or
             $r.integration_sha -cnotmatch '^[0-9a-f]{40}$' -or
@@ -84,7 +87,7 @@ function Assert-WssMacOSGate($Records,[string]$Context,[string]$WorkerResult,[st
             ($r.coverage -ceq 'legacy-unsupported-asserted' -and $r.test_outcome -cne 'Passed' -and !$r.cli_legacy_asserted) -or
             $r.host.architecture -cne $arch -or $r.host.runner_arch -cne $arch -or $r.host.process_arch -cne $arch -or $r.host.os_arch -cne $arch -or $r.host.dotnet_host_arch -cne $arch) { $problems.Add("$arch : $($r.reason)") }
     }
-    if (@($Records).Count -ne 2) { $problems.Add('Require exactly Intel x64 and Apple Silicon arm64, with no extra records.') }
+
     $testedSources=@($Records | Where-Object passed | ForEach-Object integration_sha | Select-Object -Unique)
     if ($testedSources.Count -ne 1) { $problems.Add('Architectures did not verify the same Integration revision.') }
     if ($WorkerResult -cne 'success') { $problems.Add("Architecture worker group result: $WorkerResult") }
