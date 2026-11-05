@@ -2,8 +2,8 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "8caa238c7ccfb7825695e1b8fb69602519935442",
-  "source_ref": "refs/heads/ci/tooling/8caa238c7ccfb7825695e1b8fb69602519935442",
+  "source_commit": "a299a02bc7d82e9598785cee9994101f9c87f903",
+  "source_ref": "refs/heads/ci/tooling/a299a02bc7d82e9598785cee9994101f9c87f903",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
@@ -126,7 +126,7 @@
     ".github/workflows/shared-ci.yml": {
       "origin": "core",
       "source": "tools/ci/shared/shared-ci.yml",
-      "sha256": "f260148903fbee70411e991e1a221ad831345ed7e69e0f47c5264d639f1af966"
+      "sha256": "a906d0fbb613c5dd2ab17a0af99752e9e47a70a8d0ba4fdcd38e6093de8cb22e"
     },
     ".github/scripts/wss-ci/notify-family.mjs": {
       "origin": "integration",
