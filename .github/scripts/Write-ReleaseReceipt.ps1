@@ -10,17 +10,17 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-function Gh([string[]] $Arguments) {
+function Invoke-ReceiptGh([string[]] $Arguments) {
     $result = & gh @Arguments
     if ($LASTEXITCODE -ne 0) { throw "GitHub evidence request failed: $($Arguments[0])" }
     $result
 }
-function Api([string] $Path) { Gh @('api',$Path) | ConvertFrom-Json }
+function Api([string] $Path) { Invoke-ReceiptGh -Arguments @('api',$Path) | ConvertFrom-Json }
 function Pages([string] $Path, [string] $Key = '') {
-    $pages = Gh @('api','--paginate','--slurp',$Path) | ConvertFrom-Json
+    $pages = Invoke-ReceiptGh -Arguments @('api','--paginate','--slurp',$Path) | ConvertFrom-Json
     if ($Key) { @($pages | ForEach-Object { $_.$Key }) } else { @($pages | ForEach-Object { $_ }) }
 }
-function Git([string] $Root,[string[]] $Arguments) {
+function Invoke-ReceiptGit([string] $Root,[string[]] $Arguments) {
     $result = & git -C $Root @Arguments
     if ($LASTEXITCODE -ne 0) { throw 'Git evidence request failed.' }
     $result
@@ -28,23 +28,23 @@ function Git([string] $Root,[string[]] $Arguments) {
 function Assert-WssReceiptTooling($Plan, [string] $TargetId, $Target, [string] $ToolsRoot, [string] $ValidatorRoot, [string] $AcceptedRoot, [string] $IntegrationRoot) {
     # The frozen target describes accepted dev, including its branch-specific CI.
     foreach ($path in $Target.trusted_paths) {
-        if ((Git $AcceptedRoot @('rev-parse',"HEAD:$path")) -cne $Plan.target_snapshots.$TargetId.trusted.$path) { throw "Accepted receiver tooling differs: $path" }
+        if ((Invoke-ReceiptGit $AcceptedRoot -Arguments @('rev-parse',"HEAD:$path")) -cne $Plan.target_snapshots.$TargetId.trusted.$path) { throw "Accepted receiver tooling differs: $path" }
     }
     # Main executes only these receiver files. Compare them individually so
     # unrelated branch-specific scripts and normal CI need not be identical.
     foreach ($path in @('.github/workflows/release-receipt.yml', '.github/scripts/Write-ReleaseReceipt.ps1', '.github/scripts/WssReleaseReceipt.ps1')) {
-        if ((Git $ToolsRoot @('rev-parse',"HEAD:$path")) -cne (Git $AcceptedRoot @('rev-parse',"HEAD:$path"))) { throw "Trusted main receipt tooling differs: $path" }
+        if ((Invoke-ReceiptGit $ToolsRoot -Arguments @('rev-parse',"HEAD:$path")) -cne (Invoke-ReceiptGit $AcceptedRoot -Arguments @('rev-parse',"HEAD:$path"))) { throw "Trusted main receipt tooling differs: $path" }
     }
     $wrapperRoot = if ($TargetId -ceq 'csharp-wrapper') { $AcceptedRoot } else { $IntegrationRoot }
-    if ((Git $wrapperRoot @('rev-parse','HEAD:.github/scripts')) -cne $Plan.target_snapshots.'csharp-wrapper'.trusted.'.github/scripts') { throw 'Accepted wrapper validators differ from frozen code.' }
+    if ((Invoke-ReceiptGit $wrapperRoot -Arguments @('rev-parse','HEAD:.github/scripts')) -cne $Plan.target_snapshots.'csharp-wrapper'.trusted.'.github/scripts') { throw 'Accepted wrapper validators differ from frozen code.' }
     foreach ($path in @('.github/scripts/WssPromotion.ps1', '.github/scripts/Universal-WssFiles.ps1', '.github/scripts/Resolve-WssRelease.ps1')) {
-        if ((Git $ValidatorRoot @('rev-parse',"HEAD:$path")) -cne (Git $wrapperRoot @('rev-parse',"HEAD:$path"))) { throw "Shared C# validator differs from frozen code: $path" }
+        if ((Invoke-ReceiptGit $ValidatorRoot -Arguments @('rev-parse',"HEAD:$path")) -cne (Invoke-ReceiptGit $wrapperRoot -Arguments @('rev-parse',"HEAD:$path"))) { throw "Shared C# validator differs from frozen code: $path" }
     }
 }
 function Download([string] $Repository,[string] $Run,[string] $Name,[string] $Directory,[string] $File) {
     $a = @(Pages "repos/$Repository/actions/runs/$Run/artifacts?per_page=100" 'artifacts' | Where-Object name -CEQ $Name)
     if ($a.Count -ne 1 -or $a[0].expired -or [string]$a[0].workflow_run.id -cne $Run) { throw 'Missing/ambiguous/expired evidence artifact.' }
-    $null = Gh @('run','download',$Run,'--repo',$Repository,'--name',$Name,'--dir',$Directory)
+    $null = Invoke-ReceiptGh -Arguments @('run','download',$Run,'--repo',$Repository,'--name',$Name,'--dir',$Directory)
     $files = @(Get-ChildItem -LiteralPath $Directory -Force)
     if ($files.Count -ne 1 -or $files[0].PSIsContainer -or $files[0].Name -cne $File) { throw 'Unexpected evidence artifact inventory.' }
     Get-Content -LiteralPath (Join-Path $Directory $File) -Raw | ConvertFrom-Json
@@ -81,7 +81,7 @@ Assert-WssReceiptTooling $plan $TargetId $target $ToolsRoot $ValidatorRoot $Acce
 . (Join-Path $ValidatorRoot '.github/scripts/WssPromotion.ps1')
 . (Join-Path $ToolsRoot '.github/scripts/WssReleaseReceipt.ps1')
 Assert-WssReceiptPolicy $TargetId $target
-$acceptedSha = Git $AcceptedRoot @('rev-parse','HEAD')
+$acceptedSha = Invoke-ReceiptGit $AcceptedRoot -Arguments @('rev-parse','HEAD')
 $current = Api "repos/$repository/git/ref/heads/dev"
 if ($acceptedSha -cne $current.object.sha -or $acceptedSha -cne $env:GITHUB_SHA) { throw 'Accepted checkout/emitter/current dev differ.' }
 $pr = MergedPr $repository $acceptedSha
@@ -96,8 +96,8 @@ if ($TargetId -ceq 'csharp-wrapper') {
     $null = Assert-WssMergedIntegration $acceptedSha ([string]$pr.number) $approval
 } else {
     if ($files.Count -ne 1 -or $files[0].filename -cne 'SubModules/HFI_WSS_Csharp_Implementation') { throw 'CLI PR must change only the reviewed wrapper gitlink.' }
-    $integrationSha = Git $IntegrationRoot @('rev-parse','HEAD')
-    $pin = Git $AcceptedRoot @('rev-parse','HEAD:SubModules/HFI_WSS_Csharp_Implementation')
+    $integrationSha = Invoke-ReceiptGit $IntegrationRoot -Arguments @('rev-parse','HEAD')
+    $pin = Invoke-ReceiptGit $AcceptedRoot -Arguments @('rev-parse','HEAD:SubModules/HFI_WSS_Csharp_Implementation')
     if ($pin -cne $integrationSha -or $pr.head.ref -cne "automation/integration-$integrationSha") { throw 'CLI pin differs from actual current wrapper.' }
     $integrationPr = MergedPr $wrapper $integrationSha
     $null = Assert-WssMergedIntegration $integrationSha ([string]$integrationPr.number) $approval
