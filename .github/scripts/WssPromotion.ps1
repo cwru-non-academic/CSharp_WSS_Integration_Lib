@@ -1,9 +1,8 @@
 Set-StrictMode -Version Latest
 
-function Invoke-WssGh([string[]] $Arguments) {
-    $result = & gh @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "GitHub operation failed ($LASTEXITCODE): $($Arguments -join ' ')" }
-    $result
+function Invoke-WssGh([string[]]$Arguments) {
+    . "$PSScriptRoot/wss-ci/Process.ps1"
+    Invoke-WssCiProcess -Executable gh -Arguments $Arguments -FailureMessage 'GitHub operation failed'
 }
 
 function Read-WssApproval([string] $Path) {
@@ -97,17 +96,17 @@ function Assert-WssApproval($Approval, [string] $EvidenceRoot, [string] $Bootstr
     if (Test-Path -LiteralPath $EvidenceRoot) { throw 'EvidenceRoot must be new.' }
     New-Item -ItemType Directory -Path $EvidenceRoot | Out-Null
     $c = $Approval.candidate
-    $producer = Invoke-WssGh @('api', "repos/$($c.repository)/actions/runs/$($c.run_id)") | ConvertFrom-Json
+    $producer = Invoke-WssGh -Arguments @('api', "repos/$($c.repository)/actions/runs/$($c.run_id)") | ConvertFrom-Json
     if ($producer.repository.full_name -cne $c.repository -or $producer.path -cne '.github/workflows/artifacts.yml' -or
         $producer.head_sha -cne $c.commit -or $producer.status -cne 'completed' -or $producer.conclusion -cne 'success' -or
         $producer.event -notin @('workflow_dispatch', 'push')) { throw 'Producer approval is not a successful exact-commit authoritative run.' }
-    $artifact = Invoke-WssGh @('api', "repos/$($c.repository)/actions/artifacts/$($c.artifact_id)") | ConvertFrom-Json
+    $artifact = Invoke-WssGh -Arguments @('api', "repos/$($c.repository)/actions/artifacts/$($c.artifact_id)") | ConvertFrom-Json
     if ($artifact.name -cne 'universal-release-assets' -or $artifact.expired -or
         [string]$artifact.workflow_run.id -cne $c.run_id -or $artifact.workflow_run.head_sha -cne $c.commit) { throw 'Artifact ID is not the approved producer artifact.' }
     foreach ($consumer in @('integration', 'cli')) {
         $repo = if ($consumer -ceq 'integration') { 'cwru-non-academic/CSharp_WSS_Integration_Lib' } else { 'cwru-non-academic/CLI_CSharp_WSS_Application' }
         $expected = $Approval.$consumer
-        $run = Invoke-WssGh @('api', "repos/$repo/actions/runs/$($expected.preflight_run_id)") | ConvertFrom-Json
+        $run = Invoke-WssGh -Arguments @('api', "repos/$repo/actions/runs/$($expected.preflight_run_id)") | ConvertFrom-Json
         if ($run.repository.full_name -cne $repo -or $run.path -cne '.github/workflows/wss-preflight.yml' -or
             $run.event -cne 'workflow_dispatch' -or $run.head_sha -cne $expected.source_sha -or
             $run.status -cne 'completed' -or $run.conclusion -cne 'success') { throw "Invalid $consumer preflight approval." }
@@ -115,25 +114,25 @@ function Assert-WssApproval($Approval, [string] $EvidenceRoot, [string] $Bootstr
         if ($BootstrapEvidenceRoot) {
             $record = Read-WssBootstrapProof $BootstrapEvidenceRoot $consumer $Approval $destination
         } else {
-            Invoke-WssGh @('run', 'download', [string]$expected.preflight_run_id, '--repo', $repo, '--name', 'wss-candidate-provenance', '--dir', $destination)
+            Invoke-WssGh -Arguments @('run', 'download', [string]$expected.preflight_run_id, '--repo', $repo, '--name', 'wss-candidate-provenance', '--dir', $destination)
             $record = Get-Content -LiteralPath (Join-Path $destination 'candidate.json') -Raw | ConvertFrom-Json
         }
         Assert-WssCandidateRecord $record $Approval
         if ($RequireCanonicalDev) {
-            $jobPages = Invoke-WssGh @('api','--paginate','--slurp',"repos/$repo/actions/runs/$($run.id)/attempts/$($run.run_attempt)/jobs?per_page=100") | ConvertFrom-Json
+            $jobPages = Invoke-WssGh -Arguments @('api','--paginate','--slurp',"repos/$repo/actions/runs/$($run.id)/attempts/$($run.run_attempt)/jobs?per_page=100") | ConvertFrom-Json
             $preflightJobs = @($jobPages | ForEach-Object { $_.jobs })
             Assert-WssCanonicalPreflight $run $consumer $expected.source_sha $preflightJobs
-            $currentRun = Invoke-WssGh @('api',"repos/$repo/actions/runs/$($run.id)") | ConvertFrom-Json
+            $currentRun = Invoke-WssGh -Arguments @('api',"repos/$repo/actions/runs/$($run.id)") | ConvertFrom-Json
             if ($currentRun.id -ne $run.id -or $currentRun.run_attempt -ne $run.run_attempt) { throw 'Preflight run attempt changed during validation.' }
             Assert-WssCanonicalPreflight $currentRun $consumer $expected.source_sha $preflightJobs
         }
     }
     # Existing preflight provenance records contain the candidate, not the selected
     # Integration SHA. Bind it using the successful checkout-verification job's log.
-    $pages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/cwru-non-academic/CLI_CSharp_WSS_Application/actions/runs/$($Approval.cli.preflight_run_id)/jobs?per_page=100") | ConvertFrom-Json
+    $pages = Invoke-WssGh -Arguments @('api', '--paginate', '--slurp', "repos/cwru-non-academic/CLI_CSharp_WSS_Application/actions/runs/$($Approval.cli.preflight_run_id)/jobs?per_page=100") | ConvertFrom-Json
     $jobs = @($pages | ForEach-Object { $_.jobs } | Where-Object { $_.name -ceq 'CLI general conformance' -and $_.conclusion -ceq 'success' })
     if ($jobs.Count -ne 1) { throw 'Missing unique successful CLI source-verification job.' }
-    $logs = (Invoke-WssGh @('run', 'view', [string]$Approval.cli.preflight_run_id, '--repo', 'cwru-non-academic/CLI_CSharp_WSS_Application', '--job', [string]$jobs[0].id, '--log')) -join "`n"
+    $logs = (Invoke-WssGh -Arguments @('run', 'view', [string]$Approval.cli.preflight_run_id, '--repo', 'cwru-non-academic/CLI_CSharp_WSS_Application', '--job', [string]$jobs[0].id, '--log')) -join "`n"
     $shas = [Regex]::Matches($logs, 'EXPECTED_INTEGRATION_SHA: ([0-9a-f]{40})')
     if ($shas.Count -eq 0 -or @($shas | Where-Object { $_.Groups[1].Value -cne $Approval.integration.source_sha }).Count -ne 0) {
         throw 'CLI preflight did not verify the approved Integration source SHA.'
@@ -210,12 +209,12 @@ function Assert-WssSource([string] $Worktree, [string] $SourceSha, [ValidateSet(
 function Assert-WssMergedIntegration([string] $Sha, [string] $PrNumber, $Approval) {
     if ($Sha -cnotmatch '^[0-9a-f]{40}$' -or $PrNumber -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid Integration merge SHA/PR.' }
     $repo = 'cwru-non-academic/CSharp_WSS_Integration_Lib'
-    $pr = Invoke-WssGh @('api', "repos/$repo/pulls/$PrNumber") | ConvertFrom-Json
+    $pr = Invoke-WssGh -Arguments @('api', "repos/$repo/pulls/$PrNumber") | ConvertFrom-Json
     if (-not $pr.merged -or $pr.base.ref -cne 'dev' -or $pr.base.repo.full_name -cne $repo -or
         $pr.head.repo.full_name -cne $repo -or $pr.merge_commit_sha -cne $Sha) { throw 'Gitlink must target the actual merged Integration dev PR commit.' }
-    $compare = Invoke-WssGh @('api', "repos/$repo/compare/${Sha}...dev") | ConvertFrom-Json
+    $compare = Invoke-WssGh -Arguments @('api', "repos/$repo/compare/${Sha}...dev") | ConvertFrom-Json
     if ($compare.status -notin @('ahead', 'identical')) { throw 'Integration merge is not contained in dev.' }
-    $pages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/$repo/actions/workflows/wss-compatibility.yml/runs?event=pull_request&head_sha=$($pr.head.sha)&per_page=100") | ConvertFrom-Json
+    $pages = Invoke-WssGh -Arguments @('api', '--paginate', '--slurp', "repos/$repo/actions/workflows/wss-compatibility.yml/runs?event=pull_request&head_sha=$($pr.head.sha)&per_page=100") | ConvertFrom-Json
     # GitHub can return empty pull_requests after merge. Bind evidence to the exact
     # canonical PR head, branch, event and workflow; reject conflicting associations.
     $allRuns = @($pages | ForEach-Object { $_.workflow_runs } | Where-Object {
@@ -229,13 +228,13 @@ function Assert-WssMergedIntegration([string] $Sha, [string] $PrNumber, $Approva
     if ($allRuns.Count -eq 0 -or $allRuns[0].status -cne 'completed' -or $allRuns[0].conclusion -cne 'success') {
         throw 'Merged Integration PR lacks successful latest normal committed-state CI at its final head.'
     }
-    $jobPages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/$repo/actions/runs/$($allRuns[0].id)/jobs?per_page=100") | ConvertFrom-Json
+    $jobPages = Invoke-WssGh -Arguments @('api', '--paginate', '--slurp', "repos/$repo/actions/runs/$($allRuns[0].id)/jobs?per_page=100") | ConvertFrom-Json
     $jobs = @($jobPages | ForEach-Object { $_.jobs })
     foreach ($name in @('Integration behavioral tests', 'Integration compatibility (Windows)', 'Integration compatibility (Ubuntu)', 'Integration compatibility (macOS)')) {
         $found = @($jobs | Where-Object { $_.name -ceq $name -and $_.conclusion -ceq 'success' })
         if ($found.Count -ne 1) { throw "Required normal Integration CI job did not succeed: $name" }
     }
-    $content = Invoke-WssGh @('api', "repos/$repo/contents/lib/wss-candidate.json?ref=$Sha") | ConvertFrom-Json
+    $content = Invoke-WssGh -Arguments @('api', "repos/$repo/contents/lib/wss-candidate.json?ref=$Sha") | ConvertFrom-Json
     $recordPath = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName())
     try {
         [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($content.content)) | Set-Content -LiteralPath $recordPath

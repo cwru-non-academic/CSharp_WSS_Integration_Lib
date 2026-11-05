@@ -41,6 +41,9 @@ jobs:
     name: Resolve preflight inputs
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - uses: actions/checkout@v4
       - name: Create producer read token
         id: core-token

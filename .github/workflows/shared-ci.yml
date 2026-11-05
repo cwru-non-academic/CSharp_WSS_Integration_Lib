@@ -1,0 +1,37 @@
+name: Shared CI implementation
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+permissions:
+  contents: read
+jobs:
+  identical:
+    name: Shared CI source identity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Read exact canonical source revision
+        id: lock
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const l=JSON.parse(fs.readFileSync(".github/scripts/wss-ci.lock.json","utf8"));
+            if(l.source_repository!=="cwru-non-academic/WSSCore" || !/^[a-f0-9]{40}$/.test(l.source_commit) || l.source_ref!==`refs/heads/ci/tooling/${l.source_commit}`) throw Error("Invalid shared CI source");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT,`commit=${l.source_commit}\n`);
+          '
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: ${{ steps.lock.outputs.commit }}
+          path: .wss-core
+          persist-credentials: false
+      - name: Reject common implementation drift
+        env:
+          TARGET_REPOSITORY: ${{ github.event.repository.name }}
+        run: node .wss-core/tools/ci/sync-tooling.mjs check "$TARGET_REPOSITORY" "$GITHUB_WORKSPACE"

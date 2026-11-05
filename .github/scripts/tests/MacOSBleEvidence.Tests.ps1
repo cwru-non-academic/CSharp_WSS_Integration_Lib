@@ -3,7 +3,7 @@ Set-StrictMode -Version Latest
 . "$PSScriptRoot/../MacOSBleEvidence.ps1"
 $count=0
 function Record([string]$Arch) {
-    [pscustomobject]@{schema='wss-macos-ble-consumer/v1';architecture=$Arch;context='fixture';run_id='123';attempt='1';source_sha=('a'*40);integration_sha=('b'*40);passed=$true;job_result='success';coverage='packaged-native-abi-load';test_outcome='Passed';cli_legacy_asserted=$false;hardware_ble='not-executed';synthetic_fixture=$false;reason='metadata-only regression fixture';host=@{architecture=$Arch;runner_arch=$Arch;process_arch=$Arch;os_arch=$Arch;dotnet_host_arch=$Arch;rosetta=$false}}
+    [pscustomobject]@{schema='wss-macos-ble-consumer/v1';ci=(New-WssCiEvidenceIdentity $env:GITHUB_REPOSITORY '123' '1' ('a'*40) $Arch);architecture=$Arch;context='fixture';run_id='123';attempt='1';source_sha=('a'*40);integration_sha=('b'*40);passed=$true;job_result='success';coverage='packaged-native-abi-load';test_outcome='Passed';cli_legacy_asserted=$false;hardware_ble='not-executed';synthetic_fixture=$false;reason='metadata-only regression fixture';host=@{architecture=$Arch;runner_arch=$Arch;process_arch=$Arch;os_arch=$Arch;dotnet_host_arch=$Arch;rosetta=$false}}
 }
 function Reject([scriptblock]$Action,[string]$Expected) {
     $failed=$false
@@ -22,7 +22,7 @@ Reject { Assert-WssMacOSGate @($valid[0]) 'fixture' 'success' '123' '1' ('a'*40)
 Reject { Assert-WssMacOSGate @($valid[0],$valid[0]) 'fixture' 'success' '123' '1' ('a'*40) } '*x64*'
 foreach ($mutate in @(
     {param($r)$r.context='another-workflow'}, {param($r)$r.run_id='124'}, {param($r)$r.attempt='2'},
-    {param($r)$r.source_sha='b'*40}, {param($r)$r.host.process_arch='x64'}, {param($r)$r.host.dotnet_host_arch='x64'},
+    {param($r)$r.source_sha='b'*40}, {param($r)$r.ci.attempt='2'}, {param($r)$r.host.process_arch='x64'}, {param($r)$r.host.dotnet_host_arch='x64'},
     {param($r)$r.host.rosetta=$true}, {param($r)$r.synthetic_fixture=$true}, {param($r)$r.hardware_ble='executed'},
     {param($r)$r.coverage='synthetic-fixture'}, {param($r)$r.test_outcome='NotExecuted'}, {param($r)$r.job_result='cancelled'}
 )) {

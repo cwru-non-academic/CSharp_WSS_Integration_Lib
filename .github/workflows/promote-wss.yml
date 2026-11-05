@@ -39,6 +39,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Validate trusted handoff inputs before credentials
         shell: pwsh
         env:
@@ -117,20 +120,17 @@ jobs:
           $ErrorActionPreference = 'Stop'
           . ./.github/scripts/WssAutomatic.ps1
           $repo = 'cwru-non-academic/WSSCore'
-          $run = Invoke-WssGh @('api', "repos/$repo/actions/runs/$env:RUN_ID") | ConvertFrom-Json
+          $run = Invoke-WssGh -Arguments @('api', "repos/$repo/actions/runs/$env:RUN_ID") | ConvertFrom-Json
           Assert-WssAutomaticProducer $run $env:COMMIT
           # The producer's final gated job dispatched us; its entire run must now finish green.
           $run = Wait-WssExactRun $repo $env:RUN_ID $env:COMMIT 'artifacts.yml' 'push'
           Assert-WssAutomaticProducer $run $env:COMMIT
-          $compare = Invoke-WssGh @('api', "repos/$repo/compare/$env:COMMIT...dev") | ConvertFrom-Json
+          $compare = Invoke-WssGh -Arguments @('api', "repos/$repo/compare/$env:COMMIT...dev") | ConvertFrom-Json
           if ($compare.status -notin @('ahead', 'identical')) { throw 'Producer commit is not contained in WSSCore dev.' }
-          $pages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/$repo/actions/runs/$env:RUN_ID/jobs?per_page=100") | ConvertFrom-Json
+          $pages = Invoke-WssGh -Arguments @('api', '--paginate', '--slurp', "repos/$repo/actions/runs/$env:RUN_ID/attempts/$($run.run_attempt)/jobs?per_page=100") | ConvertFrom-Json
           $jobs = @($pages | ForEach-Object { $_.jobs })
-          foreach ($name in @('Core conformance', 'BLE consumer (Linux)', 'BLE consumer (Windows)', 'Build and validate artifacts',
-              'Serial consumer (Linux)', 'Serial consumer (Windows)', 'Serial consumer (macOS)',
-              'Core consumer (Linux)', 'Core consumer (Windows)', 'Core consumer (macOS)', 'Start routine downstream validation')) {
-            if (@($jobs | Where-Object { $_.name -ceq $name -and $_.conclusion -ceq 'success' }).Count -ne 1) { throw "Required producer job did not succeed: $name" }
-          }
+          . ./.github/scripts/wss-ci/Producer.ps1
+          Assert-WssCiProducerJobs $jobs 'macos-ble-v1'
           ./.github/scripts/Resolve-WssRelease.ps1 -RunId $env:RUN_ID -ExpectedCommit $env:COMMIT -ArchiveName WSS-Universal-ci.zip -ExpectedSha256 $env:SHA256 -OutputRoot "$env:RUNNER_TEMP/automatic-candidate"
           $candidate = Get-Content "$env:RUNNER_TEMP/automatic-candidate/candidate.json" -Raw | ConvertFrom-Json
           if ([string]$candidate.artifact_id -cne $env:ARTIFACT_ID) { throw 'Automatic producer artifact ID mismatch.' }
@@ -345,7 +345,7 @@ jobs:
                 [Regex]::Matches($pr.body, '<!-- wss-promotion:v2 -->').Count -ne 1 -or
                 [Regex]::Matches($pr.body, '(?m)^<!-- correlation-id:').Count -ne 1) { throw 'Existing PR has ambiguous or mismatched promotion metadata.' }
 
-            $pages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/$($env:PR_NUMBER)/files?per_page=100") | ConvertFrom-Json
+            $pages = Invoke-WssGh -Arguments @('api', '--paginate', '--slurp', "repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/$($env:PR_NUMBER)/files?per_page=100") | ConvertFrom-Json
             $files = @($pages | ForEach-Object { $_ })
             if ($files.Count -eq 0) {
               throw 'Existing promotion PR has no readable changed files.'
@@ -408,7 +408,7 @@ jobs:
           New-Item -ItemType Directory -Path 'lib' | Out-Null
           Copy-Item -Path (Join-Path $env:RUNNER_TEMP 'desired-lib/*') -Destination 'lib' -Recurse
 
-      - name: Validate and commit the lib-only diff
+      - name: Validate and stage the lib-only diff
         if: steps.existing.outputs.branch_exists == 'false'
         id: commit
         shell: pwsh
@@ -461,30 +461,7 @@ jobs:
           Assert-WssLib 'lib' "$env:RUNNER_TEMP/wss-release/extracted/WSS-Universal" $approval
           & git diff --cached --stat
 
-          & git config user.name 'wss-promotion[bot]'
-          & git config user.email 'wss-promotion[bot]@users.noreply.github.com'
-          & git commit `
-            -m "Promote WSS run $env:CANDIDATE_ID" `
-            -m "Correlation-ID: $env:CORRELATION_ID"
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Failed to commit the promoted lib.'
-          }
           'no_change=false' >> $env:GITHUB_OUTPUT
-
-      - name: Push automation branch
-        if: steps.existing.outputs.branch_exists == 'false' && steps.commit.outputs.no_change == 'false'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ steps.evidence-token.outputs.token }}
-          BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
-        run: |
-          . ./.github/scripts/WssAutomatic.ps1
-          $approval = Read-WssApproval "$env:RUNNER_TEMP/approval.json"
-          Assert-WssCandidateNotOlder $approval.candidate '${{ steps.source.outputs.sha }}'
-          & git -c push.followTags=false push --no-follow-tags origin "HEAD:refs/heads/$($env:BRANCH_NAME)"
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Failed to push the automation branch without force.'
-          }
 
       - name: Open promotion pull request
         if: >-
@@ -494,6 +471,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.integration-token.outputs.token }}
           WSS_READ_TOKEN: ${{ steps.evidence-token.outputs.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          EXISTING_BRANCH: ${{ steps.existing.outputs.branch_exists }}
           BRANCH_NAME: ${{ steps.inputs.outputs.branch }}
           CANDIDATE_ID: ${{ steps.inputs.outputs.candidate_id }}
           CORRELATION_ID: ${{ inputs.correlation_id }}
@@ -527,13 +506,14 @@ jobs:
             'This workflow does not merge the PR.'
           ) | Set-Content -LiteralPath $bodyPath
 
-          $url = & gh pr create `
-            --repo cwru-non-academic/CSharp_WSS_Integration_Lib `
-            --base dev `
-            --head $env:BRANCH_NAME `
-            --title "Promote universal WSS run $($env:CANDIDATE_ID)" `
-            --body-file $bodyPath
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Failed to create the Integration promotion PR.'
-          }
-          "Created promotion PR: $url" >> $env:GITHUB_STEP_SUMMARY
+          $root=if($env:EXISTING_BRANCH -ceq 'true'){'existing-promotion'}else{'.'}
+          $descriptor=@{target_id='csharp-wrapper';repository_root=[IO.Path]::GetFullPath($root);source_sha=$env:SOURCE_SHA;candidate=$approval.candidate;branch=$env:BRANCH_NAME;allowed_paths=@();markers=@('<!-- wss-promotion:v2 -->',(Get-WssApprovalMarker $approval),"<!-- correlation-id:$($env:CORRELATION_ID) -->");gitlinks=@{};parent_heads=@{};precommitted=($env:EXISTING_BRANCH -ceq 'true');body_path=$bodyPath;title="Promote universal WSS run $($env:CANDIDATE_ID)";commit_message="Promote WSS run $env:CANDIDATE_ID`n`nCorrelation-ID: $env:CORRELATION_ID"}
+          $descriptorPath=Join-Path $env:RUNNER_TEMP 'publication.json'
+          $descriptor|ConvertTo-Json -Depth 12|Set-Content -LiteralPath $descriptorPath
+          $env:WSS_PUSH_TOKEN=$writeToken
+          $env:GH_TOKEN=$env:WSS_READ_TOKEN
+          try {
+            Assert-WssCandidateNotOlder $approval.candidate $env:SOURCE_SHA
+            & node ./.github/scripts/wss-ci/promotion.mjs $descriptorPath
+            if($LASTEXITCODE -ne 0){throw 'Common promotion publication failed or is uncertain; inspect before retry.'}
+          } finally {$env:GH_TOKEN=$writeToken; $env:WSS_PUSH_TOKEN=$null}

@@ -83,11 +83,11 @@ if ($Repository -ceq 'Integration') {
 } else {
     $extra += @('.github/workflows/wss-preflight.yml', 'src/CLI_CSharp_WSS_Application.csproj', 'SubModules/HFI_WSS_Csharp_Implementation')
     if ($IntegrationPr -cnotmatch '^[1-9][0-9]*$') { throw 'CLI bootstrap requires the reviewed, merged Integration PR number.' }
-    $pr = Invoke-WssGh @('api', "repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/$IntegrationPr") | ConvertFrom-Json
+    $pr = Invoke-WssGh -Arguments @('api', "repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/$IntegrationPr") | ConvertFrom-Json
     $mergeSha = [string]$pr.merge_commit_sha
     $null = Assert-WssMergedIntegration $mergeSha $IntegrationPr $approval
     $merged = Join-Path $ScratchRoot 'merged-integration'
-    Invoke-WssGh @('repo', 'clone', 'cwru-non-academic/CSharp_WSS_Integration_Lib', $merged, '--', '--no-checkout')
+    Invoke-WssGh -Arguments @('repo', 'clone', 'cwru-non-academic/CSharp_WSS_Integration_Lib', $merged, '--', '--no-checkout')
     & git -C $merged checkout --detach $mergeSha
     if ($LASTEXITCODE -ne 0) { throw 'Cannot check out actual merged Integration SHA.' }
     Assert-WssSource $merged $approval.integration.source_sha
