@@ -183,93 +183,44 @@ try {
         $bad.$field = 'untrusted'
         Assert-Rejected { Assert-WssAutomaticProducer $bad $approval.candidate.commit } 'Automatic promotion requires*'
     }
-    $script:runs = @{}
-    $script:dispatches = @()
-    $script:apiFailure = $false
-    $script:dispatchRace = $false
-    $script:missingRun = $false
-    $script:duplicateRuns = $false
-    function Invoke-WssDispatch([string] $Repository, [string] $Body) {
-        $request = $Body | ConvertFrom-Json
-        $script:dispatches += $request
-        if ($script:missingRun) { return }
-        $sha = if ($Repository -like '*/CLI_*') { '4'*40 } else { '3'*40 }
-        if ($script:dispatchRace) { $sha = '5'*40 }
-        $script:runs[$Repository] = [pscustomobject]@{
-            id = $(if ($Repository -like '*/CLI_*') { '42' } else { '41' })
-            repository = @{full_name=$Repository}; head_repository=@{full_name=$Repository}; head_branch='dev'; path='.github/workflows/wss-preflight.yml'
-            head_sha=$sha; event='workflow_dispatch'; status='completed'; conclusion='success'
-            display_title="WSS preflight $($request.inputs.wss_run_id) / $($request.inputs.correlation_id)"
-        }
+    # Shared Node contracts own request serialization, ambiguity, source races,
+    # failed-run selection and uncertain POST behavior. Check this adapter's
+    # candidate/source binding without replacing or invoking the real network.
+    $script:adapterRequests=@();$script:adapterWaitFailure=$false
+    function Start-WssCiPreflight([string]$Repository,$Candidate,[string]$WrapperSha,[string]$CorrelationId,[int]$DiscoverySeconds,[string]$DispatchToken) {
+        $script:adapterRequests+=@{repository=$Repository;candidate=$Candidate;wrapper_sha=$WrapperSha;correlation=$CorrelationId;token=$DispatchToken}
+        $sha=if($Repository -like '*/CLI_*'){'4'*40}else{'3'*40}
+        [pscustomobject]@{id=$(if($Repository -like '*/CLI_*'){'42'}else{'41'});head_sha=$sha;status='completed';conclusion='success'}
     }
-    function Invoke-WssGh([string[]] $Arguments) {
-        if ($script:apiFailure) { throw 'Simulated GitHub permission/network failure.' }
-        $endpoint = $Arguments[-1]
-        foreach ($repo in @('cwru-non-academic/CSharp_WSS_Integration_Lib', 'cwru-non-academic/CLI_CSharp_WSS_Application')) {
-            if ($endpoint -like "repos/$repo/*") {
-                if ($endpoint -like '*/branches/dev') { return (@{commit=@{sha=$(if ($repo -like '*/CLI_*') { '4'*40 } else { '3'*40 })}} | ConvertTo-Json -Depth 3) }
-                if ($endpoint -like '*/workflows/wss-preflight.yml/runs?*') {
-                    $found = @($(if ($script:runs.ContainsKey($repo)) { $script:runs[$repo] }))
-                    if ($script:duplicateRuns) { $found += $found }
-                    return (ConvertTo-Json -InputObject @(@{workflow_runs=$found}) -Depth 6)
-                }
-                if ($endpoint -like '*/actions/runs/*') { return ($script:runs[$repo] | ConvertTo-Json -Depth 4) }
-            }
-        }
-        throw "Unexpected automatic API call: $endpoint"
+    function Wait-WssCiRun($Repository,$RunId,$SourceSha,$Workflow,$Event,$TimeoutSeconds) {
+        if($script:adapterWaitFailure){throw 'Shared fixture required run failed.'}
+        $expected=if($Repository -like '*/CLI_*'){'4'*40}else{'3'*40}
+        if($SourceSha -cne $expected -or $Workflow -cne 'wss-preflight.yml' -or $Event -cne 'workflow_dispatch'){throw 'Adapter changed the exact expected run identity.'}
+        [pscustomobject]@{id=$RunId;head_sha=$SourceSha;status='completed';conclusion='success'}
     }
-    $automatic = New-WssAutomaticApproval $approval.candidate 'wss-test-candidate'
-    if ($script:dispatches.Count -ne 2 -or $automatic.integration.source_sha -cne ('3'*40) -or $automatic.cli.source_sha -cne ('4'*40)) { throw 'Automatic source/dispatch binding failed.' }
-    foreach ($request in $script:dispatches) {
-        if ($request.ref -cne 'dev' -or $request.inputs.wss_run_id -cne $approval.candidate.run_id -or
-            $request.inputs.wss_commit -cne $approval.candidate.commit -or $request.inputs.wss_sha256 -cne $approval.candidate.sha256 -or
-            $request.inputs.wss_archive -cne $approval.candidate.archive) { throw 'Automatic preflights did not receive the same immutable candidate.' }
+    $automatic=New-WssAutomaticApproval $approval.candidate 'wss-test-candidate'
+    if($script:adapterRequests.Count -ne 2 -or $automatic.integration.source_sha -cne ('3'*40) -or $automatic.cli.source_sha -cne ('4'*40)){throw 'Automatic adapter source binding failed.'}
+    if($script:adapterRequests[1].wrapper_sha -cne $automatic.integration.source_sha){throw 'CLI adapter lost the exact integration source.'}
+    foreach($request in $script:adapterRequests){
+        if($request.candidate.run_id -cne $approval.candidate.run_id -or $request.candidate.sha256 -cne $approval.candidate.sha256 -or $request.correlation -cne 'wss-test-candidate'){throw 'Adapter mixed immutable candidate inputs.'}
     }
-    if ($script:dispatches[1].inputs.integration_sha -cne $automatic.integration.source_sha) { throw 'CLI dispatch did not pin Integration source.' }
-    $again = New-WssAutomaticApproval $approval.candidate 'wss-test-candidate'
-    if ($script:dispatches.Count -ne 2 -or (Get-WssApprovalMarker $again) -cne (Get-WssApprovalMarker $automatic)) { throw 'Replay redispatched or changed approval.' }
     $count++
-    $integrationRepo = 'cwru-non-academic/CSharp_WSS_Integration_Lib'
-    $script:runs[$integrationRepo].conclusion = 'failure'
-    Assert-Rejected { New-WssAutomaticApproval $approval.candidate 'wss-test-candidate' } 'Required run*failed*'
-    $script:runs[$integrationRepo].conclusion = 'success'
-    $script:runs[$integrationRepo].head_sha = '6'*40
-    Assert-Rejected { Wait-WssExactRun $integrationRepo '41' ('3'*40) 'wss-preflight.yml' 'workflow_dispatch' } 'Run identity/source mismatch*'
-    $script:runs[$integrationRepo].head_sha = '3'*40
-    $script:runs[$integrationRepo].status = 'in_progress'
-    Assert-Rejected { Wait-WssExactRun $integrationRepo '41' ('3'*40) 'wss-preflight.yml' 'workflow_dispatch' -TimeoutSeconds 0 } 'Timed out waiting*'
-    $script:apiFailure = $true
-    $before = $script:dispatches.Count
-    Assert-Rejected { Start-WssCorrelatedPreflight $integrationRepo $approval.candidate 'different-candidate' } 'Simulated GitHub permission/network failure*'
-    if ($script:dispatches.Count -ne $before) { throw 'API failure was treated as an absent run.' }
-    $script:apiFailure = $false
-    $script:runs.Clear()
-    $script:dispatchRace = $true
-    Assert-Rejected { Start-WssCorrelatedPreflight $integrationRepo $approval.candidate 'race-candidate' } 'Downstream dev moved*'
-    $script:duplicateRuns = $true
-    Assert-Rejected { Get-WssCorrelatedPreflight $integrationRepo "WSS preflight $($approval.candidate.run_id) / race-candidate" } 'Ambiguous correlated preflight*'
-    $script:duplicateRuns = $false
-    $script:dispatchRace = $false
-    $script:missingRun = $true
-    $script:runs.Clear()
-    $before = $script:dispatches.Count
-    Assert-Rejected { Start-WssCorrelatedPreflight $integrationRepo $approval.candidate 'missing-candidate' -DiscoverySeconds 0 } 'Dispatched preflight missing*'
-    if ($script:dispatches.Count -ne ($before + 1)) { throw 'Missing run caused redundant dispatches.' }
-    $script:missingRun = $false
-    $secondCandidate = $approval.candidate | ConvertTo-Json | ConvertFrom-Json
-    $secondCandidate.run_id = '99'
-    $secondCandidate.artifact_id = '100'
-    $secondCandidate.commit = '7'*40
-    $secondCandidate.sha256 = '8'*64
-    $second = New-WssAutomaticApproval $secondCandidate 'second-candidate'
-    foreach ($request in @($script:dispatches[-2], $script:dispatches[-1])) {
-        if ($request.inputs.wss_run_id -cne '99' -or $request.inputs.wss_sha256 -cne ('8'*64) -or $request.inputs.wss_commit -cne ('7'*40)) { throw 'Nearby candidates mixed dispatch data.' }
+    $script:adapterWaitFailure=$true
+    Assert-Rejected {New-WssAutomaticApproval $approval.candidate 'wss-test-candidate'} 'Shared fixture required run failed*'
+    $script:adapterWaitFailure=$false
+    $before=$script:adapterRequests.Count
+    Assert-Rejected {Start-WssCorrelatedPreflight 'foreign/repository' $approval.candidate 'wss-foreign'} 'Unknown C# preflight repository*'
+    if($script:adapterRequests.Count -ne $before){throw 'Unknown repository reached the shared boundary.'}
+    $secondCandidate=$approval.candidate|ConvertTo-Json|ConvertFrom-Json
+    $secondCandidate.run_id='99';$secondCandidate.artifact_id='100';$secondCandidate.commit='7'*40;$secondCandidate.sha256='8'*64
+    $second=New-WssAutomaticApproval $secondCandidate 'wss-second-candidate'
+    foreach($request in @($script:adapterRequests[-2],$script:adapterRequests[-1])){
+        if($request.candidate.run_id -cne '99' -or $request.candidate.sha256 -cne ('8'*64) -or $request.candidate.commit -cne ('7'*40)){throw 'Nearby candidates mixed adapter data.'}
     }
     Assert-WssCandidateRecord $secondCandidate $second
     $count++
-    Remove-Item Function:Invoke-WssGh, Function:Invoke-WssDispatch
+    Remove-Item Function:Start-WssCiPreflight,Function:Wait-WssCiRun
     . "$PSScriptRoot/../WssAutomatic.ps1"
-
     # A green but mismatched preflight and expired producer artifact are not authority.
     $script:expiredArtifact = $false
     function Invoke-WssGh([string[]] $Arguments) {
