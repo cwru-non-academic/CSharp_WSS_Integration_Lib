@@ -76,6 +76,6 @@ if ($env:GITHUB_EVENT_NAME -ceq 'workflow_dispatch') {
     else {
         if ($ExpectedMergeSha) { throw 'Shared barrier no longer authorizes application fanout.' }
         'dispatch_allowed=false' >> $env:GITHUB_OUTPUT
-        "Waiting for Core's complete integration barrier; no application write token requested." >> $env:GITHUB_STEP_SUMMARY
+        "Waiting for Core's authorization of this integration and its exact committed CI; no application write token requested." >> $env:GITHUB_STEP_SUMMARY
     }
 } else { throw 'Unsupported fanout trigger.' }

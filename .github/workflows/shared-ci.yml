@@ -24,12 +24,21 @@ jobs:
             const l=JSON.parse(fs.readFileSync(".github/scripts/wss-ci.lock.json","utf8"));
             if(l.source_repository!=="cwru-non-academic/WSSCore" || !/^[a-f0-9]{40}$/.test(l.source_commit) || l.source_ref!==`refs/heads/ci/tooling/${l.source_commit}`) throw Error("Invalid shared CI source");
             fs.appendFileSync(process.env.GITHUB_OUTPUT,`commit=${l.source_commit}\n`);
+            const i=l.origins?.integration;
+            if(l.schema!=="wss-shared-ci/v2" || i?.repository!=="cwru-non-academic/Python_WSS_Integration_Lib" || !/^[a-f0-9]{40}$/.test(i.commit) || i.ref!==`refs/heads/ci/tooling/${i.commit}` || i.workspace!=="Python_WSS_Integration_Lib") throw Error("Invalid integration CI source");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT,`integration_commit=${i.commit}\n`);
           '
       - uses: actions/checkout@v4
         with:
           repository: cwru-non-academic/WSSCore
           ref: ${{ steps.lock.outputs.commit }}
           path: .wss-core
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/Python_WSS_Integration_Lib
+          ref: ${{ steps.lock.outputs.integration_commit }}
+          path: .wss-core/.ci-origins/Python_WSS_Integration_Lib
           persist-credentials: false
       - name: Reject common implementation drift
         env:
