@@ -11,6 +11,21 @@ permissions:
   contents: read
 
 jobs:
+  receipt-policy-boundary:
+    name: Receipt policy bridge (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Exercise canonical policy through the actual PowerShell adapter
+        shell: pwsh
+        run: ./.github/scripts/tests/WssReleaseReceipt.Tests.ps1
   behavioral-tests:
     name: Integration behavioral tests
     runs-on: ubuntu-latest
