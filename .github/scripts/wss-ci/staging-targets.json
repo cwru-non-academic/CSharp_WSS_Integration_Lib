@@ -1,0 +1,31 @@
+{
+  "csharp": {
+    "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
+    "fanout": "dispatch-cli-promotion.yml",
+    "applications": [
+      "cwru-non-academic/CLI_CSharp_WSS_Application"
+    ]
+  },
+  "unity": {
+    "repository": "cwru-non-academic/Unity_WSS_Integration_Lib",
+    "fanout": "dispatch-unity-promotion.yml",
+    "applications": [
+      "cwru-non-academic/GUI_Unity_WSS_Application"
+    ]
+  },
+  "python": {
+    "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
+    "fanout": "dispatch-cli-promotion.yml",
+    "applications": [
+      "cwru-non-academic/CLI_Python_WSS_Application",
+      "cwru-non-academic/ROS_Python_WSS_Application"
+    ]
+  },
+  "matlab": {
+    "repository": "cwru-non-academic/Matlab_WSS_Integration_Lib",
+    "fanout": "dispatch-cli-promotion.yml",
+    "applications": [
+      "cwru-non-academic/CLI_Matlab_WSS_Application"
+    ]
+  }
+}

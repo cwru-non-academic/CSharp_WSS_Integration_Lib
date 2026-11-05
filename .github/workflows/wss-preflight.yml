@@ -41,6 +41,9 @@ jobs:
     name: Resolve preflight inputs
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - uses: actions/checkout@v4
       - name: Create producer read token
         id: core-token
@@ -157,8 +160,6 @@ jobs:
             os: windows-latest
           - name: Ubuntu
             os: ubuntu-latest
-          - name: macOS
-            os: macos-latest
     runs-on: ${{ matrix.os }}
     env:
       WSS_ARTIFACT_DIR: ${{ github.workspace }}/.wss-artifacts/universal
@@ -226,3 +227,143 @@ jobs:
           -p:TreatWarningsAsErrors=true
           "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
           "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+
+  macos_architecture:
+    name: macOS BLE detail (${{ matrix.cpu }})
+    needs: resolve-inputs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            label: macOS
+            os: macos-15-intel
+            arch: x64
+            test_platform: x64
+            cpu: Intel x86_64
+          - name: macOS
+            label: macOS
+            os: macos-15
+            arch: arm64
+            test_platform: ARM64
+            cpu: Apple Silicon arm64
+    runs-on: ${{ matrix.os }}
+    env:
+      WSS_ARTIFACT_DIR: ${{ github.workspace }}/.wss-artifacts/universal
+      WSS_BLE_ARTIFACT_DIR: ${{ github.workspace }}/.wss-artifacts/universal
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-wss-universal
+          path: ${{ env.WSS_ARTIFACT_DIR }}
+
+      - name: Verify native macOS and dotnet architecture
+        shell: pwsh
+        env:
+          DOTNET_CLI_UI_LANGUAGE: en-US
+        run: |
+          . ./.github/scripts/MacOSBleEvidence.ps1
+          Initialize-WssMacOSEvidence '${{ matrix.arch }}' 'wrapper-preflight' "$env:RUNNER_TEMP/macos-evidence"
+      - name: Disable committed fallback and clean outputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path -LiteralPath 'lib' -PathType Container)) {
+            throw 'Committed lib directory is missing.'
+          }
+          Move-Item -LiteralPath 'lib' -Destination 'lib.preflight-disabled'
+          if (Test-Path -LiteralPath 'lib') {
+            throw 'Committed lib fallback remains available.'
+          }
+          Get-ChildItem -Path src, tests -Directory -Recurse -Force |
+            Where-Object Name -in @('bin', 'obj') |
+            Remove-Item -Recurse -Force
+
+      - name: Restore with downloaded WSS assemblies
+        shell: pwsh
+        run: >-
+          dotnet restore tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
+          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+
+      - name: Build with downloaded WSS assemblies
+        shell: pwsh
+        run: >-
+          dotnet build tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          -c Release
+          --no-restore
+          -p:TreatWarningsAsErrors=true
+          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
+          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+
+      - name: Verify downloaded artifact propagation
+        shell: pwsh
+        run: |
+          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
+          dotnet publish src/Wss.CSharpImplementation.csproj -c Release --no-restore -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" -o "$env:RUNNER_TEMP/integration-publish"
+          if ($LASTEXITCODE -ne 0) { throw 'Integration publish failed.' }
+          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot "$env:RUNNER_TEMP/integration-publish"
+
+      - name: Run platform compatibility tests
+        shell: pwsh
+        run: |
+          & dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.SerialRuntimeSelectionTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.BleBackendLoadingTests" -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" --logger 'console;verbosity=detailed' --logger 'trx;LogFileName=macos-platform.trx' --results-directory "$env:RUNNER_TEMP/macos-results" -- RunConfiguration.TargetPlatform=${{ matrix.test_platform }} | Tee-Object -FilePath "$env:RUNNER_TEMP/macos-platform.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Canonical platform tests failed.' }
+
+      - name: Record canonical packaged BLE result before any synthetic fixture
+        if: always()
+        shell: pwsh
+        run: |
+          . ./.github/scripts/MacOSBleEvidence.ps1
+          Write-WssMacOSEvidence '${{ matrix.arch }}' 'wrapper-preflight' "$env:RUNNER_TEMP/macos-evidence" "$env:RUNNER_TEMP/macos-results/macos-platform.trx" "$env:RUNNER_TEMP/macos-platform.log" 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
+
+
+      - name: Finalize architecture evidence including all worker steps
+        if: always()
+        shell: pwsh
+        env:
+          WORKER_RESULT: ${{ job.status }}
+        run: |
+          . ./.github/scripts/MacOSBleEvidence.ps1
+          Finalize-WssMacOSEvidence '${{ matrix.arch }}' 'wrapper-preflight' "$env:RUNNER_TEMP/macos-evidence" $env:WORKER_RESULT
+      - name: Retain architecture-specific canonical evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wss-macos-wrapper-preflight-${{ matrix.arch }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/macos-evidence/*.json
+            ${{ runner.temp }}/macos-results/*.trx
+            ${{ runner.temp }}/macos-platform.log
+            ${{ runner.temp }}/macos-cli.log
+          if-no-files-found: error
+
+  macos_compatibility:
+    name: Preflight compatibility (macOS)
+    needs: macos_architecture
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Gather both native architecture records
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: wss-macos-wrapper-preflight-*-a${{ github.run_attempt }}
+          path: macos-evidence
+      - name: Require Intel and Apple Silicon success and show failures separately
+        if: always()
+        shell: pwsh
+        env:
+          WORKER_RESULT: ${{ needs.macos_architecture.result }}
+        run: |
+          . ./.github/scripts/MacOSBleEvidence.ps1
+          Complete-WssMacOSGate 'macos-evidence' 'wrapper-preflight' $env:WORKER_RESULT

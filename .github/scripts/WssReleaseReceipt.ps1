@@ -41,7 +41,7 @@ function Assert-WssReceiptPr($Pr,[string] $Repository,[string] $Sha) {
 function Assert-WssReceiptNormalRun($Run,[string] $Repository,$Target,[string] $Sha,$Jobs) {
     if ($Run.status -cne 'completed' -or $Run.conclusion -cne 'success' -or $Run.head_branch -cne 'dev' -or
         $Run.head_sha -cne $Sha -or $Run.repository.full_name -cne $Repository -or $Run.head_repository.full_name -cne $Repository -or
-        $Run.path -cne $Target.workflow -or $Run.event -cne 'workflow_dispatch') {
+        $Run.path -cne $Target.workflow -or $Run.event -cnotin @('push','workflow_dispatch')) {
         throw 'Fresh exact-merge normal CI is not successful.'
     }
     foreach ($name in $Target.jobs) {

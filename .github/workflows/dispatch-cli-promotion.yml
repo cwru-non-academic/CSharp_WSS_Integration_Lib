@@ -40,6 +40,9 @@ jobs:
       startsWith(github.event.pull_request.head.ref, 'automation/wss-'))
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       # pull_request_target uses trusted base code, never executable PR-head code.
       - uses: actions/checkout@v4
         with:
@@ -96,7 +99,7 @@ jobs:
             throw "Promotion metadata does not match the automation branch $expectedBranch."
           }
 
-          $pages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/$($event.repository.full_name)/pulls/$($event.pull_request.number)/files?per_page=100") | ConvertFrom-Json
+          $pages = Invoke-WssGh -Arguments @('api', '--paginate', '--slurp', "repos/$($event.repository.full_name)/pulls/$($event.pull_request.number)/files?per_page=100") | ConvertFrom-Json
           $changedFiles = @($pages | ForEach-Object { $_ })
           if ($changedFiles.Count -eq 0) {
             throw 'The merged automation PR has no readable changed files.'

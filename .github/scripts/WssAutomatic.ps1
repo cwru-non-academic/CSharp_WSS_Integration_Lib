@@ -3,9 +3,9 @@ Set-StrictMode -Version Latest
 
 function Assert-WssCandidateNotOlder($Candidate, [string] $ExpectedReceiverSha) {
     $repo='cwru-non-academic/CSharp_WSS_Integration_Lib'
-    $head=Invoke-WssGh @('api',"repos/$repo/git/ref/heads/dev") | ConvertFrom-Json
+    $head=Invoke-WssGh -Arguments @('api',"repos/$repo/git/ref/heads/dev") | ConvertFrom-Json
     if ($ExpectedReceiverSha -cnotmatch '^[0-9a-f]{40}$' -or $head.object.sha -cne $ExpectedReceiverSha) { throw 'Integration dev moved since candidate validation; require fresh evidence.' }
-    $file=Invoke-WssGh @('api',"repos/$repo/contents/lib/wss-candidate.json?ref=$ExpectedReceiverSha") | ConvertFrom-Json
+    $file=Invoke-WssGh -Arguments @('api',"repos/$repo/contents/lib/wss-candidate.json?ref=$ExpectedReceiverSha") | ConvertFrom-Json
     if ($file.type -cne 'file' -or $file.encoding -cne 'base64') { throw 'Installed candidate provenance is unreadable.' }
     $record=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($file.content)) | ConvertFrom-Json
     $installed=$record.candidate
@@ -20,7 +20,7 @@ function Assert-WssCandidateNotOlder($Candidate, [string] $ExpectedReceiverSha) 
         if ([bigint]$Candidate.run_id -lt [bigint]$installed.run_id) { throw 'Candidate would roll back the installed producer run.' }
         return
     }
-    $comparison=Invoke-WssGh @('api',"repos/cwru-non-academic/WSSCore/compare/$($installed.commit)...$($Candidate.commit)") | ConvertFrom-Json
+    $comparison=Invoke-WssGh -Arguments @('api',"repos/cwru-non-academic/WSSCore/compare/$($installed.commit)...$($Candidate.commit)") | ConvertFrom-Json
     if ($comparison.status -cne 'ahead' -or $comparison.base_commit.sha -cne $installed.commit -or $comparison.merge_base_commit.sha -cne $installed.commit) { throw 'Candidate would roll back or diverge from the installed Core source.' }
 }
 
@@ -37,7 +37,7 @@ function Wait-WssExactRun([string] $Repository, [string] $RunId, [string] $Sourc
     [string] $Workflow, [string] $Event, [int] $TimeoutSeconds = 2400) {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
-        $run = Invoke-WssGh @('api', "repos/$Repository/actions/runs/$RunId") | ConvertFrom-Json
+        $run = Invoke-WssGh -Arguments @('api', "repos/$Repository/actions/runs/$RunId") | ConvertFrom-Json
         if ($run.repository.full_name -cne $Repository -or $run.head_repository.full_name -cne $Repository -or
             $run.head_branch -cne 'dev' -or $run.path -cne ".github/workflows/$Workflow" -or
             $run.head_sha -cne $SourceSha -or $run.event -cne $Event) { throw 'Run identity/source mismatch; promotion stopped.' }
@@ -51,7 +51,7 @@ function Wait-WssExactRun([string] $Repository, [string] $RunId, [string] $Sourc
 }
 
 function Get-WssCorrelatedPreflight([string] $Repository, [string] $Title) {
-    $pages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/$Repository/actions/workflows/wss-preflight.yml/runs?event=workflow_dispatch&per_page=100") | ConvertFrom-Json
+    $pages = Invoke-WssGh -Arguments @('api', '--paginate', '--slurp', "repos/$Repository/actions/workflows/wss-preflight.yml/runs?event=workflow_dispatch&per_page=100") | ConvertFrom-Json
     $runs = @($pages | ForEach-Object { $_.workflow_runs } | Where-Object { $_.display_title -ceq $Title })
     if ($runs.Count -gt 1) { throw "Ambiguous correlated preflight in $Repository; refusing to select a green run." }
     if ($runs.Count -eq 1) { return $runs[0] }
@@ -69,7 +69,7 @@ function Start-WssCorrelatedPreflight([string] $Repository, $Candidate, [string]
     $existing = Get-WssCorrelatedPreflight $Repository $title
     # Replays retain original tested sources even after dev advances. Never redispatch a failed run.
     if ($null -ne $existing) { return $existing }
-    $branch = Invoke-WssGh @('api', "repos/$Repository/branches/dev") | ConvertFrom-Json
+    $branch = Invoke-WssGh -Arguments @('api', "repos/$Repository/branches/dev") | ConvertFrom-Json
     $sha = $branch.commit.sha
     if ($sha -cnotmatch '^[0-9a-f]{40}$') { throw 'Cannot resolve exact downstream dev source.' }
     $inputs = @{
