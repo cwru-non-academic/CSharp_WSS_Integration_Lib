@@ -32,7 +32,7 @@ function Assert-WssReceiptTooling($Plan, [string] $TargetId, $Target, [string] $
     }
     # Main executes only these receiver files. Compare them individually so
     # unrelated branch-specific scripts and normal CI need not be identical.
-    foreach ($path in @('.github/workflows/release-receipt.yml', '.github/scripts/Write-ReleaseReceipt.ps1', '.github/scripts/WssReleaseReceipt.ps1')) {
+    foreach ($path in @('.github/workflows/release-receipt.yml', '.github/scripts/Write-ReleaseReceipt.ps1', '.github/scripts/WssReleaseReceipt.ps1', '.github/scripts/wss-ci')) {
         if ((Invoke-ReceiptGit $ToolsRoot -Arguments @('rev-parse',"HEAD:$path")) -cne (Invoke-ReceiptGit $AcceptedRoot -Arguments @('rev-parse',"HEAD:$path"))) { throw "Trusted main receipt tooling differs: $path" }
     }
     $wrapperRoot = if ($TargetId -ceq 'csharp-wrapper') { $AcceptedRoot } else { $IntegrationRoot }
@@ -71,9 +71,8 @@ if ($producer.repository.full_name -cne $core -or $producer.head_repository.full
 $plan = Download $core $ProducerRunId 'wss-propagation-plan' (Join-Path $work 'plan') 'plan.json'
 if ($plan.schema -cne 'wss-propagation-plan/v1' -or $plan.channel -cne 'dev' -or $plan.plan_id -cne $PlanId -or $plan.candidate.run_id -cne $ProducerRunId -or $plan.candidate.commit -cne $producer.head_sha) { throw 'Plan/input/producer mismatch.' }
 # Canonical JSON hashing is shared with Node's UTF-8 JSON representation, not PS formatting.
-$hashCode = 'const fs=require("fs"),c=require("crypto");const sort=x=>Array.isArray(x)?x.map(sort):x&&typeof x==="object"?Object.fromEntries(Object.keys(x).sort().map(k=>[k,sort(x[k])])):x;const p=JSON.parse(fs.readFileSync(process.argv[1]));const hash=x=>c.createHash("sha256").update(JSON.stringify(sort(x))).digest("hex");const id=p.plan_id;delete p.plan_id;if(hash(p)!==id||hash(p.manifest)!==p.manifest_sha256)process.exit(1);'
-& node -e $hashCode (Join-Path $work 'plan/plan.json')
-if ($LASTEXITCODE -ne 0) { throw 'Frozen plan/manifest digest mismatch.' }
+& node (Join-Path $ToolsRoot '.github/scripts/wss-ci/verify-plan.mjs') (Join-Path $work 'plan/plan.json')
+if ($LASTEXITCODE -ne 0) { throw 'Frozen plan/schema/manifest validation failed.' }
 $target = @($plan.manifest.targets | Where-Object id -CEQ $TargetId)
 if ($target.Count -ne 1 -or $target[0].repository -cne $repository -or $target[0].branch -cne 'dev') { throw 'Required target policy mismatch.' }
 $target = $target[0]
@@ -109,13 +108,16 @@ Assert-WssSource $IntegrationRoot $approval.integration.source_sha
 & (Join-Path $ValidatorRoot '.github/scripts/Resolve-WssRelease.ps1') -RunId $approval.candidate.run_id -ProducerRepository $core -ExpectedCommit $approval.candidate.commit -ArchiveName $approval.candidate.archive -ExpectedSha256 $approval.candidate.sha256 -OutputRoot (Join-Path $work 'release')
 Assert-WssLib (Join-Path $IntegrationRoot 'lib') (Join-Path $work 'release/extracted/WSS-Universal') $approval
 $workflow = Split-Path $target.workflow -Leaf
-$runs = @(Pages "repos/$repository/actions/workflows/$workflow/runs?event=workflow_dispatch&head_sha=$acceptedSha&per_page=100" 'workflow_runs' | Sort-Object id -Descending)
+$runs = @(Pages "repos/$repository/actions/workflows/$workflow/runs?branch=dev&head_sha=$acceptedSha&per_page=100" 'workflow_runs' | Sort-Object id -Descending)
 if ($runs.Count -eq 0) { throw 'Fresh exact-merge normal CI has not run yet.' }
-$normal = $runs[0]
+@{runs=@($runs);target=$target;head=$acceptedSha;merged_at=$pr.merged_at} | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $work 'normal-ci.json')
+$normalJson = & node (Join-Path $ToolsRoot '.github/scripts/wss-ci/normal-ci-select.mjs') (Join-Path $work 'normal-ci.json')
+if ($LASTEXITCODE -ne 0) { throw 'Normal CI identity/ambiguity validation failed.' }
+$normal = $normalJson | ConvertFrom-Json
 $jobs = @(Pages "repos/$repository/actions/runs/$($normal.id)/attempts/$($normal.run_attempt)/jobs?per_page=100" 'jobs')
 Assert-WssReceiptNormalRun $normal $repository $target $acceptedSha $jobs
 if ([DateTimeOffset]::Parse($normal.created_at) -lt [DateTimeOffset]::Parse($pr.merged_at)) { throw 'Normal CI predates the accepted merge.' }
-$latestRuns = @(Pages "repos/$repository/actions/workflows/$workflow/runs?event=workflow_dispatch&head_sha=$acceptedSha&per_page=100" 'workflow_runs' | Sort-Object id -Descending)
+$latestRuns = @(Pages "repos/$repository/actions/workflows/$workflow/runs?branch=dev&head_sha=$acceptedSha&per_page=100" 'workflow_runs' | Sort-Object id -Descending)
 if ($latestRuns.Count -eq 0) { throw 'Normal CI disappeared during receipt validation.' }
 $liveNormal = Api "repos/$repository/actions/runs/$($normal.id)"
 $liveJobs = @(Pages "repos/$repository/actions/runs/$($normal.id)/attempts/$($normal.run_attempt)/jobs?per_page=100" 'jobs')

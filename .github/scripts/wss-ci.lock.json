@@ -1,0 +1,32 @@
+{
+  "schema": "wss-shared-ci/v1",
+  "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
+  "source_repository": "cwru-non-academic/WSSCore",
+  "source_commit": "1718ad94ada5ddba84e6370d0923d8174a314208",
+  "files": {
+    ".github/scripts/wss-ci/verify.mjs": {
+      "source": "tools/release/verify.mjs",
+      "sha256": "7c35b06cce84e4e2f52ecb8e2928d7738745b5901c1e8f36cc1d1a8978925f8c"
+    },
+    ".github/scripts/wss-ci/normal-ci.mjs": {
+      "source": "tools/release/normal-ci.mjs",
+      "sha256": "1cec755993c320e269e559a7f866f6c02865ab3481b50c925c9d2f5bb5e31b25"
+    },
+    ".github/scripts/wss-ci/normal-ci-select.mjs": {
+      "source": "tools/release/normal-ci-select.mjs",
+      "sha256": "8cfca466d723f90f27913b5cf4afbc74cc3f89239870da754f15356dee7c8423"
+    },
+    ".github/scripts/wss-ci/verify-plan.mjs": {
+      "source": "tools/release/verify-plan.mjs",
+      "sha256": "cb69b8905fc38edb11826a2d3af409e13de9ae09e732f51f6a9aa8859820198c"
+    },
+    ".github/scripts/wss-ci/Assert-UniversalArchive.ps1": {
+      "source": "tools/ci/shared/Assert-UniversalArchive.ps1",
+      "sha256": "703cd61ffc79d368d879c6aeefb7739141706f2fb3a8cf4b20cf22a0713b1ef1"
+    },
+    ".github/workflows/shared-ci.yml": {
+      "source": "tools/ci/shared/shared-ci.yml",
+      "sha256": "b6cb4673843a123922df7e41bc91c721c61a3049de0fb968343731ce8e853ec2"
+    }
+  }
+}
