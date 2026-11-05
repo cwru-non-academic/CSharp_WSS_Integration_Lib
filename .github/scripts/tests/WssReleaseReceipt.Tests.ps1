@@ -374,3 +374,7 @@ Reject { Assert-WssReceiptNormalFresh $originalNormal $latestNormal $liveNormal 
     }
 }
 "Receipt command dispatch contracts passed (no native-name collision; complete argument arrays; fail-closed exit codes)."
+
+# Expected native rejection cases above leave a nonzero process status; all
+# assertions have completed successfully if execution reaches this point.
+$global:LASTEXITCODE=0
