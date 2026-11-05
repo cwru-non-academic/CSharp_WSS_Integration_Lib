@@ -116,7 +116,7 @@ $definition = @($emitterAst.FindAll({
 }, $true))
 if ($definition.Count -ne 1) { throw 'Unique production receipt tooling guard required.' }
 . ([scriptblock]::Create($definition[0].Extent.Text))
-function Git([string] $Root, [string[]] $Arguments) {
+function Invoke-ReceiptGit([string] $Root, [string[]] $Arguments) {
     $key = "$Root|$($Arguments[-1])"
     if (-not $script:receiptObjects.ContainsKey($key)) { throw "Unexpected Git object lookup: $key" }
     $script:receiptObjects[$key]
@@ -174,7 +174,7 @@ foreach ($targetId in @('csharp-wrapper', 'csharp-cli')) {
         Reject-ToolingMutation '.integration|HEAD:.github/scripts' 'Accepted wrapper validators differ from frozen code.*'
     }
 }
-Remove-Item Function:Git
+Remove-Item Function:Invoke-ReceiptGit
 "Branch-aware receipt tooling tests passed (two divergent-CI targets; $toolingRejections exact-object rejections)."
 
 # Receiver-owned policy cannot be weakened by a producer-supplied manifest.
@@ -218,3 +218,53 @@ Reject { Assert-WssReceiptNormalFresh $originalNormal $latestNormal $liveNormal 
 $liveNormal.run_attempt=1; $liveNormal.conclusion='failure'
 Reject { Assert-WssReceiptNormalFresh $originalNormal $latestNormal $liveNormal $normalRepo $normalTarget $normalSha $normalJobs }
 "Receiver-owned policy and final CI identity tests passed (18 new rejections)."
+
+# Exercise production command wrappers without network, credentials, or receipt emission.
+& {
+    $errors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '../Write-ReleaseReceipt.ps1'),[ref]$null,[ref]$errors)
+    if ($errors.Count) { throw 'Receipt emitter does not parse.' }
+    foreach ($name in @('Invoke-ReceiptGh','Invoke-ReceiptGit','Api')) {
+        $definitions=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+        if ($definitions.Count -ne 1) { throw "Unique production command helper required: $name" }
+        . ([scriptblock]::Create($definitions[0].Extent.Text))
+    }
+    $collisions=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in @('gh','git')},$true))
+    if ($collisions.Count) { throw 'Receipt helpers must not shadow native command names.' }
+    $calls=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -in @('Invoke-ReceiptGh','Invoke-ReceiptGit')},$true))
+    foreach ($call in $calls) {
+        if (!@($call.CommandElements | Where-Object { $_ -is [Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -ceq 'Arguments' }).Count) {
+            throw 'Receipt command arrays must be bound explicitly, not splatted into positional parameters.'
+        }
+    }
+    $savedExitVariable=Get-Variable LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
+    $hadExitCode=$null -ne $savedExitVariable
+    $savedExitCode=if ($hadExitCode) { $savedExitVariable.Value } else { $null }
+    try {
+        function gh { $global:LASTEXITCODE=0; @{arguments=@($args)} | ConvertTo-Json -Compress }
+        function git { $global:LASTEXITCODE=0; @{arguments=@($args)} | ConvertTo-Json -Compress }
+        $api=Api 'repos/example/repo'
+        if (($api.arguments -join '|') -cne 'api|repos/example/repo') { throw 'GitHub API arguments were lost.' }
+        $download=Invoke-ReceiptGh -Arguments @('run','download','123','--repo','example/repo','--dir','path with spaces') | ConvertFrom-Json
+        if (($download.arguments -join '|') -cne 'run|download|123|--repo|example/repo|--dir|path with spaces') { throw 'GitHub command arguments were changed.' }
+        $object=Invoke-ReceiptGit 'root with spaces' -Arguments @('rev-parse','HEAD:.github/scripts') | ConvertFrom-Json
+        if (($object.arguments -join '|') -cne '-C|root with spaces|rev-parse|HEAD:.github/scripts') { throw 'Git command arguments were changed.' }
+        function gh { $global:LASTEXITCODE=17 }
+        function git { $global:LASTEXITCODE=18 }
+        foreach ($failure in @(
+            @{action={Invoke-ReceiptGh -Arguments @('api','missing')};message='GitHub evidence request failed: api'},
+            @{action={Invoke-ReceiptGit '.' -Arguments @('rev-parse','missing')};message='Git evidence request failed.'}
+        )) {
+            $rejected=$false
+            try { & $failure.action } catch {
+                if ($_.Exception.Message -cne $failure.message) { throw }
+                $rejected=$true
+            }
+            if (!$rejected) { throw 'Native command failure was accepted.' }
+        }
+    } finally {
+        if ($hadExitCode) { $global:LASTEXITCODE=$savedExitCode }
+        else { Remove-Variable LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue }
+    }
+}
+"Receipt command dispatch contracts passed (no native-name collision; complete argument arrays; fail-closed exit codes)."
