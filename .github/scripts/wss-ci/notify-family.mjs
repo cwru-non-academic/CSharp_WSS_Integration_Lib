@@ -3,6 +3,7 @@
 import {readFileSync,appendFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {execFileSync} from 'node:child_process';
 import {GitHub,loadPlan} from './github.mjs';
 import {targetPolicy} from './receipt.mjs';
 import {candidate,canonical,CORE,requireThat} from './verify.mjs';
@@ -14,16 +15,17 @@ export function prepareFamilyWakeup(g,c,{loadFrozenPlan=loadPlan}={}) {
   const profile=Object.values(profiles).find(p=>p.role==='wrapper'&&p.target.repository===c.repository);
   requireThat(profile,'Only registered integrations may notify the stage');
   const t=profile.target,source=targets[profile.family];let head,pr;
+  // Both events execute the workflow on the default branch. The event's
+  // dependency merge is evidence to inspect, never executable workflow source.
+  requireThat(c.workflowRef===`${c.repository}/.github/workflows/notify-core-stage.yml@refs/heads/main` && c.sourceSha===g.head(c.repository,'main'),'Notification must execute current trusted main');
   requireThat(typeof source?.record==='string'&&source.record.length>0,'Missing integration record adapter');
   if(c.eventName==='pull_request_target'){
     requireThat(c.event.pull_request?.number>0,'Missing closed dependency PR');
     pr=g.get(`repos/${c.repository}/pulls/${c.event.pull_request.number}`);head=pr.merge_commit_sha;
-    requireThat(c.workflowRef===`${c.repository}/.github/workflows/notify-core-stage.yml@refs/heads/dev` && c.sourceSha===head,'Notification must execute trusted merged dev code');
   }else if(c.eventName==='workflow_run'){
     const id=String(c.event.workflow_run?.id);requireThat(/^[1-9][0-9]*$/.test(id),'Missing completed CI identity');
     const run=g.run(c.repository,id);head=run.head_sha;
     requireThat(run.repository?.full_name===c.repository&&run.head_repository?.full_name===c.repository&&run.path===t.workflow&&run.head_branch==='dev'&&['push','workflow_dispatch'].includes(run.event)&&run.status==='completed'&&run.conclusion==='success','Wake-up is not successful committed integration CI');
-    requireThat(c.workflowRef===`${c.repository}/.github/workflows/notify-core-stage.yml@refs/heads/main`&&c.sourceSha===g.head(c.repository,'main'),'Completion notification must execute current trusted main');
     const prs=g.pages(`repos/${c.repository}/commits/${head}/pulls`).filter(p=>p.merged_at&&p.merge_commit_sha===head&&p.base?.ref==='dev');
     if(prs.length===0)return {needed:false,reason:'Committed CI has no dependency PR to advance.'};
     requireThat(prs.length===1,'Completion is not a unique dependency merge');pr=g.get(`repos/${c.repository}/pulls/${prs[0].number}`);
@@ -46,7 +48,9 @@ export function prepareFamilyWakeup(g,c,{loadFrozenPlan=loadPlan}={}) {
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   requireThat(process.env.GITHUB_ACTIONS==='true','Notifications execute only trusted hosted workflows');
-  const result=prepareFamilyWakeup(new GitHub(),{repository:process.env.GITHUB_REPOSITORY,eventName:process.env.GITHUB_EVENT_NAME,event:JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH)),sourceSha:process.env.GITHUB_SHA,workflowRef:process.env.GITHUB_WORKFLOW_REF});
+  const sourceSha=process.env.GITHUB_WORKFLOW_SHA;
+  requireThat(/^[a-f0-9]{40}$/.test(sourceSha||'')&&execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()===sourceSha,'Notifier checkout must match the immutable workflow revision');
+  const result=prepareFamilyWakeup(new GitHub(),{repository:process.env.GITHUB_REPOSITORY,eventName:process.env.GITHUB_EVENT_NAME,event:JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH)),sourceSha,workflowRef:process.env.GITHUB_WORKFLOW_REF});
   appendFileSync(process.env.GITHUB_OUTPUT,`needed=${result.needed}\nproducer_run_id=${result.producer_run_id||''}\n`);
   if(process.env.GITHUB_STEP_SUMMARY)appendFileSync(process.env.GITHUB_STEP_SUMMARY,`Family stage wake-up: ${result.needed?result.family:result.reason}. This does not accept or publish a release.\n`);
 }
