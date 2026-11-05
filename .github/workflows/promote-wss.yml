@@ -39,6 +39,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Validate trusted handoff inputs before credentials
         shell: pwsh
         env:
@@ -117,20 +120,17 @@ jobs:
           $ErrorActionPreference = 'Stop'
           . ./.github/scripts/WssAutomatic.ps1
           $repo = 'cwru-non-academic/WSSCore'
-          $run = Invoke-WssGh @('api', "repos/$repo/actions/runs/$env:RUN_ID") | ConvertFrom-Json
+          $run = Invoke-WssGh -Arguments @('api', "repos/$repo/actions/runs/$env:RUN_ID") | ConvertFrom-Json
           Assert-WssAutomaticProducer $run $env:COMMIT
           # The producer's final gated job dispatched us; its entire run must now finish green.
           $run = Wait-WssExactRun $repo $env:RUN_ID $env:COMMIT 'artifacts.yml' 'push'
           Assert-WssAutomaticProducer $run $env:COMMIT
-          $compare = Invoke-WssGh @('api', "repos/$repo/compare/$env:COMMIT...dev") | ConvertFrom-Json
+          $compare = Invoke-WssGh -Arguments @('api', "repos/$repo/compare/$env:COMMIT...dev") | ConvertFrom-Json
           if ($compare.status -notin @('ahead', 'identical')) { throw 'Producer commit is not contained in WSSCore dev.' }
-          $pages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/$repo/actions/runs/$env:RUN_ID/jobs?per_page=100") | ConvertFrom-Json
+          $pages = Invoke-WssGh -Arguments @('api', '--paginate', '--slurp', "repos/$repo/actions/runs/$env:RUN_ID/attempts/$($run.run_attempt)/jobs?per_page=100") | ConvertFrom-Json
           $jobs = @($pages | ForEach-Object { $_.jobs })
-          foreach ($name in @('Core conformance', 'BLE consumer (Linux)', 'BLE consumer (Windows)', 'Build and validate artifacts',
-              'Serial consumer (Linux)', 'Serial consumer (Windows)', 'Serial consumer (macOS)',
-              'Core consumer (Linux)', 'Core consumer (Windows)', 'Core consumer (macOS)', 'Start routine downstream validation')) {
-            if (@($jobs | Where-Object { $_.name -ceq $name -and $_.conclusion -ceq 'success' }).Count -ne 1) { throw "Required producer job did not succeed: $name" }
-          }
+          . ./.github/scripts/wss-ci/Producer.ps1
+          Assert-WssCiProducerJobs $jobs 'macos-ble-v1'
           ./.github/scripts/Resolve-WssRelease.ps1 -RunId $env:RUN_ID -ExpectedCommit $env:COMMIT -ArchiveName WSS-Universal-ci.zip -ExpectedSha256 $env:SHA256 -OutputRoot "$env:RUNNER_TEMP/automatic-candidate"
           $candidate = Get-Content "$env:RUNNER_TEMP/automatic-candidate/candidate.json" -Raw | ConvertFrom-Json
           if ([string]$candidate.artifact_id -cne $env:ARTIFACT_ID) { throw 'Automatic producer artifact ID mismatch.' }
@@ -345,7 +345,7 @@ jobs:
                 [Regex]::Matches($pr.body, '<!-- wss-promotion:v2 -->').Count -ne 1 -or
                 [Regex]::Matches($pr.body, '(?m)^<!-- correlation-id:').Count -ne 1) { throw 'Existing PR has ambiguous or mismatched promotion metadata.' }
 
-            $pages = Invoke-WssGh @('api', '--paginate', '--slurp', "repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/$($env:PR_NUMBER)/files?per_page=100") | ConvertFrom-Json
+            $pages = Invoke-WssGh -Arguments @('api', '--paginate', '--slurp', "repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/$($env:PR_NUMBER)/files?per_page=100") | ConvertFrom-Json
             $files = @($pages | ForEach-Object { $_ })
             if ($files.Count -eq 0) {
               throw 'Existing promotion PR has no readable changed files.'
@@ -463,9 +463,6 @@ jobs:
 
           'no_change=false' >> $env:GITHUB_OUTPUT
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
       - name: Open promotion pull request
         if: >-
           steps.existing.outputs.pr_number == '' &&
