@@ -10,6 +10,15 @@ const nativeGit=(root,args)=>{
   try{return execFileSync('git',['-C',root,...args],{encoding:'utf8',maxBuffer:32*1024*1024}).trim();}
   catch{throw new Error('Promotion Git operation failed or is uncertain; inspect remote state before retry.');}
 };
+// Git extraheader is multi-valued. Reset inherited checkout credentials before
+// supplying the delayed, repository-scoped publication token exactly once.
+export function promotionCredentialArguments(token,scope='https://github.com/') {
+  requireThat(typeof token==='string' && token.length>0 && !/[\r\n]/.test(token),'Missing publication credential');
+  const url=new URL(scope);
+  requireThat(['http:','https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash && url.pathname.endsWith('/'),'Invalid credential URL scope');
+  const header=Buffer.from('x-access-token:'+token).toString('base64');
+  return ['-c',`http.${scope}.extraheader=`,'-c',`http.${scope}.extraheader=AUTHORIZATION: basic ${header}`];
+}
 export async function publishPromotion(c,{g=new GitHub(),writer=new GitHub(process.env.WSS_PUSH_TOKEN),git=nativeGit,env=process.env}={}) {
   const profile=profiles[c.target_id];requireThat(profile,'Unknown publication target');
   const t=profile.target,root=resolve(c.repository_root);
@@ -50,7 +59,7 @@ export async function publishPromotion(c,{g=new GitHub(),writer=new GitHub(proce
   git(root,['-c','user.name=WSS promotion automation','-c','user.email=wss-promotion@users.noreply.github.com','commit','-m',c.commit_message]);
   sourceCheck();
   const header=Buffer.from('x-access-token:'+env.WSS_PUSH_TOKEN).toString('base64');console.log(`::add-mask::${header}`);
-  git(root,['-c',`http.https://github.com/.extraheader=AUTHORIZATION: basic ${header}`,'-c','push.followTags=false','push','origin',`HEAD:refs/heads/${c.branch}`]);
+  git(root,[...promotionCredentialArguments(env.WSS_PUSH_TOKEN),'-c','push.followTags=false','push','origin',`HEAD:refs/heads/${c.branch}`]);
   const url=writer.command(['pr','create','--repo',t.repository,'--base','dev','--head',c.branch,'--draft','--title',c.title,'--body-file',resolve(c.body_path)]).trim();
   if(env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY,`Promotion draft: ${url}\n`);
   return {reused:false,url};

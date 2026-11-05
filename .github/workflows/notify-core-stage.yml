@@ -1,0 +1,55 @@
+name: Notify verified integration stage
+on:
+  pull_request_target:
+    types: [closed]
+    branches: [dev]
+  workflow_run:
+    workflows: [WSS integration compatibility]
+    types: [completed]
+    branches: [dev]
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: notify-core-integration-stage
+  cancel-in-progress: false
+jobs:
+  notify:
+    name: Wake the trusted coordinator for this integration
+    if: >-
+      (github.event_name == 'pull_request_target' && github.event.pull_request.merged == true &&
+       github.event.pull_request.user.type == 'Bot' && github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate current merged family, frozen source and canonical producer
+        id: family
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/wss-ci/notify-family.mjs
+      - name: Request existing App permission for the fixed Core coordinator only
+        if: steps.family.outputs.needed == 'true'
+        id: coordinator
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore
+          permission-actions: write
+      - name: Wake idempotent staged reconciliation
+        if: steps.family.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.coordinator.outputs.token }}
+          PRODUCER_RUN_ID: ${{ steps.family.outputs.producer_run_id }}
+        run: gh api --method POST repos/cwru-non-academic/WSSCore/actions/workflows/dev-propagation.yml/dispatches -f ref=main -f "inputs[producer_run_id]=$PRODUCER_RUN_ID" -f 'inputs[mode]=reconcile'

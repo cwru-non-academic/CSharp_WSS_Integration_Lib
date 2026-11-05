@@ -20,7 +20,8 @@
       "trusted_paths": [
         ".github/workflows/release-receipt.yml",
         ".github/scripts",
-        ".github/workflows/wss-compatibility.yml"
+        ".github/workflows/wss-compatibility.yml",
+        ".github/workflows/notify-core-stage.yml"
       ],
       "coverage": [
         "canonical-conformance",
@@ -81,7 +82,8 @@
         ".github/workflows/release-receipt.yml",
         ".github/scripts",
         ".github/unity-ci.json",
-        ".github/workflows/unity-compatibility.yml"
+        ".github/workflows/unity-compatibility.yml",
+        ".github/workflows/notify-core-stage.yml"
       ],
       "coverage": [
         "canonical-conformance",
@@ -146,7 +148,8 @@
         ".github/workflows/release-receipt.yml",
         ".github/scripts",
         ".github/python-ci.json",
-        ".github/workflows/wss-compatibility.yml"
+        ".github/workflows/wss-compatibility.yml",
+        ".github/workflows/notify-core-stage.yml"
       ],
       "coverage": [
         "canonical-conformance",
@@ -245,7 +248,8 @@
         ".github/actions",
         ".github/matlab-ci.json",
         "ci",
-        "conformance"
+        "conformance",
+        ".github/workflows/notify-core-stage.yml"
       ],
       "coverage": [
         "canonical-conformance",
