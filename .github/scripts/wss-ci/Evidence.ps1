@@ -1,4 +1,20 @@
 # Shared primitive evidence checks; adapters supply schema-specific required fields.
+function New-WssCiEvidenceIdentity([string]$Repository,[string]$RunId,[string]$Attempt,[string]$SourceSha,[string]$Architecture) {
+    $architectureKey=$Architecture.ToLowerInvariant()
+    if($architectureKey -ceq 'x86_64'){$architectureKey='x64'}
+    if($Repository -cnotmatch '^cwru-non-academic/[A-Za-z0-9_]+$' -or $RunId -cnotmatch '^[1-9][0-9]*$' -or
+        $Attempt -cnotmatch '^[1-9][0-9]*$' -or $SourceSha -cnotmatch '^[a-f0-9]{40}$' -or $architectureKey -cnotin @('x64','arm64')) {
+        throw 'Complete canonical CI evidence identity is required.'
+    }
+    [ordered]@{schema='wss-ci-evidence-identity/v1';repository=$Repository;run_id=$RunId;attempt=$Attempt;source_sha=$SourceSha;architecture=$architectureKey}
+}
+function Assert-WssCiEvidenceIdentity($Identity,[string]$Repository,[string]$RunId,[string]$Attempt,[string]$SourceSha,[string]$Architecture) {
+    if(!$Identity){throw 'Missing versioned CI evidence identity.'}
+    $expected=New-WssCiEvidenceIdentity $Repository $RunId $Attempt $SourceSha $Architecture
+    $keys=if($Identity -is [System.Collections.IDictionary]){@($Identity.Keys)}else{@($Identity.PSObject.Properties.Name)}
+    if(@(Compare-Object @($expected.Keys) $keys -CaseSensitive).Count){throw 'Unexpected CI evidence identity fields.'}
+    Assert-WssCiEvidenceFields $Identity $expected
+}
 function Assert-WssCiEvidenceFields($Record,[System.Collections.IDictionary]$Expected) {
     foreach($key in $Expected.Keys) {
         $property=$Record.PSObject.Properties[[string]$key]

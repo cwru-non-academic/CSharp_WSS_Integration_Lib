@@ -23,8 +23,10 @@ function Initialize-WssMacOSEvidence([string]$Architecture,[string]$Context,[str
     $global:LASTEXITCODE=0 # sysctl.proc_translated is normally absent on Intel.
 }
 function Write-WssMacOSEvidence([string]$Architecture,[string]$Context,[string]$Directory,[string]$Trx,[string]$ConsoleLog,[string]$PayloadRoot,[string]$CliLog='',[string]$IntegrationSha=$env:GITHUB_SHA) {
+    $identity=New-WssCiEvidenceIdentity $env:GITHUB_REPOSITORY $env:GITHUB_RUN_ID $env:GITHUB_RUN_ATTEMPT $env:GITHUB_SHA $Architecture
     $record=[ordered]@{schema='wss-macos-ble-consumer/v1';architecture=$Architecture;context=$Context;run_id=$env:GITHUB_RUN_ID;attempt=$env:GITHUB_RUN_ATTEMPT;source_sha=$env:GITHUB_SHA;passed=$false;coverage='not-executed';test_outcome='missing';cli_legacy_asserted=$false;hardware_ble='not-executed';synthetic_fixture=$false;reason='Canonical BLE result missing.';host=$null;job_result='pending'}
     try {
+        $record['ci']=$identity
         if ($IntegrationSha -cnotmatch '^[0-9a-f]{40}$') { throw 'Exact tested Integration revision is missing.' }
         $record['integration_sha']=$IntegrationSha
         $record.host=Get-Content -LiteralPath (Join-Path $Directory 'host.json') -Raw | ConvertFrom-Json
@@ -78,7 +80,10 @@ function Assert-WssMacOSGate($Records,[string]$Context,[string]$WorkerResult,[st
         $matching=@($Records | Where-Object architecture -CEQ $arch)
         if ($matching.Count -ne 1) { $problems.Add("$arch : missing or duplicate architecture evidence"); continue }
         $r=$matching[0]
-        try { Assert-WssCiEvidenceFields $r @{schema='wss-macos-ble-consumer/v1';context=$Context;run_id=$RunId;attempt=$Attempt;source_sha=$SourceSha} }
+        try {
+            Assert-WssCiEvidenceFields $r @{schema='wss-macos-ble-consumer/v1';context=$Context;run_id=$RunId;attempt=$Attempt;source_sha=$SourceSha}
+            Assert-WssCiEvidenceIdentity $r.ci $env:GITHUB_REPOSITORY $RunId $Attempt $SourceSha $arch
+        }
         catch { throw "$arch : $($_.Exception.Message)" }
         if (
             !$r.passed -or $r.job_result -cne 'success' -or $r.hardware_ble -cne 'not-executed' -or $r.synthetic_fixture -or
