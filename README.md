@@ -121,11 +121,15 @@ is `wss-<producer-run>-<artifact-id>`. Replays reuse uniquely correlated runs an
 approval rather than dispatching new preflights; failed, missing, ambiguous, expired or
 mismatched evidence stops promotion. GitHub/API errors are never interpreted as absence.
 
-Integration uses `automation/wss-<run>-<hash>` with lib-only diffs. Manual merge triggers
-`dispatch-cli-promotion.yml`, using trusted base code and checking bot origin, lib-only scope,
-approval, merge SHA and normal CI. It dispatches CLI on `dev` with `integration_sha`,
-`integration_pr`, `approval_json` and `correlation_id`. CLI validates with trusted Integration
-`dev` tools before creating write credentials, retains gitlink-only PRs, and uses normal CI.
+Integration uses `automation/wss-<run>-<hash>` with lib-only diffs. A human merge is
+evaluated by `dispatch-cli-promotion.yml`, using trusted base code and checking bot
+origin, lib-only scope, approval, merge SHA and normal CI. For producers with staged
+propagation policy, Core's complete integration barrier must authorize application
+fanout before CLI write credentials are created; merging this Integration alone is
+not sufficient. Producers without that policy retain the verified legacy path.
+The authorized dispatch passes `integration_sha`, `integration_pr`, `approval_json`
+and `correlation_id` to CLI on `dev`. CLI validates with trusted Integration `dev`
+tools before creating write credentials, retains gitlink-only PRs, and uses normal CI.
 
 An identical complete dependency payload is a verified no-op: no metadata-only PR is
 created, existing committed provenance is retained, and the freshly verified schema-2
@@ -137,10 +141,17 @@ The existing `WSS_GITHUB_APP_ID` / `WSS_GITHUB_APP_PRIVATE_KEY` must be accessib
 in WSSCore as well as downstream repositories. The Core handoff needs Integration Actions
 write only. Integration needs producer/evidence Actions and Contents read, downstream
 Contents read/Actions write for dispatch, and its existing Contents/PR write for authoring.
-Dispatch/write tokens are created only after their corresponding trust checks. No workflow
-merges PRs, writes `dev` directly, bypasses protections, invokes bootstrap, tags or publishes
-a release. Reviewed Integration and CLI PR merges remain the
-only routine human actions (plus the initiating WSSCore PR merge).
+Dispatch/write tokens are created only after their corresponding trust checks. These
+Integration and CLI workflows do not merge PRs, write `dev` directly, bypass protections,
+invoke bootstrap, tag or publish a release. Human review of dependency PRs remains mandatory.
+
+Dev release acceptance is separate from promotion and green PR checks. Receipt validation
+requires the actual reviewed bot dependency merge, its exact current `dev` source, frozen
+tooling, paired candidate preflights and fresh committed-state normal CI. Normal C# CI
+supports PR and manual runs; acceptance requires a successful manual run at the accepted
+merge, not a synthetic PR checkout. A promotion no-op does not establish an accepted
+release receipt. Finish coherent trusted-main/dev tooling deployment before freezing a
+new plan; do not edit or reuse an old frozen plan to accommodate tooling changes.
 
 The orchestration has a 60-minute bound; timeouts and missing permissions fail explicitly.
 Existing Actions artifact/log retention still applies, including CLI preflight provenance's
@@ -221,11 +232,18 @@ source, rejects partial/stale propagation, and preserves the original legacy
 inventory verification. Existing recursive project copy rules already include
 dylibs.
 
+Normal dev CI and candidate preflight each run native Intel x64 and Apple Silicon
+arm64 workers. The existing macOS compatibility check requires both architecture
+records for the same run attempt and source, and reports each failure separately.
+Normal CI records canonical packaged-load evidence before running its separate
+synthetic fixture.
+
 <details>
 <summary>Maintainer reference: synthetic fixture source and evidence limits</summary>
 
-The fixture SHA below pins reviewed synthetic test source so a moving Core branch cannot silently change the test. The macOS compatibility
-job first tests the committed payload. It then builds the reviewed Core
+The fixture SHA below pins reviewed synthetic test source so a moving Core branch
+cannot silently change the test. Each normal macOS worker first tests the committed
+payload. It then builds the reviewed Core
 source `0ac18df22a1371e5ff94d5485c6d3fa4b3e6538f` as **synthetic test data**,
 exercises the declared-native path, and verifies that removing the output dylib
 fails instead of becoming an unsupported/skip result. Its evidence explicitly

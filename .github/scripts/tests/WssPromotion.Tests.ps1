@@ -48,6 +48,61 @@ try {
     Assert-Rejected { Assert-WssNewtonsoftTestAlignment $originalProject ('0'*40) $candidateNewtonsoft } 'Test dependency change is not*'
     Assert-Rejected { Assert-WssNewtonsoftTestAlignment $originalProject $alignedProject ('0'*64) } 'Test dependency change is not*'
 
+    # Real Git regression: validate the postmerge CLI tree against its preflight
+    # source. The only accepted dependency change is the exact wrapper gitlink.
+    $sourceFixture = Join-Path $temp 'source-scope'
+    New-Item -ItemType Directory -Path $sourceFixture | Out-Null
+    function Fixture-Git {
+        $output = & git -c user.name=ReceiptSourceTests -c user.email=receipt-source-tests@example.invalid -C $sourceFixture @args
+        if ($LASTEXITCODE -ne 0) { throw 'Source-scope Git fixture command failed.' }
+        $output
+    }
+    $null = Fixture-Git init --quiet -b main
+    New-Item -ItemType Directory -Path (Join-Path $sourceFixture 'src') | Out-Null
+    'validated CLI source' | Set-Content (Join-Path $sourceFixture 'src/Program.cs')
+    'baseline' | Set-Content (Join-Path $sourceFixture 'README.md')
+    $null = Fixture-Git add -- src/Program.cs README.md
+    $null = Fixture-Git commit --quiet -m 'Initial fixture source'
+    $oldPin = (Fixture-Git rev-parse HEAD).Trim()
+    $null = Fixture-Git update-index --add --cacheinfo "160000,$oldPin,SubModules/HFI_WSS_Csharp_Implementation"
+    $null = Fixture-Git commit --quiet -m 'Validated CLI preflight state'
+    $preflightSource = (Fixture-Git rev-parse HEAD).Trim()
+    $null = Fixture-Git switch --quiet -c dependency
+    $null = Fixture-Git update-index --cacheinfo "160000,$preflightSource,SubModules/HFI_WSS_Csharp_Implementation"
+    $null = Fixture-Git commit --quiet -m 'Update exact wrapper gitlink'
+    $null = Fixture-Git switch --quiet main
+    $null = Fixture-Git merge --quiet --no-ff dependency -m 'Reviewed dependency merge'
+    $acceptedMerge = (Fixture-Git rev-parse HEAD).Trim()
+    if (@((Fixture-Git rev-list --parents -n 1 HEAD) -split ' ').Count -ne 3) { throw 'Fixture must exercise an actual two-parent merge.' }
+    if ((Fixture-Git ls-tree HEAD SubModules/HFI_WSS_Csharp_Implementation) -cnotmatch '^160000 commit ') { throw 'Fixture dependency must be a real gitlink.' }
+    Assert-WssSource $sourceFixture $preflightSource -Consumer cli
+    $count++
+    Assert-Rejected { Assert-WssSource $sourceFixture $preflightSource } 'Unexpected promotion path: SubModules/HFI_WSS_Csharp_Implementation'
+
+    # Preserve the existing documentation allowance for CLI, alongside its pin.
+    'documented promotion' | Set-Content (Join-Path $sourceFixture 'README.md')
+    $null = Fixture-Git add -- README.md
+    $null = Fixture-Git commit --quiet -m 'Document the merge'
+    Assert-WssSource $sourceFixture $preflightSource -Consumer cli
+    $count++
+    'unreviewed CLI source' | Set-Content (Join-Path $sourceFixture 'src/Program.cs')
+    $null = Fixture-Git add -- src/Program.cs
+    $null = Fixture-Git commit --quiet -m 'Unrelated source change'
+    Assert-Rejected { Assert-WssSource $sourceFixture $preflightSource -Consumer cli } 'Unexpected CLI source path: src/Program.cs'
+
+    $null = Fixture-Git switch --quiet -c unexpected-payload $acceptedMerge
+    New-Item -ItemType Directory -Path (Join-Path $sourceFixture 'lib') | Out-Null
+    'not a CLI dependency payload' | Set-Content (Join-Path $sourceFixture 'lib/unrelated.dll')
+    $null = Fixture-Git add -- lib/unrelated.dll
+    $null = Fixture-Git commit --quiet -m 'Unrelated payload change'
+    Assert-Rejected { Assert-WssSource $sourceFixture $preflightSource -Consumer cli } 'Unexpected CLI source path: lib/unrelated.dll'
+
+    $null = Fixture-Git switch --quiet -c unexpected-gitlink $acceptedMerge
+    $null = Fixture-Git update-index --add --cacheinfo "160000,$oldPin,SubModules/unrelated"
+    $null = Fixture-Git commit --quiet -m 'Unrelated gitlink change'
+    Assert-Rejected { Assert-WssSource $sourceFixture $preflightSource -Consumer cli } 'Unexpected CLI source path: SubModules/unrelated'
+    Remove-Item Function:Fixture-Git
+
     # Metadata-only fakes: no candidate binaries, workflow dispatches or PRs are created.
     function Invoke-WssGh([string[]] $Arguments) {
         if ($Arguments[1] -like '*/pulls/*') {
@@ -118,8 +173,11 @@ try {
 
     # Automatic handoff contracts: fake only the GitHub transport, never dispatch remotely.
     . "$PSScriptRoot/../WssAutomatic.ps1"
-    $producer = [pscustomobject]@{ repository=@{full_name='cwru-non-academic/WSSCore'}; path='.github/workflows/artifacts.yml'; event='push'; head_branch='dev'; head_sha=$approval.candidate.commit }
+    $producer = [pscustomobject]@{ repository=@{full_name='cwru-non-academic/WSSCore'}; head_repository=@{full_name='cwru-non-academic/WSSCore'}; path='.github/workflows/artifacts.yml'; event='push'; head_branch='dev'; head_sha=$approval.candidate.commit }
     Assert-WssAutomaticProducer $producer $approval.candidate.commit
+    $badProducer=$producer | ConvertTo-Json -Depth 5 | ConvertFrom-Json
+    $badProducer.head_repository.full_name='fork/repo'
+    Assert-Rejected { Assert-WssAutomaticProducer $badProducer $approval.candidate.commit } 'Automatic promotion requires*'
     foreach ($field in @('event', 'head_branch', 'head_sha')) {
         $bad = $producer | ConvertTo-Json | ConvertFrom-Json
         $bad.$field = 'untrusted'
@@ -139,7 +197,7 @@ try {
         if ($script:dispatchRace) { $sha = '5'*40 }
         $script:runs[$Repository] = [pscustomobject]@{
             id = $(if ($Repository -like '*/CLI_*') { '42' } else { '41' })
-            repository = @{full_name=$Repository}; path='.github/workflows/wss-preflight.yml'
+            repository = @{full_name=$Repository}; head_repository=@{full_name=$Repository}; head_branch='dev'; path='.github/workflows/wss-preflight.yml'
             head_sha=$sha; event='workflow_dispatch'; status='completed'; conclusion='success'
             display_title="WSS preflight $($request.inputs.wss_run_id) / $($request.inputs.correlation_id)"
         }
@@ -257,6 +315,75 @@ try {
     Copy-Item (Join-Path $lib 'WSS_Core_Interface.dll') (Join-Path $payload 'WSS_Core_Interface.dll') -Force
     'stale' | Set-Content (Join-Path $lib 'obsolete.dll')
     if (Test-WssPayloadEqual $lib $payload) { throw 'Incomplete/extra committed dependencies were treated as a no-op.' }
+    $count++
+
+    # Exercise the actual late workflow command with metadata-only API stubs.
+    # These checks authorize no token, remote request or runtime acceptance.
+    $workflow = Get-Content "$PSScriptRoot/../../workflows/dispatch-cli-promotion.yml" -Raw
+    $stepName = 'Recheck integration barrier immediately before CLI writes'
+    $step = [regex]::Match($workflow, "(?ms)^      - name: $stepName\r?\n(?<body>.*?)(?=^      - )")
+    $validateAt = $workflow.IndexOf('name: Validate promotion metadata')
+    $checkAt = $workflow.IndexOf("name: $stepName")
+    $tokenAt = $workflow.IndexOf('name: Create CLI Actions token')
+    $postAt = $workflow.IndexOf('name: Dispatch CLI promotion workflow')
+    if (!$step.Success -or $validateAt -lt 0 -or $checkAt -le $validateAt -or $tokenAt -le $checkAt -or $postAt -le $tokenAt -or
+        !$step.Groups['body'].Value.Contains("if: github.event_name == 'workflow_dispatch' && steps.intent.outputs.dispatch_needed == 'true'")) {
+        throw 'The staged recheck must gate write credentials after metadata validation, preserving the legacy path.'
+    }
+    $command = [regex]::Match($step.Groups['body'].Value, '(?m)^        run: (?<command>.+)\r?$')
+    if (!$command.Success) { throw 'Late barrier command missing.' }
+    $lateCheck = [scriptblock]::Create($command.Groups['command'].Value)
+    $savedEnvironment = @{}
+    foreach ($key in @('GITHUB_ACTIONS','GITHUB_REPOSITORY','GITHUB_EVENT_NAME','GITHUB_REF','PRODUCER_RUN_ID','BARRIER_RUN_ID','BARRIER_ATTEMPT','EXPECTED_MERGE_SHA','GITHUB_OUTPUT','RUNNER_TEMP')) {
+        $savedEnvironment[$key] = [Environment]::GetEnvironmentVariable($key)
+    }
+    $global:wssTestlateMain = 'a'*40; $global:wssTestlateInvalid = $false; $global:wssTestlateDenied = $false
+    $global:wssTestlateCalls = 0; $global:wssTestlateWrites = 0
+    function gh {
+        $global:LASTEXITCODE = 0
+        if ('POST' -cin $args) { $global:wssTestlateWrites++; throw 'Metadata fixture must never write.' }
+        if ($global:wssTestlateDenied) { $global:LASTEXITCODE = 1; return '{}' }
+        switch ($args[-1]) {
+            'repos/cwru-non-academic/WSSCore/git/ref/heads/main' { @{object=@{sha=$global:wssTestlateMain}} | ConvertTo-Json -Depth 4 }
+            'repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/40' {
+                @{merged=$true;state='closed';merge_commit_sha=('b'*40);user=@{type='Bot'};
+                    base=@{ref='dev';repo=@{full_name=$env:GITHUB_REPOSITORY}};
+                    head=@{repo=@{full_name=$env:GITHUB_REPOSITORY}}} | ConvertTo-Json -Depth 6
+            }
+            default { throw "Unexpected late-check read: $($args[-1])" }
+        }
+    }
+    function git { $global:LASTEXITCODE = 0; $global:wssTestlateMain }
+    function node {
+        $global:wssTestlateCalls++
+        if (($args[1..4] -join ',') -cne 'verify-barrier,123,456,1') { throw 'Late check changed exact correlation inputs.' }
+        $global:LASTEXITCODE = if ($global:wssTestlateInvalid) { 1 } else { 0 }
+        @{integrations=@{csharp=@{repository=$env:GITHUB_REPOSITORY;pr_number='40';head_sha=('b'*40)}}} | ConvertTo-Json -Depth 6
+    }
+    Push-Location "$PSScriptRoot/../../.."
+    try {
+        $env:GITHUB_ACTIONS='true'; $env:GITHUB_REPOSITORY='cwru-non-academic/CSharp_WSS_Integration_Lib'
+        $env:GITHUB_EVENT_NAME='workflow_dispatch'; $env:GITHUB_REF='refs/heads/main'
+        $env:PRODUCER_RUN_ID='123'; $env:BARRIER_RUN_ID='456'; $env:BARRIER_ATTEMPT='1'
+        $env:EXPECTED_MERGE_SHA='b'*40
+        $env:GITHUB_OUTPUT=Join-Path $temp 'late-output'; $env:RUNNER_TEMP=Join-Path $temp 'late-valid'
+        $null = & $lateCheck
+        if (!(Test-Path (Join-Path $env:RUNNER_TEMP 'cli-stage-recheck/fanout-event.json'))) { throw 'Valid late barrier did not retain the authorized merge event.' }
+        $env:EXPECTED_MERGE_SHA='c'*40; $env:RUNNER_TEMP=Join-Path $temp 'late-replaced-merge'
+        Assert-Rejected { & $lateCheck } 'Shared barrier integration changed*'
+        $env:EXPECTED_MERGE_SHA='b'*40
+        $global:wssTestlateInvalid=$true; $env:RUNNER_TEMP=Join-Path $temp 'late-moved'
+        Assert-Rejected { & $lateCheck } 'Trusted Core integration barrier verification failed*'
+        if (Test-Path (Join-Path $env:RUNNER_TEMP 'cli-stage-recheck/fanout-event.json')) { throw 'A moved barrier emitted a dispatch event.' }
+        $global:wssTestlateInvalid=$false; $global:wssTestlateDenied=$true
+        Assert-Rejected { & $lateCheck } 'Read-only GitHub lookup failed*'
+        if ($global:wssTestlateCalls -ne 3 -or $global:wssTestlateWrites -ne 0) { throw 'Rejection retried the verifier or attempted a write.' }
+    } finally {
+        Pop-Location
+        Remove-Item Function:gh, Function:git, Function:node
+        foreach ($key in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($key,$savedEnvironment[$key]) }
+        $global:LASTEXITCODE=0
+    }
     $count++
 
     if ($ArtifactRoot) {

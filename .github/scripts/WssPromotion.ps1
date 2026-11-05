@@ -81,7 +81,19 @@ function Read-WssBootstrapProof([string] $Root, [string] $Consumer, $Approval, [
     } finally { $zip.Dispose() }
 }
 
-function Assert-WssApproval($Approval, [string] $EvidenceRoot, [string] $BootstrapEvidenceRoot = '') {
+function Assert-WssCanonicalPreflight($Run, [string] $Consumer, [string] $SourceSha, $Jobs) {
+    $repo = if ($Consumer -ceq 'integration') { 'cwru-non-academic/CSharp_WSS_Integration_Lib' } elseif ($Consumer -ceq 'cli') { 'cwru-non-academic/CLI_CSharp_WSS_Application' } else { throw 'Unknown C# preflight consumer.' }
+    if ($Run.repository.full_name -cne $repo -or $Run.head_repository.full_name -cne $repo -or $Run.head_branch -cne 'dev' -or
+        $Run.path -cne '.github/workflows/wss-preflight.yml' -or $Run.event -cne 'workflow_dispatch' -or
+        $Run.head_sha -cne $SourceSha -or $Run.status -cne 'completed' -or $Run.conclusion -cne 'success') { throw 'Canonical C# dev preflight identity is invalid.' }
+    $required = if ($Consumer -ceq 'integration') { @('Resolve preflight inputs','Preflight behavioral tests','Preflight compatibility (Windows)','Preflight compatibility (Ubuntu)','Preflight compatibility (macOS)') } else { @('WSS universal candidate provenance','CLI general conformance','CLI platform compatibility (Windows)','CLI platform compatibility (Ubuntu)','CLI platform compatibility (macOS)') }
+    foreach ($name in $required) {
+        $matching = @($Jobs | Where-Object name -CEQ $name)
+        if ($matching.Count -ne 1 -or $matching[0].status -cne 'completed' -or $matching[0].conclusion -cne 'success') { throw "Required canonical C# preflight job missing/skipped/failed: $name" }
+    }
+}
+
+function Assert-WssApproval($Approval, [string] $EvidenceRoot, [string] $BootstrapEvidenceRoot = '', [switch] $RequireCanonicalDev) {
     if (Test-Path -LiteralPath $EvidenceRoot) { throw 'EvidenceRoot must be new.' }
     New-Item -ItemType Directory -Path $EvidenceRoot | Out-Null
     $c = $Approval.candidate
@@ -107,6 +119,14 @@ function Assert-WssApproval($Approval, [string] $EvidenceRoot, [string] $Bootstr
             $record = Get-Content -LiteralPath (Join-Path $destination 'candidate.json') -Raw | ConvertFrom-Json
         }
         Assert-WssCandidateRecord $record $Approval
+        if ($RequireCanonicalDev) {
+            $jobPages = Invoke-WssGh @('api','--paginate','--slurp',"repos/$repo/actions/runs/$($run.id)/attempts/$($run.run_attempt)/jobs?per_page=100") | ConvertFrom-Json
+            $preflightJobs = @($jobPages | ForEach-Object { $_.jobs })
+            Assert-WssCanonicalPreflight $run $consumer $expected.source_sha $preflightJobs
+            $currentRun = Invoke-WssGh @('api',"repos/$repo/actions/runs/$($run.id)") | ConvertFrom-Json
+            if ($currentRun.id -ne $run.id -or $currentRun.run_attempt -ne $run.run_attempt) { throw 'Preflight run attempt changed during validation.' }
+            Assert-WssCanonicalPreflight $currentRun $consumer $expected.source_sha $preflightJobs
+        }
     }
     # Existing preflight provenance records contain the candidate, not the selected
     # Integration SHA. Bind it using the successful checkout-verification job's log.
@@ -157,7 +177,7 @@ function Assert-WssNewtonsoftTestAlignment([string] $BeforeBlob, [string] $After
     }
 }
 
-function Assert-WssSource([string] $Worktree, [string] $SourceSha) {
+function Assert-WssSource([string] $Worktree, [string] $SourceSha, [ValidateSet('integration','cli')][string] $Consumer = 'integration') {
     # Only packaging/promotion automation and documentation may differ from the
     # tested source. Application, dependency references, preflight and tests must match.
     $allowed = @('README.md', '.github/scripts/New-WssLib.ps1', '.github/scripts/WssPromotion.ps1', '.github/scripts/WssAutomatic.ps1',
@@ -167,6 +187,13 @@ function Assert-WssSource([string] $Worktree, [string] $SourceSha) {
         '.github/universal-bootstrap.json', '.github/promotion-evidence/integration.zip.b64', '.github/promotion-evidence/cli.zip.b64')
     $paths = @(& git -C $Worktree diff --name-only $SourceSha HEAD)
     if ($LASTEXITCODE -ne 0) { throw 'Cannot compare approved source with promotion source.' }
+    if ($Consumer -ceq 'cli') {
+        # A reviewed CLI dependency merge changes this exact gitlink, not lib/.
+        foreach ($path in $paths) {
+            if ($path -cne 'SubModules/HFI_WSS_Csharp_Implementation' -and $path -cnotin $allowed) { throw "Unexpected CLI source path: $path" }
+        }
+        return
+    }
     $testProject = 'tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj'
     if ($paths -ccontains $testProject) {
         $before = (& git -C $Worktree rev-parse "${SourceSha}:$testProject").Trim()
