@@ -23,12 +23,12 @@ jobs:
             import fs from "node:fs";
             const l=JSON.parse(fs.readFileSync(".github/scripts/wss-ci.lock.json","utf8"));
             if(l.source_repository!=="cwru-non-academic/WSSCore" || !/^[a-f0-9]{40}$/.test(l.source_commit) || l.source_ref!==`refs/heads/ci/tooling/${l.source_commit}`) throw Error("Invalid shared CI source");
-            fs.appendFileSync(process.env.GITHUB_OUTPUT,`ref=${l.source_ref}\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT,`commit=${l.source_commit}\n`);
           '
       - uses: actions/checkout@v4
         with:
           repository: cwru-non-academic/WSSCore
-          ref: ${{ steps.lock.outputs.ref }}
+          ref: ${{ steps.lock.outputs.commit }}
           path: .wss-core
           persist-credentials: false
       - name: Reject common implementation drift

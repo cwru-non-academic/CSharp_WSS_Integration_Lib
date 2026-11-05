@@ -516,6 +516,7 @@ jobs:
           $env:WSS_PUSH_TOKEN=$writeToken
           $env:GH_TOKEN=$env:WSS_READ_TOKEN
           try {
+            Assert-WssCandidateNotOlder $approval.candidate $env:SOURCE_SHA
             & node ./.github/scripts/wss-ci/promotion.mjs $descriptorPath
             if($LASTEXITCODE -ne 0){throw 'Common promotion publication failed or is uncertain; inspect before retry.'}
           } finally {$env:GH_TOKEN=$writeToken; $env:WSS_PUSH_TOKEN=$null}
