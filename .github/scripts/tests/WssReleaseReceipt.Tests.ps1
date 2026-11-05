@@ -150,13 +150,13 @@ foreach ($targetId in @('csharp-wrapper', 'csharp-cli')) {
     $script:receiptObjects[".tools|HEAD:$normal"] = 'main-normal-ci'
     $script:receiptObjects['.tools|HEAD:.github/scripts'] = 'main-other-scripts'
     $script:receiptObjects['.validation-tools|HEAD:.github/scripts'] = 'main-other-validator-scripts'
-    foreach ($path in @('.github/workflows/release-receipt.yml', '.github/scripts/Write-ReleaseReceipt.ps1', '.github/scripts/WssReleaseReceipt.ps1')) {
+    foreach ($path in @('.github/workflows/release-receipt.yml', '.github/scripts/Write-ReleaseReceipt.ps1', '.github/scripts/WssReleaseReceipt.ps1', '.github/scripts/wss-ci')) {
         $value = if ($path -ceq '.github/workflows/release-receipt.yml') { 'receipt-workflow' } else { "receiver-file:$path" }
         $script:receiptObjects[".accepted|HEAD:$path"] = $value
         $script:receiptObjects[".tools|HEAD:$path"] = $value
     }
     $script:receiptObjects["$wrapperRoot|HEAD:.github/scripts"] = $plan.target_snapshots.'csharp-wrapper'.trusted.'.github/scripts'
-    foreach ($path in @('.github/scripts/WssPromotion.ps1', '.github/scripts/Universal-WssFiles.ps1', '.github/scripts/Resolve-WssRelease.ps1')) {
+    foreach ($path in @('.github/scripts/WssPromotion.ps1', '.github/scripts/Universal-WssFiles.ps1', '.github/scripts/Resolve-WssRelease.ps1', '.github/scripts/wss-ci')) {
         $script:receiptObjects["$wrapperRoot|HEAD:$path"] = "wrapper-file:$path"
         $script:receiptObjects[".validation-tools|HEAD:$path"] = "wrapper-file:$path"
     }
@@ -164,10 +164,10 @@ foreach ($targetId in @('csharp-wrapper', 'csharp-cli')) {
     foreach ($path in $trusted) {
         Reject-ToolingMutation ".accepted|HEAD:$path" 'Accepted receiver tooling differs:*'
     }
-    foreach ($path in @('.github/workflows/release-receipt.yml', '.github/scripts/Write-ReleaseReceipt.ps1', '.github/scripts/WssReleaseReceipt.ps1')) {
+    foreach ($path in @('.github/workflows/release-receipt.yml', '.github/scripts/Write-ReleaseReceipt.ps1', '.github/scripts/WssReleaseReceipt.ps1', '.github/scripts/wss-ci')) {
         Reject-ToolingMutation ".tools|HEAD:$path" 'Trusted main receipt tooling differs:*'
     }
-    foreach ($path in @('.github/scripts/WssPromotion.ps1', '.github/scripts/Universal-WssFiles.ps1', '.github/scripts/Resolve-WssRelease.ps1')) {
+    foreach ($path in @('.github/scripts/WssPromotion.ps1', '.github/scripts/Universal-WssFiles.ps1', '.github/scripts/Resolve-WssRelease.ps1', '.github/scripts/wss-ci')) {
         Reject-ToolingMutation ".validation-tools|HEAD:$path" 'Shared C# validator differs from frozen code:*'
     }
     if ($targetId -ceq 'csharp-cli') {

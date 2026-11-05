@@ -37,7 +37,7 @@ function Assert-WssReceiptTooling($Plan, [string] $TargetId, $Target, [string] $
     }
     $wrapperRoot = if ($TargetId -ceq 'csharp-wrapper') { $AcceptedRoot } else { $IntegrationRoot }
     if ((Invoke-ReceiptGit $wrapperRoot -Arguments @('rev-parse','HEAD:.github/scripts')) -cne $Plan.target_snapshots.'csharp-wrapper'.trusted.'.github/scripts') { throw 'Accepted wrapper validators differ from frozen code.' }
-    foreach ($path in @('.github/scripts/WssPromotion.ps1', '.github/scripts/Universal-WssFiles.ps1', '.github/scripts/Resolve-WssRelease.ps1')) {
+    foreach ($path in @('.github/scripts/WssPromotion.ps1', '.github/scripts/Universal-WssFiles.ps1', '.github/scripts/Resolve-WssRelease.ps1', '.github/scripts/wss-ci')) {
         if ((Invoke-ReceiptGit $ValidatorRoot -Arguments @('rev-parse',"HEAD:$path")) -cne (Invoke-ReceiptGit $wrapperRoot -Arguments @('rev-parse',"HEAD:$path"))) { throw "Shared C# validator differs from frozen code: $path" }
     }
 }
