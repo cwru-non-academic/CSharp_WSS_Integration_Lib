@@ -103,6 +103,136 @@ try {
     Assert-Rejected { Assert-WssSource $sourceFixture $preflightSource -Consumer cli } 'Unexpected CLI source path: SubModules/unrelated'
     Remove-Item Function:Fixture-Git
 
+    # Execute the production checkout bookkeeping and lib status boundary, not
+    # an independently maintained allowlist. All Git repositories are fixtures.
+    $promotionWorkflow = Get-Content "$PSScriptRoot/../../workflows/promote-wss.yml" -Raw
+    function Get-PromotionStep([string] $Name) {
+        $matches = [regex]::Matches($promotionWorkflow, "(?ms)^      - name: $([regex]::Escape($Name))\r?\n(?<body>.*?)(?=^      - |\z)")
+        if ($matches.Count -ne 1) { throw "Expected exactly one production step: $Name" }
+        $matches[0].Groups['body'].Value
+    }
+    $authoring = Get-PromotionStep 'Bind authoring checkout to the validated promotion base'
+    if (!$authoring.Contains('uses: actions/checkout@v4') -or !$authoring.Contains('clean: false') -or
+        !$authoring.Contains('ref: ${{ steps.source.outputs.sha }}') -or
+        !$authoring.Contains('token: ${{ steps.integration-token.outputs.token }}')) { throw 'Authoring checkout must preserve the locked guard and exact validated source.' }
+    $initialCheckout = Get-PromotionStep 'Check out current Integration dev'
+    if (!$initialCheckout.Contains('ref: ${{ github.sha }}') -or $initialCheckout.Contains('clean: false') -or
+        !$promotionWorkflow.Contains('ref: ${{ steps.guard.outputs.commit }}') -or !$promotionWorkflow.Contains('path: workflow-guard')) { throw 'Source and immutable guard checkout identities changed.' }
+    $exclusionStep = Get-PromotionStep 'Keep the immutable guard outside the payload status scope'
+    $exclusionMatch = [regex]::Match($exclusionStep, '(?ms)^        run: \|\r?\n(?<command>.*)\z')
+    if (!$exclusionMatch.Success) { throw 'Guard bookkeeping command missing.' }
+    $exclusionCode = $exclusionMatch.Groups['command'].Value -replace '(?m)^          ', ''
+    $stageStep = Get-PromotionStep 'Validate and stage the lib-only diff'
+    $stageMatch = [regex]::Match($stageStep, '(?ms)^        run: \|\r?\n(?<command>.*?)^          \. \./\.github/scripts/WssPromotion\.ps1')
+    if (!$stageMatch.Success) { throw 'Production lib status/staging boundary missing.' }
+    $stageCode = $stageMatch.Groups['command'].Value -replace '(?m)^          ', ''
+    $fixtureRoot = Join-Path $temp 'guard checkout with spaces'
+    New-Item -ItemType Directory -Path "$fixtureRoot/lib","$fixtureRoot/.github/scripts","$fixtureRoot/workflow-guard" | Out-Null
+    function Guard-Git([string] $Root, [string[]] $GitArguments) {
+        $result = & git -c user.name=GuardFixture -c user.email=guard@example.invalid -C $Root @GitArguments
+        if ($LASTEXITCODE -ne 0) { throw "Guard fixture Git failed: $($GitArguments[0])" }
+        $result
+    }
+    $guardRoot = Join-Path $fixtureRoot 'workflow-guard'
+    $null = Guard-Git $guardRoot @('init','--quiet','-b','main')
+    'locked guard' | Set-Content "$guardRoot/tracked.txt"
+    $null = Guard-Git $guardRoot @('add','tracked.txt')
+    $null = Guard-Git $guardRoot @('commit','--quiet','-m','Locked guard fixture')
+    $guardSha = (Guard-Git $guardRoot @('rev-parse','HEAD')).Trim()
+    @{source_repository='cwru-non-academic/WSSCore';source_commit=$guardSha} | ConvertTo-Json | Set-Content "$fixtureRoot/.github/scripts/wss-ci.lock.json"
+    'old payload' | Set-Content "$fixtureRoot/lib/payload.txt"
+    'tracked source' | Set-Content "$fixtureRoot/source.txt"
+    $null = Guard-Git $fixtureRoot @('init','--quiet','-b','main')
+    $null = Guard-Git $fixtureRoot @('add','lib','.github','source.txt')
+    $null = Guard-Git $fixtureRoot @('commit','--quiet','-m','Validated receiver fixture')
+    $sourceSha = (Guard-Git $fixtureRoot @('rev-parse','HEAD')).Trim()
+    $stageFile = Join-Path $temp 'production-stage.ps1'
+    $writerSentinel = Join-Path $temp 'would-enter-publisher.txt'
+    $stageCode + "`n'boundary passed' | Set-Content -LiteralPath '$($writerSentinel.Replace("'","''"))'" | Set-Content $stageFile
+    $savedOutput = $env:GITHUB_OUTPUT; $savedSummary = $env:GITHUB_STEP_SUMMARY
+    $env:GITHUB_OUTPUT = Join-Path $temp 'guard-output'; $env:GITHUB_STEP_SUMMARY = Join-Path $temp 'guard-summary'
+    function Invoke-StageFixture([bool] $Accepted) {
+        Remove-Item -LiteralPath $writerSentinel -ErrorAction SilentlyContinue
+        Push-Location $fixtureRoot
+        try { $output = & pwsh -NoProfile -File $stageFile 2>&1; $exitCode = $LASTEXITCODE } finally { Pop-Location }
+        if (($exitCode -eq 0) -ne $Accepted) { throw "Production status fixture unexpected exit $exitCode : $output" }
+        if (!$Accepted -and (Test-Path $writerSentinel)) { throw 'Rejected status entered publication boundary.' }
+    }
+    try {
+        # Preservation alone must fail on the untracked nested guard.
+        Invoke-StageFixture $false
+        $sourceBlob = (Guard-Git $fixtureRoot @('rev-parse','HEAD:source.txt')).Trim()
+        $null = Guard-Git $fixtureRoot @('update-index','--add','--cacheinfo',"100644,$sourceBlob,workflow-guard/tracked-file")
+        Push-Location $fixtureRoot
+        try { Assert-Rejected { & ([scriptblock]::Create($exclusionCode)) } 'Workflow guard must not be tracked receiver payload.' } finally { Pop-Location }
+        $null = Guard-Git $fixtureRoot @('reset','--quiet',$sourceSha)
+        Push-Location $fixtureRoot
+        try { & ([scriptblock]::Create($exclusionCode)) } finally { Pop-Location }
+        $excludePath = (Guard-Git $fixtureRoot @('rev-parse','--git-path','info/exclude')).Trim()
+        if (![IO.Path]::IsPathRooted($excludePath)) { $excludePath = Join-Path $fixtureRoot $excludePath }
+        $customExclusions = @(Get-Content $excludePath | Where-Object { $_ -and !($_.StartsWith('#')) })
+        if ($customExclusions.Count -ne 1 -or $customExclusions[0] -cne '/workflow-guard/') { throw 'Guard exclusion is not narrowly anchored.' }
+        Invoke-StageFixture $true
+        if ((Test-Path $writerSentinel) -or !(Get-Content $env:GITHUB_OUTPUT).Contains('no_change=true')) { throw 'Unchanged payload must exit without publication.' }
+        'unrelated' | Set-Content "$fixtureRoot/unrelated.txt"
+        Invoke-StageFixture $false
+        Remove-Item -LiteralPath "$fixtureRoot/unrelated.txt"
+        'changed source' | Set-Content "$fixtureRoot/source.txt"
+        Invoke-StageFixture $false
+        $null = Guard-Git $fixtureRoot @('checkout','--','source.txt')
+        'new payload' | Set-Content "$fixtureRoot/lib/payload.txt"
+        Invoke-StageFixture $true
+        if (!(Test-Path $writerSentinel) -or (Guard-Git $fixtureRoot @('diff','--cached','--name-only')) -cne 'lib/payload.txt') { throw 'Only reviewed lib payload may be staged.' }
+        $null = Guard-Git $fixtureRoot @('reset','--quiet','--hard',$sourceSha)
+        if ((Guard-Git $guardRoot @('rev-parse','HEAD')) -cne $guardSha) { throw 'Preserved checkout changed the guard source.' }
+
+        # Invoke the actual assertion-only canonical export with real Git. The
+        # proof executor is fixture-only; no network, receipt CLI or writer runs.
+        $authorityFile = Join-Path $temp 'guard-authority.mjs'
+        @'
+import {pathToFileURL} from 'node:url';
+import {execFileSync} from 'node:child_process';
+const [modulePath,root,guard,mode]=process.argv.slice(2);
+const {mainWorkflowAuthority}=await import(pathToFileURL(modulePath));
+const c={repository_root:root,target_id:'csharp-wrapper',candidate:{run_id:'123'}};
+const env={WSS_CORE_TOOLS_ROOT:guard,GITHUB_REPOSITORY:'cwru-non-academic/CSharp_WSS_Integration_Lib'};
+let proofs=0;
+const git=(cwd,args)=>execFileSync('git',['-C',cwd,...args],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+try {
+  mainWorkflowAuthority(c,env,git,()=>{proofs++;return JSON.stringify({schema:'wss-receiver-workflow-authorization/v1',channel:'main',repository:env.GITHUB_REPOSITORY,target_id:mode==='bad-proof'?'wrong':c.target_id,plan_id:'a'.repeat(64),candidate:c.candidate});});
+  if(mode!=='valid')throw Error('Invalid fixture passed canonical authority');
+} catch(error) {
+  if(mode==='valid'||error.message==='Invalid fixture passed canonical authority')throw error;
+  if(proofs!==(mode==='bad-proof'?1:0))throw Error('Invalid guard executed frozen proof');
+}
+if(mode==='valid'&&proofs!==1)throw Error('Valid guard did not execute frozen proof');
+'@ | Set-Content $authorityFile
+        $modulePath = [IO.Path]::GetFullPath("$PSScriptRoot/../wss-ci/promotion.mjs")
+        foreach ($mode in @('valid','bad-proof')) {
+            & node $authorityFile $modulePath $fixtureRoot $guardRoot $mode
+            if ($LASTEXITCODE -ne 0) { throw "Canonical guard fixture failed: $mode" }
+        }
+        'dirty tracked guard' | Set-Content "$guardRoot/tracked.txt"
+        & node $authorityFile $modulePath $fixtureRoot $guardRoot 'dirty'
+        if ($LASTEXITCODE -ne 0) { throw 'Tracked-dirty guard rejection failed.' }
+        $null = Guard-Git $guardRoot @('add','tracked.txt')
+        $null = Guard-Git $guardRoot @('commit','--quiet','-m','Wrong guard revision')
+        & node $authorityFile $modulePath $fixtureRoot $guardRoot 'wrong-head'
+        if ($LASTEXITCODE -ne 0) { throw 'Wrong guard SHA rejection failed.' }
+        # Exclusion alone does not prevent checkout@v4's default -ffdx cleanup.
+        $resolvedFixture = [IO.Path]::GetFullPath($fixtureRoot)
+        if (!$resolvedFixture.StartsWith([IO.Path]::GetFullPath($temp) + [IO.Path]::DirectorySeparatorChar)) { throw 'Cleanup fixture escaped its temporary root.' }
+        $null = Guard-Git $resolvedFixture @('clean','-ffdx')
+        if (Test-Path $guardRoot) { throw 'Default checkout cleanup did not reproduce missing guard.' }
+        & node $authorityFile $modulePath $fixtureRoot $guardRoot 'missing'
+        if ($LASTEXITCODE -ne 0) { throw 'Missing guard rejection failed.' }
+    } finally {
+        $env:GITHUB_OUTPUT=$savedOutput; $env:GITHUB_STEP_SUMMARY=$savedSummary
+        Remove-Item Function:Guard-Git,Function:Get-PromotionStep,Function:Invoke-StageFixture
+        $global:LASTEXITCODE=0
+    }
+    $count++
+
     # Metadata-only fakes: no candidate binaries, workflow dispatches or PRs are created.
     function Invoke-WssGh([string[]] $Arguments) {
         if ($Arguments[1] -like '*/pulls/*') {
