@@ -116,6 +116,15 @@ jobs:
           ref: ${{ steps.guard.outputs.commit }}
           path: workflow-guard
           persist-credentials: false
+      - name: Keep the immutable guard outside the payload status scope
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $trackedGuard = @(& git ls-files -- workflow-guard)
+          if ($LASTEXITCODE -ne 0 -or $trackedGuard.Count -ne 0) { throw 'Workflow guard must not be tracked receiver payload.' }
+          $exclude = & git rev-parse --git-path info/exclude
+          if ($LASTEXITCODE -ne 0 -or @($exclude).Count -ne 1) { throw 'Cannot resolve the local Git exclusion file.' }
+          Add-Content -LiteralPath $exclude -Value '/workflow-guard/'
       - name: Record trusted promotion base
         id: source
         shell: pwsh
@@ -251,6 +260,7 @@ jobs:
         with:
           ref: ${{ steps.source.outputs.sha }}
           fetch-depth: 0
+          clean: false
           token: ${{ steps.integration-token.outputs.token }}
 
       - name: Inspect existing automation state
