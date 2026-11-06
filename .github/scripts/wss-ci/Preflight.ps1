@@ -1,5 +1,7 @@
 # Shared process bridge; adapters retain language-specific approval/evidence checks.
+. "$PSScriptRoot/Channel.ps1"
 function Invoke-WssCiPreflightContext($Context,[string]$DispatchToken='') {
+    $Context.channel=Get-WssCiChannel
     $path=Join-Path ([IO.Path]::GetTempPath()) ('wss-preflight-'+[guid]::NewGuid().ToString('N')+'.json')
     $previous=$env:WSS_PREFLIGHT_TOKEN
     try {

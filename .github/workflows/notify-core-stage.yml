@@ -2,11 +2,11 @@ name: Notify verified integration stage
 on:
   pull_request_target:
     types: [closed]
-    branches: [dev]
+    branches: [dev, main]
   workflow_run:
     workflows: [WSS integration compatibility]
     types: [completed]
-    branches: [dev]
+    branches: [dev, main]
 permissions:
   contents: read
   actions: read
@@ -32,10 +32,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Read immutable Core guard revision from the verified receiver lock
+        id: guard
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const l=JSON.parse(fs.readFileSync(".github/scripts/wss-ci.lock.json","utf8"));
+            if(l.source_repository!=="cwru-non-academic/WSSCore"||! /^[a-f0-9]{40}$/.test(l.source_commit)||l.source_ref!==`refs/heads/ci/tooling/${l.source_commit}`)throw Error("Invalid immutable Core guard lock");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT,`commit=${l.source_commit}\n`);
+          '
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: ${{ steps.guard.outputs.commit }}
+          path: workflow-guard
+          persist-credentials: false
       - name: Validate current merged family, frozen source and canonical producer
         id: family
         env:
           GH_TOKEN: ${{ github.token }}
+          WSS_CORE_TOOLS_ROOT: ${{ github.workspace }}/workflow-guard
         run: node .github/scripts/wss-ci/notify-family.mjs
       - name: Request existing App permission for the fixed Core coordinator only
         if: steps.family.outputs.needed == 'true'
@@ -52,4 +68,5 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.coordinator.outputs.token }}
           PRODUCER_RUN_ID: ${{ steps.family.outputs.producer_run_id }}
-        run: gh api --method POST repos/cwru-non-academic/WSSCore/actions/workflows/dev-propagation.yml/dispatches -f ref=main -f "inputs[producer_run_id]=$PRODUCER_RUN_ID" -f 'inputs[mode]=reconcile'
+          CORE_WORKFLOW: ${{ steps.family.outputs.channel == 'main' && 'main-propagation.yml' || 'dev-propagation.yml' }}
+        run: gh api --method POST "repos/cwru-non-academic/WSSCore/actions/workflows/$CORE_WORKFLOW/dispatches" -f ref=main -f "inputs[producer_run_id]=$PRODUCER_RUN_ID" -f 'inputs[mode]=reconcile'

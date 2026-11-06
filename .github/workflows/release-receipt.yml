@@ -1,16 +1,20 @@
-name: Emit dev release acceptance receipt
+name: Emit release acceptance receipt
 run-name: WSS acceptance csharp-wrapper ${{ inputs.plan_id }}
 on:
   workflow_dispatch:
     inputs:
       producer_run_id:
-        description: Canonical dev push producer run with frozen plan
+        description: Canonical channel push producer run with frozen plan
         required: true
         type: string
       plan_id:
         description: Exact frozen wss-propagation-plan/v1 digest
         required: true
         type: string
+env:
+  WSS_CI_CHANNEL: ${{ github.ref_name }}
+  WSS_TARGET_ROOT: ${{ github.workspace }}/.accepted
+  WSS_CORE_TOOLS_ROOT: ${{ github.workspace }}/workflow-guard
 permissions:
   contents: read
   actions: read
@@ -21,7 +25,7 @@ concurrency:
 jobs:
   receipt:
     name: Verify actual wrapper merge and exact candidate acceptance
-    if: github.repository == 'cwru-non-academic/CSharp_WSS_Integration_Lib' && github.ref == 'refs/heads/dev'
+    if: github.repository == 'cwru-non-academic/CSharp_WSS_Integration_Lib' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,13 +42,26 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
-          ref: dev
+          ref: ${{ github.sha }}
           path: .accepted
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Read locked Core guard source
+        id: guard
+        shell: pwsh
+        run: |
+          $lock=Get-Content .accepted/.github/scripts/wss-ci.lock.json -Raw|ConvertFrom-Json
+          if($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cnotmatch '^[a-f0-9]{40}$' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)"){throw 'Invalid immutable Core guard lock.'}
+          "commit=$($lock.source_commit)" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: ${{ steps.guard.outputs.commit }}
+          path: workflow-guard
+          persist-credentials: false
       - name: Create receipt evidence read token
         id: receipt-evidence
         uses: actions/create-github-app-token@v2

@@ -1,4 +1,6 @@
+. "$PSScriptRoot/Channel.ps1"
 function Invoke-WssCiDispatchProof($Context) {
+    if($Context.operation -ceq 'reuse'){$Context.expected.channel=Get-WssCiChannel}
     $path=Join-Path ([IO.Path]::GetTempPath()) ('wss-dispatch-proof-'+[guid]::NewGuid().ToString('N')+'.json')
     try {
         $Context|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $path
@@ -19,9 +21,13 @@ function Send-WssCiApplicationDispatch([string]$Repository,[string]$RequestPath,
     $saved=$env:GH_TOKEN
     try {
         $env:GH_TOKEN=$ReadToken
+        $channel=Get-WssCiChannel
+        $request=Get-Content -LiteralPath $RequestPath -Raw|ConvertFrom-Json
+        if($request.ref -cne $channel){throw 'Application dispatch ref differs from the verified target channel.'}
+        if($channel -ceq 'main'){$null=Assert-WssCiWorkflowAuthorization $env:PRODUCER_RUN_ID}
         Assert-WssCiDispatchArtifacts $OwnerRepository $IntentName -RequireCurrent
         foreach($repo in $Sources.Keys) {
-            $head=Invoke-WssCiProcess -Executable gh -Arguments @('api',"repos/$repo/git/ref/heads/dev")|ConvertFrom-Json
+            $head=Invoke-WssCiProcess -Executable gh -Arguments @('api',"repos/$repo/git/ref/heads/$channel")|ConvertFrom-Json
             if($head.object.sha -cne $Sources[$repo]){throw 'Fanout source moved immediately before application writes.'}
         }
         $env:GH_TOKEN=$WriteToken

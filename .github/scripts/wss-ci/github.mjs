@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {allClear,bytesDigest,candidate,canonical,CORE,digest,manifest,plan,producer,requireThat} from './verify.mjs';
 import {checkTagGuard} from './policy.mjs';
 import {findNormalRuns} from './normal-ci.mjs';
+import {channelContext,releaseFingerprint} from './channels.mjs';
 
 // No shell expansion, caller-provided commands, implicit pagination or token output.
 export class GitHub {
@@ -52,19 +53,20 @@ export class GitHub {
 
 export function freeze(g,m,c,{verificationOnly=false}={}) {
   manifest(m); candidate(c);
+  const context=channelContext(m.channel);
   const guard=m.legacy_tag_guard;
   const unconfigured=guard?.ruleset_id===null && guard?.policy_sha256===null;
   if(!verificationOnly || !unconfigured) checkTagGuard(g,m);
   const target_snapshots={};
   for(const t of m.targets) {
-    const head_sha=g.head(t.repository);
+    const head_sha=g.head(t.repository,t.branch);
     const trusted=Object.fromEntries(t.trusted_paths.map(path=>[path,g.object(t.repository,head_sha,path).sha]));
     // The receipt workflow must also be registered on the default branch.
     const w=g.get(`repos/${t.repository}/actions/workflows/release-receipt.yml`);
     requireThat(w.path==='.github/workflows/release-receipt.yml' && w.state==='active',`Receipt workflow unavailable: ${t.id}`);
     target_snapshots[t.id]={head_sha,trusted};
   }
-  const body={schema:'wss-propagation-plan/v1',channel:'dev',candidate:c,manifest:m,manifest_sha256:digest(m),target_snapshots};
+  const body={schema:context.planSchema,channel:m.channel,candidate:c,manifest:m,manifest_sha256:digest(m),target_snapshots};
   return plan({...body,plan_id:digest(body)});
 }
 export function loadPlan(g,runId) {
@@ -73,8 +75,8 @@ export function loadPlan(g,runId) {
   const p=plan(JSON.parse(data['plan.json']));
   requireThat(p.candidate.run_id===runId,'Plan came from another producer run');
   const r=g.run(CORE,runId);
-  requireThat(r.repository?.full_name===CORE && r.path==='.github/workflows/artifacts.yml' && r.event==='push' && r.head_branch==='dev' && r.head_sha===p.candidate.commit,'Plan artifact producer is not canonical');
-  const policy=g.get(`repos/${CORE}/contents/tools/release/targets.dev.json?ref=${p.candidate.commit}`);
+  requireThat(r.repository?.full_name===CORE && r.head_repository?.full_name===CORE && r.path==='.github/workflows/artifacts.yml' && r.event==='push' && r.head_branch===p.channel && r.head_sha===p.candidate.commit,'Plan artifact producer is not canonical');
+  const policy=g.get(`repos/${CORE}/contents/${channelContext(p.channel).targetPolicy}?ref=${p.candidate.commit}`);
   requireThat(policy.encoding==='base64' && canonical(JSON.parse(Buffer.from(policy.content,'base64')))===canonical(p.manifest),'Frozen policy is not the reviewed producer policy');
   return p;
 }
@@ -90,9 +92,9 @@ export function archive(g,c) {
 export function collect(g,p) {
   plan(p);
   const c=p.candidate, source=g.run(CORE,c.run_id), zip=archive(g,c);
-  const evidence={producer:{run:source,current_head:g.head(CORE),jobs:g.jobs(CORE,source),artifact:zip.artifact,archive_sha256:bytesDigest(zip.files[c.archive])},targets:{}};
+  const evidence={producer:{run:source,current_head:g.head(CORE,p.channel),jobs:g.jobs(CORE,source),artifact:zip.artifact,archive_sha256:bytesDigest(zip.files[c.archive])},targets:{}};
   for(const t of p.manifest.targets) {
-    const runs=g.pages(`repos/${t.repository}/actions/workflows/release-receipt.yml/runs?branch=dev`,'workflow_runs');
+    const runs=g.pages(`repos/${t.repository}/actions/workflows/release-receipt.yml/runs?branch=${t.branch}`,'workflow_runs');
     const matches=[];
     for(const emitter of runs) {
       const name=`wss-acceptance-${t.id}-${p.plan_id}-a${emitter.run_attempt}`;
@@ -115,7 +117,7 @@ export function collect(g,p) {
       return [parent,link.sha];
     }));
     const preflights=(r.preflights || []).map(d=>({run:g.run(d.repository,d.run_id),candidate:JSON.parse(g.download(d.repository,d.run_id,'wss-candidate-provenance',['candidate.json'])['candidate.json'])}));
-    evidence.targets[t.id]={receipt:r,receipt_bytes,receipt_sha256:bytesDigest(receipt_bytes),pr,current_head:g.head(t.repository),
+    evidence.targets[t.id]={receipt:r,receipt_bytes,receipt_sha256:bytesDigest(receipt_bytes),pr,current_head:g.head(t.repository,t.branch),
       merge_tree:g.tree(t.repository,r.merge.sha),tested_tree:g.tree(t.repository,normal.head_sha),
       trusted:Object.fromEntries(t.trusted_paths.map(path=>[path,g.object(t.repository,r.merge.sha,path).sha])),
       parent_gitlinks,normal_run:normal,normal_latest_run_id:String(normals[0].id),normal_jobs:g.jobs(t.repository,normal),
@@ -126,7 +128,7 @@ export function collect(g,p) {
 
 export function publish(g,p,accepted,directory,reader=g) {
   const legacy_tag_guard=checkTagGuard(reader,p.manifest);
-  const tag=`dev-beta-${p.candidate.run_id}-${p.plan_id.slice(0,12)}`;
+  const context=channelContext(p.channel),tag=releaseFingerprint(p.channel,p.candidate.run_id,p.plan_id);
   const record={...accepted.record,tag,legacy_tag_guard};
   const expected={...accepted.files,'plan.json':Buffer.from(canonical(p)+'\n'),'acceptance.json':Buffer.from(canonical(record)+'\n')};
   // Existing tag/release state is read first. An API error is not interpreted as absence.
@@ -135,7 +137,7 @@ export function publish(g,p,accepted,directory,reader=g) {
   const releases=g.pages(`repos/${CORE}/releases`).filter(r=>r.tag_name===tag);
   requireThat(exact.length<=1 && releases.length<=1,'Ambiguous existing tag/release');
   if(exact.length || releases.length) {
-    requireThat(exact.length===1 && releases.length===1 && exact[0].object.type==='commit' && exact[0].object.sha===p.candidate.commit && releases[0].prerelease===true && releases[0].draft===false,'Existing tag/release is incomplete or mismatched; inspect before recovery');
+    requireThat(exact.length===1 && releases.length===1 && exact[0].object.type==='commit' && exact[0].object.sha===p.candidate.commit && releases[0].prerelease===(context.kind==='beta') && releases[0].draft===false,'Existing tag/release is incomplete or mismatched; inspect before recovery');
     requireThat(canonical(releases[0].assets.map(a=>a.name).sort())===canonical(Object.keys(expected).sort()),'Existing release asset inventory mismatch');
     const temp=mkdtempSync(join(tmpdir(),'wss-release-'));
     try {
@@ -149,7 +151,7 @@ export function publish(g,p,accepted,directory,reader=g) {
   requireThat(canonical(fresh.record)===canonical(accepted.record),'Acceptance evidence changed during publication');
   checkTagGuard(reader,p.manifest);
   const paths=Object.entries(expected).map(([name,bytes])=>{const path=join(directory,name);writeFileSync(path,bytes);return path;});
-  g.command(['release','create',tag,'--repo',CORE,'--target',p.candidate.commit,'--prerelease','--title',tag,
-    '--notes',`Dev beta accepted by all nine frozen targets. Candidate ${p.candidate.commit}; plan ${p.plan_id}. See acceptance.json for proof, exclusions and coverage limits.`,...paths]);
+  g.command(['release','create',tag,'--repo',CORE,'--target',p.candidate.commit,...(context.kind==='beta'?['--prerelease']:[]),'--title',tag,
+    '--notes',`${context.channel} ${context.kind} accepted by all nine frozen targets. Candidate ${p.candidate.commit}; plan ${p.plan_id}. See acceptance.json for proof, exclusions and coverage limits.`,...paths]);
   return {tag,state:'created'};
 }

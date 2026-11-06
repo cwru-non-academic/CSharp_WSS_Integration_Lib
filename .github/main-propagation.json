@@ -1,0 +1,9 @@
+{
+  "schema": "wss-main-stage-receiver/v1",
+  "core_workflow": ".github/workflows/main-propagation.yml",
+  "fanout_workflow": "dispatch-cli-promotion.yml",
+  "staged_applications": true,
+  "applications": [
+    "cwru-non-academic/CLI_CSharp_WSS_Application"
+  ]
+}

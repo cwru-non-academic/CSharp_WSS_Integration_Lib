@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+. "$PSScriptRoot/wss-ci/Channel.ps1"
 
 function Assert-WssReceiptPolicy([string] $TargetId, [string] $ContextPath, [string] $ToolsRoot) {
     if ($TargetId -cne 'csharp-wrapper' -and $TargetId -cne 'csharp-cli') { throw 'Unknown C# receipt target policy.' }
@@ -43,14 +44,14 @@ function Assert-WssReceiptSources($Approval, $Plan) {
 
 function Assert-WssReceiptPr($Pr,[string] $Repository,[string] $Sha) {
     if (-not $Pr.merged -or $Pr.state -cne 'closed' -or $Pr.merge_commit_sha -cne $Sha -or
-        $Pr.base.ref -cne 'dev' -or $Pr.base.repo.full_name -cne $Repository -or
+        $Pr.base.ref -cne (Get-WssCiChannel) -or $Pr.base.repo.full_name -cne $Repository -or
         $Pr.head.repo.full_name -cne $Repository -or $Pr.user.type -cne 'Bot' -or $Pr.merged_by.type -cne 'User') {
         throw 'Receipt requires an actual same-repository bot dependency PR merged into dev.'
     }
 }
 
 function Assert-WssReceiptNormalRun($Run,[string] $Repository,$Target,[string] $Sha,$Jobs) {
-    if ($Run.status -cne 'completed' -or $Run.conclusion -cne 'success' -or $Run.head_branch -cne 'dev' -or
+    if ($Run.status -cne 'completed' -or $Run.conclusion -cne 'success' -or $Run.head_branch -cne (Get-WssCiChannel) -or
         $Run.head_sha -cne $Sha -or $Run.repository.full_name -cne $Repository -or $Run.head_repository.full_name -cne $Repository -or
         $Run.path -cne $Target.workflow -or $Run.event -cnotin @('push','workflow_dispatch')) {
         throw 'Fresh exact-merge normal CI is not successful.'
