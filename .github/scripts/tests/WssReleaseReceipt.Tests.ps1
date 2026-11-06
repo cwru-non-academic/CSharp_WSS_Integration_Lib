@@ -31,7 +31,7 @@ function Assert-WssReceiptEvidenceWorkflow([string] $Workflow, [string] $Expecte
     $expectedToken='          GH_TOKEN: '+'$'+'{{ steps.receipt-evidence.outputs.token }}'
     if (!(($validation.Groups['body'].Value -split '\r?\n') -ccontains $expectedToken) -or
         [regex]::Matches($Workflow,'(?m)^\s+GH_TOKEN:').Count -ne 1) { throw 'Receipt validation must use only the scoped evidence token.' }
-    if (!$Workflow.Contains("    if: github.repository == '$ExpectedRepository' && github.ref == 'refs/heads/dev'")) { throw 'Receipt execution must remain canonical-repository and dev-only.' }
+    if (!$Workflow.Contains("    if: github.repository == '$ExpectedRepository' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')")) { throw 'Receipt execution must remain canonical-repository and restricted to the two registered channels.' }
 }
 $receiptWorkflow=Get-Content "$PSScriptRoot/../../workflows/release-receipt.yml" -Raw
 $receiptRepository=if ($receiptWorkflow.Contains('run-name: WSS acceptance csharp-wrapper ')) {
@@ -230,6 +230,15 @@ try {
         }
         if ($policyId -ceq 'csharp-wrapper' -and '.github/workflows/notify-core-stage.yml' -cnotin $target.trusted_paths) { throw 'Canonical wrapper profile must cover its notifier.' }
         Invoke-PolicyContext $context $policyId
+        $main=$context|ConvertTo-Json -Depth 50|ConvertFrom-Json
+        $main.plan.schema='wss-propagation-plan/v2';$main.plan.channel='main'
+        $main.plan.manifest.schema='wss-required-targets/v2';$main.plan.manifest.channel='main';$main.plan.manifest.release_kind='stable';$main.plan.manifest.stable_enabled=$true
+        foreach($entry in $main.plan.manifest.targets){$entry.branch='main'}
+        $main.target.branch='main'
+        Invoke-PolicyContext $main $policyId
+        $wrongChannel=$main|ConvertTo-Json -Depth 50|ConvertFrom-Json
+        $wrongChannel.target.branch='dev'
+        Reject {Invoke-PolicyContext $wrongChannel $policyId}
         $targetIndex=@($context.plan.manifest.targets.id).IndexOf($policyId)
         foreach ($mutation in @(
             {param($c)$c.plan.manifest.targets[$targetIndex].jobs=@($c.plan.manifest.targets[$targetIndex].jobs[0])},
