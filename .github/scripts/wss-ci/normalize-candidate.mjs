@@ -1,3 +1,4 @@
+import {isEntrypoint} from './entrypoint.mjs';
 import {readFileSync,writeFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -14,7 +15,7 @@ export function normalizeCandidate(record) {
   requireThat(release_tag===undefined || typeof release_tag==='string','Invalid diagnostic metadata');
   return normalized;
 }
-if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
+if(isEntrypoint(import.meta.url)) {
   const record=JSON.parse(readFileSync(process.argv[2],'utf8').replace(/^\uFEFF/,''));
   writeFileSync(process.argv[3],canonical(normalizeCandidate(record))+'\n');
 }

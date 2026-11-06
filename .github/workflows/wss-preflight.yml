@@ -33,6 +33,8 @@ on:
         required: true
         type: string
 
+env:
+  WSS_CI_CHANNEL: ${{ github.ref_name }}
 permissions:
   contents: read
 

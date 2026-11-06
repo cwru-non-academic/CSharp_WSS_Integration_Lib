@@ -1,11 +1,14 @@
+import {isEntrypoint} from './entrypoint.mjs';
 import {execFileSync} from 'node:child_process';
 import {mkdtempSync,readFileSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {setTimeout as sleep} from 'node:timers/promises';
-import {GitHub} from './github.mjs';
-import {CORE,candidate,requireThat} from './verify.mjs';
+import {GitHub,loadPlan} from './github.mjs';
+import {CORE,candidate,canonical,requireThat} from './verify.mjs';
+import {channelContext} from './channels.mjs';
+import {targetPolicy} from './receipt.mjs';
 import {normalizeCandidate} from './normalize-candidate.mjs';
 
 const profiles=JSON.parse(readFileSync(new URL('./receipt-targets.json',import.meta.url)));
@@ -21,7 +24,7 @@ export function profileFor(repository){
 // through a host shell, and never retry a POST whose outcome is uncertain.
 export function dispatchJson(repository,body,token,{execute=execFileSync,environment=process.env}={}){
   profileFor(repository);requireThat(typeof token==='string'&&token.length>0,'Scoped downstream Actions-write token required');
-  requireThat(body.ref==='dev'&&body.inputs&&typeof body.inputs==='object','Invalid preflight request body');
+  requireThat(body.ref===channelContext(body.ref).branch&&body.inputs&&typeof body.inputs==='object','Invalid preflight request body');
   const directory=mkdtempSync(join(tmpdir(),'wss-preflight-'));
   try{
     const path=join(directory,'request.json');writeFileSync(path,JSON.stringify(body)+'\n','utf8');
@@ -32,6 +35,7 @@ export function dispatchJson(repository,body,token,{execute=execFileSync,environ
 
 export function request(context){
   const p=profileFor(context.repository),c=normalizeCandidate(context.candidate);candidate(c);
+  const channel=channelContext(context.channel||'dev');
   const wrapper=context.wrapper_sha||'',application=context.application_sha||'',source=context.source_sha||'';
   requireThat(!source||sha(source),'Invalid expected preflight source');
   if(p.family==='csharp'){
@@ -45,15 +49,15 @@ export function request(context){
     wss_producer_repository:c.repository,wss_run_id:c.run_id,wss_commit:c.commit,wss_archive:c.archive,wss_sha256:c.sha256,correlation_id:correlation,
     ...(wrapper?{integration_sha:wrapper}:{})
   }:{candidate_json:JSON.stringify(c),wrapper_sha:wrapper,[p.family==='unity'?'gui_sha':p.role==='ros'?'ros_sha':'cli_sha']:application,correlation_id:correlation};
-  return {repository:context.repository,source_sha:expected,title:`WSS preflight ${c.run_id} / ${correlation}`,body:{ref:'dev',inputs}};
+  return {repository:context.repository,channel:channel.channel,source_sha:expected,title:`WSS preflight ${c.run_id} / ${correlation}`,body:{ref:channel.branch,inputs}};
 }
 
 function expectation({repository,source_sha,workflow='wss-preflight.yml',event='workflow_dispatch'}){
   requireThat(known(repository)&&sha(source_sha)&&/^[A-Za-z0-9_-]+\.yml$/.test(workflow)&&['push','workflow_dispatch'].includes(event),'Invalid exact workflow expectation');
 }
-export function assertRun(run,{repository,source_sha,workflow='wss-preflight.yml',event='workflow_dispatch',title,run_id}){
+export function assertRun(run,{repository,source_sha,workflow='wss-preflight.yml',event='workflow_dispatch',title,run_id,channel='dev'}){
   expectation({repository,source_sha,workflow,event});
-  requireThat(id(run?.id)&&(!run_id||String(run.id)===String(run_id))&&run.repository?.full_name===repository&&run.head_repository?.full_name===repository&&run.path===`.github/workflows/${workflow}`&&run.head_sha===source_sha&&run.head_branch==='dev'&&run.event===event&&(!title||run.display_title===title),'Workflow run identity/source mismatch; no run substitution');
+  requireThat(id(run?.id)&&(!run_id||String(run.id)===String(run_id))&&run.repository?.full_name===repository&&run.head_repository?.full_name===repository&&run.path===`.github/workflows/${workflow}`&&run.head_sha===source_sha&&run.head_branch===channelContext(channel).branch&&run.event===event&&(!title||run.display_title===title),'Workflow run identity/source mismatch; no run substitution');
   if(run.status==='completed')requireThat(run.conclusion==='success','Required workflow failed; never substitute another green run');
   return run;
 }
@@ -67,10 +71,19 @@ export function findPreflight(g,expected){
   return assertRun(run,{...expected,source_sha:expected.source_sha||run.head_sha,run_id:matches[0].id});
 }
 
-export async function startPreflight(g,context,{post=(repo,body)=>dispatchJson(repo,body,process.env.WSS_PREFLIGHT_TOKEN),now=Date.now,pause=sleep}={}){
-  const expected=request(context),existing=findPreflight(g,expected);
+export async function startPreflight(g,context,{post=(repo,body)=>dispatchJson(repo,body,process.env.WSS_PREFLIGHT_TOKEN),now=Date.now,pause=sleep,loadFrozenPlan=loadPlan}={}){
+  const expected=request(context);
+  let frozenSource;
+  if(expected.channel==='main'){
+    const c=normalizeCandidate(context.candidate),p=loadFrozenPlan(g,c.run_id),profile=profileFor(expected.repository);
+    requireThat(p.channel==='main'&&canonical(p.candidate)===canonical(c)&&g.head(CORE,'main')===c.commit,'Main preflight requires the exact current canonical main producer');
+    targetPolicy(p,profile.target.id);frozenSource=p.target_snapshots[profile.target.id].head_sha;
+    requireThat(!expected.source_sha||expected.source_sha===frozenSource,'Main preflight source differs from frozen target');
+    expected.source_sha=frozenSource;
+  }
+  const existing=findPreflight(g,expected);
   if(existing)return existing;
-  const source=g.head(expected.repository);requireThat(sha(source)&&(!expected.source_sha||source===expected.source_sha),'Preflight dev source advanced before dispatch');
+  const source=g.head(expected.repository,expected.channel);requireThat(sha(source)&&(!expected.source_sha||source===expected.source_sha),'Preflight target source advanced before dispatch');
   expected.source_sha=source;
   const seconds=context.discovery_seconds??180;requireThat(Number.isInteger(seconds)&&seconds>=1&&seconds<=180,'Invalid discovery timeout');
   await post(expected.repository,expected.body); // exactly one attempt, even after transport failure
@@ -94,7 +107,7 @@ export async function waitRun(g,expected,{now=Date.now,pause=sleep}={}){
   }
 }
 
-if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+if(isEntrypoint(import.meta.url)){
   const {operation,...context}=JSON.parse(readFileSync(process.argv[2],'utf8').replace(/^\uFEFF/,''));
   requireThat(['start','wait'].includes(operation),'Unknown shared preflight operation');
   const g=new GitHub();console.log(JSON.stringify(await(operation==='start'?startPreflight(g,context):waitRun(g,context))));

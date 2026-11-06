@@ -4,7 +4,7 @@ Set-StrictMode -Version Latest
 
 function Assert-WssCandidateNotOlder($Candidate, [string] $ExpectedReceiverSha) {
     $repo='cwru-non-academic/CSharp_WSS_Integration_Lib'
-    $head=Invoke-WssGh -Arguments @('api',"repos/$repo/git/ref/heads/dev") | ConvertFrom-Json
+    $head=Invoke-WssGh -Arguments @('api',"repos/$repo/git/ref/heads/$(Get-WssCiChannel)") | ConvertFrom-Json
     if ($ExpectedReceiverSha -cnotmatch '^[0-9a-f]{40}$' -or $head.object.sha -cne $ExpectedReceiverSha) { throw 'Integration dev moved since candidate validation; require fresh evidence.' }
     $file=Invoke-WssGh -Arguments @('api',"repos/$repo/contents/lib/wss-candidate.json?ref=$ExpectedReceiverSha") | ConvertFrom-Json
     if ($file.type -cne 'file' -or $file.encoding -cne 'base64') { throw 'Installed candidate provenance is unreadable.' }
@@ -29,7 +29,7 @@ function Assert-WssAutomaticProducer($Run, [string] $Commit) {
     if ($Run.repository.full_name -cne 'cwru-non-academic/WSSCore' -or
         $Run.head_repository.full_name -cne 'cwru-non-academic/WSSCore' -or
         $Run.path -cne '.github/workflows/artifacts.yml' -or $Run.event -cne 'push' -or
-        $Run.head_branch -cne 'dev' -or $Run.head_sha -cne $Commit) {
+        $Run.head_branch -cne (Get-WssCiChannel) -or $Run.head_sha -cne $Commit) {
         throw 'Automatic promotion requires the exact trusted WSSCore dev push producer.'
     }
 }
