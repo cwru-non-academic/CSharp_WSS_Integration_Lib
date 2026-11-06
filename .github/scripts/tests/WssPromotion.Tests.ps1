@@ -305,7 +305,37 @@ try {
         }
     }
     function git { $global:LASTEXITCODE = 0; $global:wssTestlateMain }
+    function Get-LateBarrierNativeNode {
+        $nativeNodePath=@(& node --print process.execPath)
+        if($LASTEXITCODE -ne 0 -or $nativeNodePath.Count -ne 1 -or $nativeNodePath[0] -isnot [string] -or
+           ![IO.Path]::IsPathFullyQualified($nativeNodePath[0]) -or !(Test-Path -LiteralPath $nativeNodePath[0] -PathType Leaf)){
+            throw 'Late-barrier fixture requires one successfully resolved absolute Node executable.'
+        }
+        $nativeNodePath[0]
+    }
+    $baseNode=Get-LateBarrierNativeNode
+    $nodeAliases=@((Join-Path ([IO.Path]::GetTempPath()) ('wss first Node path '+[guid]::NewGuid())),(Join-Path ([IO.Path]::GetTempPath()) ('wss second Node path '+[guid]::NewGuid())))
+    $originalNodeSearchPath=$env:PATH
+    try {
+        foreach($alias in $nodeAliases){
+            $kind=if($IsWindows){'Junction'}else{'SymbolicLink'}
+            New-Item -ItemType $kind -Path $alias -Target (Split-Path -Parent $baseNode)|Out-Null
+        }
+        $env:PATH=($nodeAliases -join [IO.Path]::PathSeparator)+[IO.Path]::PathSeparator+$originalNodeSearchPath
+        if(@(Get-Command node -CommandType Application -All).Count -lt 2){throw 'Duplicate-PATH regression did not expose multiple Node applications.'}
+        $duplicatePathNode=Get-LateBarrierNativeNode
+        $literalArguments=@('path with spaces','a;b','$(literal)')
+        $probe=@(& $duplicatePathNode -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' -- @literalArguments)
+        if($LASTEXITCODE -ne 0 -or $probe.Count -ne 1){throw 'Duplicate-PATH Node executable did not run exactly once successfully.'}
+        $receivedArguments=@($probe[0]|ConvertFrom-Json)
+        if($receivedArguments.Count -ne $literalArguments.Count -or @(Compare-Object $literalArguments $receivedArguments -CaseSensitive -SyncWindow 0).Count){throw 'Duplicate-PATH invocation changed literal arguments.'}
+    } finally {
+        $env:PATH=$originalNodeSearchPath
+        foreach($alias in $nodeAliases){if(Test-Path -LiteralPath $alias){Remove-Item -LiteralPath $alias -Force}}
+    }
+    $global:wssTestlateRealNode=Get-LateBarrierNativeNode
     function node {
+        if($args[0] -cmatch '(channels|staging)\.mjs$'){ & $global:wssTestlateRealNode @args;return }
         $global:wssTestlateCalls++
         if (($args[1..4] -join ',') -cne 'verify-barrier,123,456,1') { throw 'Late check changed exact correlation inputs.' }
         $global:LASTEXITCODE = if ($global:wssTestlateInvalid) { 1 } else { 0 }

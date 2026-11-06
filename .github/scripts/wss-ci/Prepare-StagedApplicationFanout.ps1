@@ -7,6 +7,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/Staging.ps1"
+$context=Get-WssCiChannelContext
 $core = 'cwru-non-academic/WSSCore'
 function Read-GitHub([string]$Path) {
     $raw = & gh api $Path
@@ -20,10 +21,11 @@ function Read-RepositoryJson([string]$Repository, [string]$Commit, [string]$Path
 }
 function Write-ReadyEvent($PullRequest) {
     if (!$PullRequest.merged -or $PullRequest.state -cne 'closed' -or
-        $PullRequest.base.ref -cne 'dev' -or $PullRequest.base.repo.full_name -cne $env:GITHUB_REPOSITORY -or
+        $PullRequest.base.ref -cne $context.branch -or $PullRequest.base.repo.full_name -cne $env:GITHUB_REPOSITORY -or
         $PullRequest.head.repo.full_name -cne $env:GITHUB_REPOSITORY -or $PullRequest.user.type -cne 'Bot') {
         throw 'Expected a merged same-repository bot dependency PR targeting dev.'
     }
+    if($context.channel -ceq 'main' -and $PullRequest.merged_by.type -cne 'User'){throw 'Main dependency merge must be human reviewed.'}
     if ($ExpectedMergeSha -and ($ExpectedMergeSha -cnotmatch '^[0-9a-f]{40}$' -or $PullRequest.merge_commit_sha -cne $ExpectedMergeSha)) { throw 'Shared barrier integration changed before application write credentials.' }
     New-Item -ItemType Directory -Path $WorkRoot -Force | Out-Null
     $path = Join-Path $WorkRoot 'fanout-event.json'
@@ -34,8 +36,8 @@ function Write-ReadyEvent($PullRequest) {
     'dispatch_allowed=true' >> $env:GITHUB_OUTPUT
 }
 if ($env:GITHUB_ACTIONS -cne 'true') { throw 'GitHub Actions execution required.' }
-$cap = Get-Content .github/dev-propagation.json -Raw | ConvertFrom-Json
-if ($cap.schema -cne 'wss-dev-stage-receiver/v1' -or !$cap.staged_applications) { throw 'Staged receiver contract required.' }
+$cap = Get-Content -LiteralPath $context.receiverPolicy -Raw | ConvertFrom-Json
+if ($cap.schema -cne $context.receiverSchema -or $cap.core_workflow -cne $context.stageWorkflow -or !$cap.staged_applications) { throw 'Staged receiver contract required.' }
 if ($env:GITHUB_EVENT_NAME -ceq 'workflow_dispatch') {
     if ($env:GITHUB_REF -cne 'refs/heads/main' -or
         $env:PRODUCER_RUN_ID -cnotmatch '^[1-9][0-9]*$' -or
@@ -48,6 +50,7 @@ if ($env:GITHUB_EVENT_NAME -ceq 'workflow_dispatch') {
     if ($LASTEXITCODE -ne 0) { throw 'Trusted Core integration barrier verification failed.' }
     $barrier = $raw | ConvertFrom-Json
     $accepted = $barrier.integrations.$Receiver
+    Assert-WssCiBarrierExecution $barrier $Receiver $env:GITHUB_WORKSPACE
     if ($accepted.repository -cne $env:GITHUB_REPOSITORY -or $accepted.pr_number -cnotmatch '^[1-9][0-9]*$') {
         throw 'Barrier does not name this receiver.'
     }
@@ -65,12 +68,12 @@ if ($env:GITHUB_EVENT_NAME -ceq 'workflow_dispatch') {
     $run = Read-GitHub "repos/$core/actions/runs/$($candidate.run_id)"
     if ($run.repository.full_name -cne $core -or $run.head_repository.full_name -cne $core -or
         $run.head_sha -cne $candidate.commit -or $run.path -cne '.github/workflows/artifacts.yml' -or
-        $run.event -cne 'push' -or $run.head_branch -cne 'dev' -or $run.conclusion -cne 'success') {
+        $run.event -cne 'push' -or $run.head_branch -cne $context.branch -or $run.conclusion -cne 'success') {
         throw 'Candidate is not a successful canonical Core dev producer.'
     }
     $tree = Read-GitHub "repos/$core/git/trees/$($candidate.commit)?recursive=1"
-    $entries=@($tree.tree|Where-Object path -CEQ 'tools/ci/dev-propagation.json')
-    $file=if($entries.Count -eq 1){Read-GitHub "repos/$core/contents/tools/ci/dev-propagation.json?ref=$($candidate.commit)"}else{$null}
+    $entries=@($tree.tree|Where-Object path -CEQ $context.stagePolicy)
+    $file=if($entries.Count -eq 1){Read-GitHub "repos/$core/contents/$($context.stagePolicy)?ref=$($candidate.commit)"}else{$null}
     $staged=Test-WssCiStagingPolicy $tree $file $cap $Receiver
     if (!$staged) { Write-ReadyEvent $pr }
     else {

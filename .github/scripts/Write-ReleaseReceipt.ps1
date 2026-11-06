@@ -13,6 +13,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+. "$PSScriptRoot/wss-ci/Channel.ps1"
 function Invoke-ReceiptGh([string[]] $Arguments) {
     $result = & gh @Arguments
     if ($LASTEXITCODE -ne 0) { throw "GitHub evidence request failed: $($Arguments[0])" }
@@ -54,7 +55,7 @@ function Download([string] $Repository,[string] $Run,[string] $Name,[string] $Di
 }
 function MergedPr([string] $Repository,[string] $Sha) {
     $matches = @(Pages "repos/$Repository/commits/$Sha/pulls?per_page=100" | Where-Object {
-        $_.merged_at -and $_.merge_commit_sha -ceq $Sha -and $_.base.ref -ceq 'dev' -and
+        $_.merged_at -and $_.merge_commit_sha -ceq $Sha -and $_.base.ref -ceq (Get-WssCiChannel) -and
         $_.base.repo.full_name -ceq $Repository -and $_.head.repo.full_name -ceq $Repository
     })
     if ($matches.Count -ne 1) { throw 'Current dev must be the actual unique merged dependency PR.' }
@@ -76,8 +77,10 @@ if (!$ContextPath) {
     } finally { Remove-Item -LiteralPath $configPath }
     return
 }
-if ($env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or $env:GITHUB_REF -cne 'refs/heads/dev') { throw 'Adapter is restricted to actual dev receipt execution.' }
+if ($env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or $env:GITHUB_REF -cne (Get-WssCiChannelContext).ref) { throw 'Adapter is restricted to actual dev receipt execution.' }
 $ctx=Get-Content -LiteralPath $ContextPath -Raw | ConvertFrom-Json
+if($ctx.plan.channel -cne (Get-WssCiChannel) -or $ctx.target.branch -cne (Get-WssCiChannel)){throw 'Receipt adapter context differs from explicit channel.'}
+if((Get-WssCiChannel) -ceq 'main' -and ($env:GITHUB_WORKFLOW_SHA -cne $env:GITHUB_SHA -or $env:GITHUB_WORKFLOW_REF -cne "$env:GITHUB_REPOSITORY/.github/workflows/release-receipt.yml@refs/heads/main")){throw 'Main receipt must execute its exact registered receiver source.'}
 if ($ctx.target.id -cne $TargetId -or $ctx.head -cne $env:GITHUB_SHA -or $ctx.target.repository -cne $env:GITHUB_REPOSITORY) { throw 'Adapter source/role differs from receipt context.' }
 $plan=$ctx.plan; $target=$ctx.target; $acceptedSha=$ctx.head; $pr=$ctx.pr
 $AcceptedRoot=$ctx.paths.sourceRoot; $ToolsRoot=$ctx.paths.toolsRoot; $ValidatorRoot=$ctx.paths.validatorRoot; $IntegrationRoot=$ctx.paths.integrationRoot

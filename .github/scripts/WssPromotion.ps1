@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+. "$PSScriptRoot/wss-ci/Channel.ps1"
 
 function Invoke-WssGh([string[]]$Arguments) {
     . "$PSScriptRoot/wss-ci/Process.ps1"
@@ -82,7 +83,7 @@ function Read-WssBootstrapProof([string] $Root, [string] $Consumer, $Approval, [
 
 function Assert-WssCanonicalPreflight($Run, [string] $Consumer, [string] $SourceSha, $Jobs) {
     $repo = if ($Consumer -ceq 'integration') { 'cwru-non-academic/CSharp_WSS_Integration_Lib' } elseif ($Consumer -ceq 'cli') { 'cwru-non-academic/CLI_CSharp_WSS_Application' } else { throw 'Unknown C# preflight consumer.' }
-    if ($Run.repository.full_name -cne $repo -or $Run.head_repository.full_name -cne $repo -or $Run.head_branch -cne 'dev' -or
+    if ($Run.repository.full_name -cne $repo -or $Run.head_repository.full_name -cne $repo -or $Run.head_branch -cne (Get-WssCiChannel) -or
         $Run.path -cne '.github/workflows/wss-preflight.yml' -or $Run.event -cne 'workflow_dispatch' -or
         $Run.head_sha -cne $SourceSha -or $Run.status -cne 'completed' -or $Run.conclusion -cne 'success') { throw 'Canonical C# dev preflight identity is invalid.' }
     $required = if ($Consumer -ceq 'integration') { @('Resolve preflight inputs','Preflight behavioral tests','Preflight compatibility (Windows)','Preflight compatibility (Ubuntu)','Preflight compatibility (macOS)') } else { @('WSS universal candidate provenance','CLI general conformance','CLI platform compatibility (Windows)','CLI platform compatibility (Ubuntu)','CLI platform compatibility (macOS)') }
@@ -97,6 +98,13 @@ function Assert-WssApproval($Approval, [string] $EvidenceRoot, [string] $Bootstr
     New-Item -ItemType Directory -Path $EvidenceRoot | Out-Null
     $c = $Approval.candidate
     $producer = Invoke-WssGh -Arguments @('api', "repos/$($c.repository)/actions/runs/$($c.run_id)") | ConvertFrom-Json
+    if((Get-WssCiChannel) -ceq 'main'){
+        if($BootstrapEvidenceRoot -or !$RequireCanonicalDev -or $producer.event -cne 'push' -or $producer.head_branch -cne 'main' -or $producer.head_repository.full_name -cne $c.repository){throw 'Main requires canonical push and fresh channel preflight proof; archived bootstrap is not rollout authority.'}
+        $head=Invoke-WssGh -Arguments @('api',"repos/$($c.repository)/git/ref/heads/main")|ConvertFrom-Json
+        if($head.object.sha -cne $c.commit){throw 'Core main moved from the accepted candidate.'}
+        $proof=Assert-WssCiWorkflowAuthorization ([string]$c.run_id)
+        Assert-WssCandidateRecord $proof.candidate $Approval
+    }
     if ($producer.repository.full_name -cne $c.repository -or $producer.path -cne '.github/workflows/artifacts.yml' -or
         $producer.head_sha -cne $c.commit -or $producer.status -cne 'completed' -or $producer.conclusion -cne 'success' -or
         $producer.event -notin @('workflow_dispatch', 'push')) { throw 'Producer approval is not a successful exact-commit authoritative run.' }
@@ -210,9 +218,9 @@ function Assert-WssMergedIntegration([string] $Sha, [string] $PrNumber, $Approva
     if ($Sha -cnotmatch '^[0-9a-f]{40}$' -or $PrNumber -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid Integration merge SHA/PR.' }
     $repo = 'cwru-non-academic/CSharp_WSS_Integration_Lib'
     $pr = Invoke-WssGh -Arguments @('api', "repos/$repo/pulls/$PrNumber") | ConvertFrom-Json
-    if (-not $pr.merged -or $pr.base.ref -cne 'dev' -or $pr.base.repo.full_name -cne $repo -or
+    if (-not $pr.merged -or $pr.base.ref -cne (Get-WssCiChannel) -or $pr.base.repo.full_name -cne $repo -or
         $pr.head.repo.full_name -cne $repo -or $pr.merge_commit_sha -cne $Sha) { throw 'Gitlink must target the actual merged Integration dev PR commit.' }
-    $compare = Invoke-WssGh -Arguments @('api', "repos/$repo/compare/${Sha}...dev") | ConvertFrom-Json
+    $compare = Invoke-WssGh -Arguments @('api', "repos/$repo/compare/${Sha}...$(Get-WssCiChannel)") | ConvertFrom-Json
     if ($compare.status -notin @('ahead', 'identical')) { throw 'Integration merge is not contained in dev.' }
     $pages = Invoke-WssGh -Arguments @('api', '--paginate', '--slurp', "repos/$repo/actions/workflows/wss-compatibility.yml/runs?event=pull_request&head_sha=$($pr.head.sha)&per_page=100") | ConvertFrom-Json
     # GitHub can return empty pull_requests after merge. Bind evidence to the exact
