@@ -24,8 +24,8 @@ public sealed class StimulationControllerConformanceTests
             string stage = Environment.GetEnvironmentVariable("WSS_CONFORMANCE_STAGE") ?? "single";
             var scenarios = stage switch
             {
-                "single" => WssStimulationSequences.SingleDevice,
-                "multi" => WssStimulationSequences.MultipleDevices,
+                "single" => WssStimulationSequences.SingleDevice.Concat(WssStimulationSequences.LayeredSingleDevice),
+                "multi" => WssStimulationSequences.MultipleDevices.Concat(WssStimulationSequences.LayeredMultipleDevices),
                 _ => throw new InvalidOperationException("WSS_CONFORMANCE_STAGE must be single or multi.")
             };
             return scenarios.Select(scenario => new TestCaseData(scenario).SetName(scenario.Id));
@@ -56,7 +56,11 @@ public sealed class StimulationControllerConformanceTests
             foreach (WssStimulationStep step in scenario.Steps)
             {
                 WssStimulationBaseline baseline = conformance.CaptureStimulationBaseline();
-                if (step.Normalized) controller.StimulateNormalized(MapChannel(step.GlobalChannel), step.Input);
+                step.PrepareReload(directory);
+                if (step.ReloadParameters) controller.LoadParamsJson();
+                if (step.ReloadModel) controller.GetModelConfigCTRL().LoadModelJson();
+                if (step.Modeled) controller.StimWithMode(MapChannel(step.GlobalChannel), step.Input);
+                else if (step.Normalized) controller.StimulateNormalized(MapChannel(step.GlobalChannel), step.Input);
                 else controller.StimulateAnalog(MapChannel(step.GlobalChannel), step.Expectation.PulseWidth,
                     step.Expectation.PulseAmplitude, step.Expectation.InterPulseInterval);
                 WssStimulationWindowResult result = WssStimulationWindow.Evaluate(
