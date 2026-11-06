@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $PSNativeCommandUseErrorActionPreference = $false # Expected negative dotnet test below is checked explicitly.
 if (-not $IsMacOS) { throw 'The native macOS fixture must execute on macOS.' }
-$expectedCore = '0ac18df22a1371e5ff94d5485c6d3fa4b3e6538f'
+$expectedCore = '0bc9e2d0af507ee729d39d3a30ab005cc136eabf'
 $actualCore = & git -C $CoreSourceRoot rev-parse HEAD
 if ($LASTEXITCODE -ne 0 -or $actualCore -cne $expectedCore) { throw 'Unexpected Core source for the reviewed macOS fixture.' }
 if (Test-Path -LiteralPath $WorkRoot) { throw 'Fixture WorkRoot must be new.' }
