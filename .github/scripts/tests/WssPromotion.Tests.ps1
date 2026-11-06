@@ -305,9 +305,9 @@ try {
         }
     }
     function git { $global:LASTEXITCODE = 0; $global:wssTestlateMain }
-    $script:wssRealNode=(Get-Command node -CommandType Application).Source
+    $global:wssTestlateRealNode=(Get-Command node -CommandType Application).Source
     function node {
-        if($args[0] -cmatch '(channels|staging)\.mjs$'){ & $script:wssRealNode @args;return }
+        if($args[0] -cmatch '(channels|staging)\.mjs$'){ & $global:wssTestlateRealNode @args;return }
         $global:wssTestlateCalls++
         if (($args[1..4] -join ',') -cne 'verify-barrier,123,456,1') { throw 'Late check changed exact correlation inputs.' }
         $global:LASTEXITCODE = if ($global:wssTestlateInvalid) { 1 } else { 0 }
