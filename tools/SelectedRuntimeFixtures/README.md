@@ -23,3 +23,8 @@ it does not claim old main product supports modern reload APIs. The baseline-v1
 seed is immutable historical dev, retaining compatibility coverage. Main ordinary
 legacy coverage is independently exercised by the paired main bundle PR. Pins
 are fixture identities, not acceptance or mutable test selection policy.
+
+Producer authentication runs in a separate trusted job. The selected executor
+receives only that job's immutable verified artifact, with no App secrets/token
+injected into its job. It rechecks all payload projections before profile use.
+The selected child also strips all dummy inherited credential/command handles.

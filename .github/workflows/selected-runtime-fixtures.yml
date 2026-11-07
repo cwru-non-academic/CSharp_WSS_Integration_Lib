@@ -7,7 +7,40 @@ on:
 permissions:
   contents: read
 jobs:
+  verify-input:
+    name: Authenticate synthetic payload input
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Create existing-scope producer read token
+        id: producer-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore
+          permission-contents: read
+          permission-actions: read
+      - name: Resolve exact authenticated producer archive
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.producer-token.outputs.token }}
+        run: |
+          $c = (Get-Content lib/wss-candidate.json -Raw | ConvertFrom-Json).candidate
+          ./.github/scripts/Resolve-WssRelease.ps1 -ProducerRepository $c.repository -RunId $c.run_id -ExpectedCommit $c.commit -ArchiveName $c.archive -ExpectedSha256 $c.sha256 -OutputRoot "$env:RUNNER_TEMP/synthetic-verified-input"
+      - name: Publish verified input only, without running selected code
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-verified-payload-input
+          path: |
+            ${{ runner.temp }}/synthetic-verified-input/candidate.json
+            ${{ runner.temp }}/synthetic-verified-input/extracted/WSS-Universal/**
+          if-no-files-found: error
   synthetic-runtime:
+    needs: verify-input
     name: Synthetic selected runtime (${{ matrix.os }}, ${{ matrix.bundle }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -49,20 +82,13 @@ jobs:
           ./tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1
           -Stage Prepare -FixtureRoot "${{ runner.temp }}/synthetic-selected-runtime"
           -TestSeedRoot "${{ github.workspace }}/${{ matrix.bundle == 'main-v2' && '.fixture-main-bundle' || '.fixture-v1-bundle' }}"
-      - name: Create existing-scope producer read token
-        id: producer-token
-        uses: actions/create-github-app-token@v2
+      - name: Download authenticated synthetic payload input
+        uses: actions/download-artifact@v4
         with:
-          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
-          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
-          owner: cwru-non-academic
-          repositories: WSSCore
-          permission-contents: read
-          permission-actions: read
+          name: synthetic-verified-payload-input
+          path: ${{ runner.temp }}/synthetic-verified-input
       - name: Authenticate modern fixture payload using trusted preparation
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ steps.producer-token.outputs.token }}
         run: >-
           ./${{ matrix.bundle == 'main-v2' && '.fixture-adapter/' || '' }}.github/scripts/Prepare-CSharpProfile.ps1
           -IntegrationRoot "$env:WSS_FIXTURE_PRODUCT"
@@ -70,6 +96,7 @@ jobs:
           -WorkRoot "$env:WSS_FIXTURE_ROOT/profile"
           -OutputRoot "$env:WSS_FIXTURE_ROOT/baseline-output"
           -SelectionEnabledCampaign
+          -VerifiedReleaseRoot "${{ runner.temp }}/synthetic-verified-input"
       - name: Exercise actual isolated adapters and negative mutation fixtures
         shell: pwsh
         run: >-
