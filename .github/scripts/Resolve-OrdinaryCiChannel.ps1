@@ -112,6 +112,34 @@ function Resolve-WssOrdinaryCiChannel([Collections.IDictionary]$Runtime, [Collec
     [pscustomobject]@{ channel = $channel; repository = $repository; workflow = $identity.workflow; source = $source; ref = $ref }
 }
 
+# Diagnostic labels are fixed and values are never serialized. This helper has
+# no authority role and runs only after the unchanged resolver has rejected.
+function Get-WssOrdinaryPrDiagnostics([Collections.IDictionary]$Runtime, [Collections.IDictionary]$Event) {
+    $pr = if ($Event['pull_request'] -is [Collections.IDictionary]) { $Event['pull_request'] } else { @{} }
+    $number = if (Test-WssOrdinaryInteger $Event['number']) { [string]$Event['number'] } else { '' }
+    $checks = @(
+        @{ field = 'event.pull_request'; parent = $Event; key = 'pull_request'; valid = ($Event['pull_request'] -is [Collections.IDictionary]) },
+        @{ field = 'event.number'; parent = $Event; key = 'number'; valid = (Test-WssOrdinaryInteger $Event['number']) },
+        @{ field = 'event.pull_request.number'; parent = $pr; key = 'number'; valid = ((Test-WssOrdinaryInteger $Event['number']) -and (Test-WssOrdinaryInteger $pr['number']) -and $pr['number'] -eq $Event['number']) },
+        @{ field = 'runtime.GITHUB_REF'; parent = $Runtime; key = 'GITHUB_REF'; valid = ((Test-WssOrdinaryString $Runtime['GITHUB_REF']) -and $Runtime['GITHUB_REF'] -ceq "refs/pull/$number/merge") },
+        @{ field = 'runtime.GITHUB_REF_NAME'; parent = $Runtime; key = 'GITHUB_REF_NAME'; valid = ((Test-WssOrdinaryString $Runtime['GITHUB_REF_NAME']) -and $Runtime['GITHUB_REF_NAME'] -ceq "$number/merge") },
+        @{ field = 'event.pull_request.merge_commit_sha'; parent = $pr; key = 'merge_commit_sha'; valid = ($pr.Contains('merge_commit_sha') -and ($null -eq $pr['merge_commit_sha'] -or ((Test-WssOrdinaryString $Runtime['GITHUB_SHA']) -and (Test-WssOrdinaryString $pr['merge_commit_sha']) -and $pr['merge_commit_sha'] -ceq $Runtime['GITHUB_SHA']))) },
+        @{ field = 'event.pull_request.state'; parent = $pr; key = 'state'; valid = ((Test-WssOrdinaryString $pr['state']) -and $pr['state'] -ceq 'open') },
+        @{ field = 'event.pull_request.merged'; parent = $pr; key = 'merged'; valid = ($pr['merged'] -is [bool] -and !$pr['merged']) },
+        @{ field = 'event.action'; parent = $Event; key = 'action'; valid = ((Test-WssOrdinaryString $Event['action']) -and $Event['action'] -cin @('opened', 'reopened', 'synchronize')) }
+    )
+    foreach ($check in $checks) {
+        if ($check.valid) { continue }
+        $present = $check.parent.Contains($check.key)
+        $value = $check.parent[$check.key]
+        $type = if (!$present) { 'missing' } elseif ($null -eq $value) { 'null' }
+            elseif ($value -is [string]) { 'string' } elseif ($value -is [bool]) { 'boolean' }
+            elseif ($value -is [Collections.IDictionary]) { 'object' } elseif ($value -is [array]) { 'array' }
+            elseif ($value -is [ValueType]) { 'number' } else { 'other' }
+        "Ordinary CI rejected field=$($check.field) present=$present type=$type."
+    }
+}
+
 # Opened webhooks may precede GitHub's mergeability computation, leaving
 # merge_commit_sha null. The raw checked-out commit, not that nullable hint,
 # proves the exact authenticated base/head pair. Raw headers work at depth 1.
@@ -137,7 +165,12 @@ function Initialize-WssOrdinaryCiChannel {
     if (!$env:GITHUB_EVENT_PATH -or !$env:GITHUB_OUTPUT) { throw 'Ordinary CI requires runner event and output files.' }
     $event = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
     if ($event -isnot [Collections.IDictionary]) { throw 'Ordinary CI requires a JSON event object.' }
-    $resolved = Resolve-WssOrdinaryCiChannel $runtime $event
+    try { $resolved = Resolve-WssOrdinaryCiChannel $runtime $event } catch {
+        if ($runtime['GITHUB_EVENT_NAME'] -ceq 'pull_request') {
+            Get-WssOrdinaryPrDiagnostics $runtime $event | ForEach-Object { Write-Host $_ }
+        }
+        throw
+    }
     $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
     $head = & git --no-optional-locks -C $root rev-parse HEAD
     if ($LASTEXITCODE -ne 0 -or ($head -join '').Trim() -cne $resolved.source) {
