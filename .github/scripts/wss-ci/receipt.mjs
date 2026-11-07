@@ -1,3 +1,4 @@
+import {collectSelectedTestArtifact,verifySelectedTestArtifact} from './campaign-test-selection.mjs';
 import {isEntrypoint} from './entrypoint.mjs';
 // Receiver engine extracted from Python's reviewed Node receipt writer.
 // Runtime-specific rich proof remains in the frozen PowerShell adapter.
@@ -112,6 +113,11 @@ export async function runReceipt(config,{g=new ReadOnly(),env=process.env,adapte
       v.requireThat(r.status==='completed' && r.conclusion==='success','Preflight is not successful');
       const normalized=JSON.parse(g.download(d.repository,d.run_id,'wss-candidate-provenance',['candidate.json'])['candidate.json']);
       v.candidate(normalized);v.requireThat(v.canonical(normalized)===v.canonical(p.candidate),'Normalized candidate differs from rich proof/frozen plan');
+      if(p.test_selection) {
+        const sourceTarget=p.manifest.targets.find(target=>target.repository===d.repository);
+        v.requireThat(sourceTarget&&d.workflow==='.github/workflows/wss-preflight.yml'&&d.source_sha===p.target_snapshots[sourceTarget.id].head_sha&&String(r.id)===d.run_id,'Selected-test preflight differs from frozen target/source/run');
+        collectSelectedTestArtifact(g,p,sourceTarget.id,r);
+      }
     }
     v.requireThat(g.head(t.repository,t.branch)===head && g.head(v.CORE,p.channel)===p.candidate.commit,'Source moved during validation');
     for(const [parent,sha] of Object.entries(parents)) v.requireThat(g.head(profiles[parent].target.repository,p.channel)===sha,'Accepted wrapper moved during validation');
@@ -119,7 +125,11 @@ export async function runReceipt(config,{g=new ReadOnly(),env=process.env,adapte
     v.requireThat(String(latest.id)===String(normal.id) && latest.run_attempt===normal.run_attempt && String(live.id)===String(normal.id) && live.run_attempt===normal.run_attempt,'Normal run/attempt changed during validation');
     runIdentity(live,t.repository,t.workflow,head,normal.event,p.channel);v.requireThat(live.status==='completed' && live.conclusion==='success','Normal CI is no longer successful');v.jobs(g.jobs(t.repository,live),t.jobs);
     for(const path of t.trusted_paths) v.requireThat(g.object(t.repository,head,path).sha===snapshot.trusted[path],`Frozen tooling changed during validation: ${path}`);
-    const receipt={schema:context.receiptSchema,plan_id:p.plan_id,channel:p.channel,target_id:id,candidate:p.candidate,mode:'merged-pr',merge:{pr_number:String(pr.number),head_sha:pr.head.sha,sha:head},normal_ci:{run_id:String(normal.id),attempt:normal.run_attempt},preflights,parents,emitter:{run_id:env.GITHUB_RUN_ID,attempt:Number(env.GITHUB_RUN_ATTEMPT),source_sha:head,workflow:WORKFLOW},coverage:t.coverage};
+    // Never derive this declaration from adapter output or caller inputs. The
+    // collector authenticates artifact ownership, source and attempt and checks
+    // its downloaded bytes against the producer's frozen selection.
+    const selectedTests=p.test_selection?verifySelectedTestArtifact(p,id,live,collectSelectedTestArtifact(g,p,id,live)):undefined;
+    const receipt={...(selectedTests?{selected_tests:selectedTests}:{}),schema:context.receiptSchema,plan_id:p.plan_id,channel:p.channel,target_id:id,candidate:p.candidate,mode:'merged-pr',merge:{pr_number:String(pr.number),head_sha:pr.head.sha,sha:head},normal_ci:{run_id:String(normal.id),attempt:normal.run_attempt},preflights,parents,emitter:{run_id:env.GITHUB_RUN_ID,attempt:Number(env.GITHUB_RUN_ATTEMPT),source_sha:head,workflow:WORKFLOW},coverage:t.coverage};
     v.requireThat(!existsSync(join(outputRoot,'receipt.json')),'Receipt output must be new');mkdirSync(outputRoot,{recursive:true});writeFileSync(join(outputRoot,'receipt.json'),v.canonical(receipt)+'\n');
     if(env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT,`artifact_name=wss-acceptance-${id}-${planId}-a${env.GITHUB_RUN_ATTEMPT}\n`);
     return receipt;

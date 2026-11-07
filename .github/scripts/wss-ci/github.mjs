@@ -1,3 +1,4 @@
+import {selectionFields,collectSelectedTestArtifact} from './campaign-test-selection.mjs';
 import {execFileSync} from 'node:child_process';
 import {mkdtempSync,readdirSync,readFileSync,writeFileSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
@@ -51,8 +52,9 @@ export class GitHub {
   }
 }
 
-export function freeze(g,m,c,{verificationOnly=false}={}) {
+export function freeze(g,m,c,{verificationOnly=false,testSelection}={}) {
   manifest(m); candidate(c);
+  const selected=selectionFields(m,c,testSelection);
   const context=channelContext(m.channel);
   const guard=m.legacy_tag_guard;
   const unconfigured=guard?.ruleset_id===null && guard?.policy_sha256===null;
@@ -66,7 +68,7 @@ export function freeze(g,m,c,{verificationOnly=false}={}) {
     requireThat(w.path==='.github/workflows/release-receipt.yml' && w.state==='active',`Receipt workflow unavailable: ${t.id}`);
     target_snapshots[t.id]={head_sha,trusted};
   }
-  const body={schema:context.planSchema,channel:m.channel,candidate:c,manifest:m,manifest_sha256:digest(m),target_snapshots};
+  const body={schema:context.planSchema,channel:m.channel,candidate:c,manifest:m,manifest_sha256:digest(m),target_snapshots,...selected};
   return plan({...body,plan_id:digest(body)});
 }
 export function loadPlan(g,runId) {
@@ -116,11 +118,17 @@ export function collect(g,p) {
       requireThat(link.type==='commit' && link.mode==='160000','Expected a Git submodule pin');
       return [parent,link.sha];
     }));
-    const preflights=(r.preflights || []).map(d=>({run:g.run(d.repository,d.run_id),candidate:JSON.parse(g.download(d.repository,d.run_id,'wss-candidate-provenance',['candidate.json'])['candidate.json'])}));
+    const preflights=(r.preflights || []).map(d=>{
+      const run=g.run(d.repository,d.run_id),target=p.manifest.targets.find(t=>t.repository===d.repository);
+      requireThat(target,'Unknown preflight target');
+      return {run,candidate:JSON.parse(g.download(d.repository,d.run_id,'wss-candidate-provenance',['candidate.json'])['candidate.json']),
+        ...(p.test_selection?{selected_tests:collectSelectedTestArtifact(g,p,target.id,run)}:{})};
+    });
     evidence.targets[t.id]={receipt:r,receipt_bytes,receipt_sha256:bytesDigest(receipt_bytes),pr,current_head:g.head(t.repository,t.branch),
       merge_tree:g.tree(t.repository,r.merge.sha),tested_tree:g.tree(t.repository,normal.head_sha),
       trusted:Object.fromEntries(t.trusted_paths.map(path=>[path,g.object(t.repository,r.merge.sha,path).sha])),
       parent_gitlinks,normal_run:normal,normal_latest_run_id:String(normals[0].id),normal_jobs:g.jobs(t.repository,normal),
+      ...(p.test_selection?{selected_tests:collectSelectedTestArtifact(g,p,t.id,normal)}:{}),
       emitter_run:g.run(t.repository,String(emitter.id)),artifact:g.artifact(t.repository,String(emitter.id),name),preflights};
   }
   return {record:allClear(p,evidence),files:zip.files};
