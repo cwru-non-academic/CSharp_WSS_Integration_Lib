@@ -10,10 +10,10 @@ if($Stage -ceq 'Prepare'){
  if(!$IsWindows){Push-Location $FixtureRoot;try{$FixtureRoot=(& /bin/pwd -P).Trim()}finally{Pop-Location}}
  $FixtureRoot=[IO.Path]::GetFullPath($FixtureRoot)
  $product=Join-Path $FixtureRoot 'product';$tests=Join-Path $FixtureRoot 'selected-tests'
- $sha=(Git $BootstrapRoot @('rev-parse','HEAD') -join '').Trim()
+ $sha=(Invoke-FixtureGit $BootstrapRoot @('rev-parse','HEAD') -join '').Trim()
  foreach($target in @($product,$tests)){
-  $null=Git $BootstrapRoot @('clone','--quiet','--no-hardlinks','--no-checkout',$BootstrapRoot,$target)
-  $null=Git $target @('checkout','--quiet','--detach',$sha)
+  $null=Invoke-FixtureGit $BootstrapRoot @('clone','--quiet','--no-hardlinks','--no-checkout',$BootstrapRoot,$target)
+  $null=Invoke-FixtureGit $target @('checkout','--quiet','--detach',$sha)
  }
  $directory=Join-Path $tests 'tests/Wss.CSharpImplementation.Tests'
  $extra=@"
@@ -36,9 +36,9 @@ public sealed class HostedSelectedFixtureTests {
  $poison='<Project><Target Name="Poison" BeforeTargets="PrepareForBuild;Build;VSTest"><Error Text="UNTRUSTED BUILD INPUT EXECUTED" /></Target></Project>'
  [IO.File]::WriteAllText((Join-Path $directory 'Wss.CSharpImplementation.Tests.csproj'),$poison)
  foreach($base in @($tests,$directory,$FixtureRoot)){foreach($name in @('Directory.Build.props','Directory.Build.targets')){[IO.File]::WriteAllText((Join-Path $base $name),$poison)}}
- $null=Git $tests @('add','--all')
- $null=Git $tests @('-c','user.name=Synthetic Runtime Fixture','-c','user.email=fixture@example.invalid','commit','--quiet','-m','Synthetic runtime fixture, never acceptance evidence')
- $testSha=(Git $tests @('rev-parse','HEAD') -join '').Trim()
+ $null=Invoke-FixtureGit $tests @('add','--all')
+ $null=Invoke-FixtureGit $tests @('-c','user.name=Synthetic Runtime Fixture','-c','user.email=fixture@example.invalid','commit','--quiet','-m','Synthetic runtime fixture, never acceptance evidence')
+ $testSha=(Invoke-FixtureGit $tests @('rev-parse','HEAD') -join '').Trim()
  Require ($testSha -cne $sha) 'Selected fixture must differ from product.'
  $payload=Join-Path $FixtureRoot 'payload';Copy-Item -LiteralPath (Join-Path $product 'lib') -Destination $payload -Recurse
  @{schema='wss-synthetic-selected-runtime-fixture/v1';acceptance=$false;product_root=$product;product_sha=$sha;test_root=$tests;test_sha=$testSha;payload_root=$payload;selection_id=('a'*64)} | ConvertTo-Json | Set-Content (Join-Path $FixtureRoot 'fixture.json')
