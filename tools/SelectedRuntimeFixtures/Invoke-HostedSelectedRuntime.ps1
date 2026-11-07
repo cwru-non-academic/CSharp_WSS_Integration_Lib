@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][ValidateSet('Prepare','Run')][string]$Stage,[Parameter(Mandatory)][string]$FixtureRoot,[string]$BootstrapRoot=(Join-Path $PSScriptRoot '../..'),[string]$AdapterRoot='',[string]$TestSeedRoot='',[string]$ProductSeedRoot='',[ValidateSet('layered-v1','legacy-v1')][string]$FixtureProfile='layered-v1')
+param([Parameter(Mandatory)][ValidateSet('Prepare','Run')][string]$Stage,[Parameter(Mandatory)][string]$FixtureRoot,[string]$BootstrapRoot=(Join-Path $PSScriptRoot '../..'),[string]$AdapterRoot='',[string]$TestSeedRoot='',[string]$ProductSeedRoot='',[string]$VerifiedInputRoot,[ValidateSet('layered-v1','legacy-v1')][string]$FixtureProfile='layered-v1')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $BootstrapRoot=[IO.Path]::GetFullPath($BootstrapRoot)
@@ -54,7 +54,10 @@ public sealed class HostedSelectedFixtureTests {
  $null=Invoke-FixtureGit $tests @('-c','user.name=Synthetic Runtime Fixture','-c','user.email=fixture@example.invalid','commit','--quiet','-m','Synthetic runtime fixture, never acceptance evidence')
  $testSha=(Invoke-FixtureGit $tests @('rev-parse','HEAD') -join '').Trim()
  Require ($testSha -cne $sha) 'Selected fixture must differ from product.'
- $payload=Join-Path $FixtureRoot 'payload';Copy-Item -LiteralPath (Join-Path $product 'lib') -Destination $payload -Recurse
+ Require (![string]::IsNullOrWhiteSpace($VerifiedInputRoot)) 'Authenticated payload seed is required.'
+ $payload=Join-Path $FixtureRoot 'payload';Copy-Item -LiteralPath (Join-Path $VerifiedInputRoot 'extracted/WSS-Universal') -Destination $payload -Recurse
+ @{candidate=(Get-Content (Join-Path $VerifiedInputRoot 'candidate.json') -Raw | ConvertFrom-Json)} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $payload 'wss-candidate.json')
+ if($FixtureProfile -ceq 'layered-v1'){Require ((Get-FileHash (Join-Path $product 'lib/WSS_Core_Interface.dll')).Hash -cne (Get-FileHash (Join-Path $payload 'WSS_Core_Interface.dll')).Hash) 'Modern collision regression requires different archived and authenticated candidate bytes.'}
  @{schema='wss-synthetic-selected-runtime-fixture/v1';acceptance=$false;fixture_profile=$FixtureProfile;product_root=$product;product_sha=$sha;test_root=$tests;test_sha=$testSha;test_seed_sha=$seedSha;payload_root=$payload;selection_id=('a'*64)} | ConvertTo-Json | Set-Content (Join-Path $FixtureRoot 'fixture.json')
  foreach($entry in @{WSS_FIXTURE_ROOT=$FixtureRoot;WSS_FIXTURE_PRODUCT=$product;WSS_FIXTURE_PAYLOAD=$payload}.GetEnumerator()){
   Require ($entry.Value -notmatch '[\r\n]') 'Invalid fixture workflow path.'
@@ -85,6 +88,10 @@ try{
  foreach($name in $names){$prior[$name]=[Environment]::GetEnvironmentVariable($name);[Environment]::SetEnvironmentVariable($name,'synthetic-parent-only')}
  Invoke-CredentialFreeSelectedPowerShell "$scripts/Invoke-ProfileFullTests.ps1" @{EvidencePath=$profilePath;ResultsDirectory=$baseline}
  Assert-PreparedProfileProof $proof
+ & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $proof.state.output_root 'Release/net9.0')
+ & dotnet publish (Join-Path $proof.state.source_root 'src/Wss.CSharpImplementation.csproj') -c Release --no-restore -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$($state.payload_root)" "-p:WSS_BLE_ARTIFACT_DIR=$($state.payload_root)" -o (Join-Path $FixtureRoot 'staged-publish')
+ if($LASTEXITCODE -ne 0){throw 'Restored staged product publish failed.'}
+ & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $FixtureRoot 'staged-publish')
  if($legacy){Assert-LegacyFullInventory (Join-Path $baseline 'all.trx');[xml]$missing=Get-Content (Join-Path $baseline 'all.trx') -Raw;$null=$missing.TestRun.Results.RemoveChild($missing.TestRun.Results.UnitTestResult[0]);$negative=Join-Path $FixtureRoot 'missing-baseline.trx';$missing.Save($negative);$rejected=$false;try{Assert-LegacyFullInventory $negative}catch{$rejected=$true};Require $rejected 'Missing historical baseline case was accepted.'}
  $baselineRoots=@($proof.state.output_root,$baseline)
  $baselineSnapshot=New-TrustedBaselineSnapshot $baselineRoots

@@ -3,7 +3,7 @@
 function Assert-CSharpProfileBootstrap {
     $files=@{
         'Profile.ps1'='db6d9d261215903300f3ad397a80cb4b0c1d7f5ab3b62d151f224421396d1ea9'
-        'Prepare-CSharpProfile.ps1'='1299cfc0dc51109d9808b568af8fb3455f9122a0d75d9e93e50d44e224753ea5'
+        'Prepare-CSharpProfile.ps1'='1562b2c9ae4ed219be88bf0dedd30e5788390a3917210ba23cd6d29af2a6ffb8'
         'Invoke-PreparedBehavior.ps1'='a322414d4e70a33078c504baed27d0e1cff9636bcc378ca9ee86c3dd520f3fc7'
         'Invoke-PreparedFullTests.ps1'='ed1b20ab888e8692f469515155f553e07ba82870407b949c932b7384d003afdf'
         'Invoke-Behavior.ps1'='d9419f2f7909a9b579cca546af90f491b5c734f50bc8fd2a68510902d924e9c9'

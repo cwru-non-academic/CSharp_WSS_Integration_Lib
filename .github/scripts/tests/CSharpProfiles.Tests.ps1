@@ -26,3 +26,12 @@ foreach($type in @($api.Keys)){
  }
 }
 'Profile helper identities, fixed fixtures and 18 partial capability rejections passed.'
+
+# Generated project roots contain archived product/lib assemblies. Default None
+# discovery would put those assemblies ahead of explicit candidate HintPaths.
+foreach($relative in @('tools/CSharpProfiles/Prepare-CSharpProfile.ps1','tools/CSharpProfiles/Invoke-BaselineProfileTests.ps1','.github/scripts/Invoke-SelectedCSharpTests.ps1')){
+ $template=Get-Content (Join-Path "$PSScriptRoot/../../.." $relative) -Raw
+ if(([regex]::Matches($template,'<EnableDefaultNoneItems>false</EnableDefaultNoneItems>')).Count -ne 1){throw "Generated project permits unintended None discovery: $relative"}
+ if($template -notmatch '<HintPath>\$payload/WSS_Core_Interface.dll</HintPath>'){throw "Candidate reference lost explicit payload binding: $relative"}
+}
+'All three generated project templates exclude default None discovery and retain explicit candidate references.'

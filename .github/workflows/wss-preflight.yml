@@ -285,7 +285,8 @@ jobs:
         shell: pwsh
         run: |
           ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
-          dotnet publish src/Wss.CSharpImplementation.csproj -c Release --no-restore -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" -o "$env:RUNNER_TEMP/integration-publish"
+          $profile = Get-Content $env:WSS_PROFILE_EVIDENCE -Raw | ConvertFrom-Json
+          dotnet publish (Join-Path $profile.source_root 'src/Wss.CSharpImplementation.csproj') -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -c Release --no-restore -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" -o "$env:RUNNER_TEMP/integration-publish"
           if ($LASTEXITCODE -ne 0) { throw 'Integration publish failed.' }
           ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot "$env:RUNNER_TEMP/integration-publish"
 
@@ -405,7 +406,8 @@ jobs:
         shell: pwsh
         run: |
           ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
-          dotnet publish src/Wss.CSharpImplementation.csproj -c Release --no-restore -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" -o "$env:RUNNER_TEMP/integration-publish"
+          $profile = Get-Content $env:WSS_PROFILE_EVIDENCE -Raw | ConvertFrom-Json
+          dotnet publish (Join-Path $profile.source_root 'src/Wss.CSharpImplementation.csproj') -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -c Release --no-restore -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" -o "$env:RUNNER_TEMP/integration-publish"
           if ($LASTEXITCODE -ne 0) { throw 'Integration publish failed.' }
           ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot "$env:RUNNER_TEMP/integration-publish"
 
