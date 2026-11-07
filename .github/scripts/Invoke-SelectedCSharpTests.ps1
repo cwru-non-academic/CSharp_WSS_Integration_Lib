@@ -29,8 +29,21 @@ Assert-CSharpTestWorkRoot $WorkRoot @($ProductRoot,$IntegrationRoot,$TestRoot,$P
 if (Test-Path -LiteralPath $WorkRoot) { throw 'Selected test work directory must be new.' }
 $null=New-Item -ItemType Directory -Path $WorkRoot
 $WorkRoot=[IO.Path]::GetFullPath($WorkRoot)
+# Export the immutable integration source rather than building inside the product checkout.
+# Original roots remain pristine for the Core inspect/evidence bootstrap.
+$archive=Join-Path $WorkRoot 'product-source.zip'
+$null=Invoke-TestBundleGit $IntegrationRoot @('archive','--format=zip',"--output=$archive",$IntegrationSha)
+$buildProduct=Join-Path $WorkRoot 'product'
+Expand-Archive -LiteralPath $archive -DestinationPath $buildProduct
+$buildSourceFiles=@(Invoke-TestBundleGit $IntegrationRoot @('ls-files','--','src'))
+$buildSourceHashes=@($buildSourceFiles | ForEach-Object { @{path=$_;sha256=(Get-TestBundleFileHash (Join-Path $buildProduct $_))} })
+function Assert-StagedCSharpProduct {
+    foreach ($file in $buildSourceHashes) {
+        if ((Get-TestBundleFileHash (Join-Path $buildProduct $file.path)) -cne $file.sha256) { throw 'Staged product source changed during selected tests.' }
+    }
+}
 function Escape-Xml([string]$Text) { [Security.SecurityElement]::Escape($Text) }
-$productProject=Escape-Xml (Join-Path $IntegrationRoot 'src/Wss.CSharpImplementation.csproj')
+$productProject=Escape-Xml (Join-Path $buildProduct 'src/Wss.CSharpImplementation.csproj')
 $payload=Escape-Xml $PayloadRoot
 $compile=($bundle.sources | ForEach-Object { '    <Compile Include="'+(Escape-Xml $_)+'" />' }) -join "`n"
 if ($Role -ceq 'cli') { $compile+="`n    <Compile Include=`"$(Escape-Xml (Join-Path $ProductRoot 'src/Program.cs'))`" Link=`"ProductionProgram.cs`" />" }
@@ -81,11 +94,12 @@ if ($Role -ceq 'wrapper') {
     $results=@($trx.TestRun.Results.UnitTestResult | Where-Object { $_.testId -cin $ids })
     if ($results.Count -ne 10 -or @(Compare-Object $expected @($results.testName) -CaseSensitive).Count -ne 0 -or @($trx.TestRun.Results.UnitTestResult | Where-Object outcome -cne 'Passed').Count -ne 0) { throw 'Selected CLI suite lost mandatory command coverage.' }
 }
+Assert-StagedCSharpProduct
 Assert-CSharpTestBundle $bundle
-Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config','.github') -AllowBuildOutputs
-Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src','.github') -AllowBuildOutputs
+Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config','.github')
+Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src','.github')
 & $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
 if ((Get-SelectedPayloadDigest $PayloadRoot) -cne $payloadDigest) { throw 'Selected payload changed during execution.' }
-$evidence=@{payload_sha256=$payloadDigest;schema='wss-selected-csharp-tests/v1';role=$Role;product_root=$ProductRoot;product_sha=$ProductSha;integration_root=$IntegrationRoot;integration_sha=$IntegrationSha;payload_root=$PayloadRoot;test_root=$bundle.root;test_sha=$bundle.sha;test_repository=$bundle.repository;test_selection_id=$bundle.selection_id;test_contract_sha256=$bundle.contract_sha256;passed=$true}
+$evidence=@{build_product_sha=$IntegrationSha;build_product_root=$buildProduct;payload_sha256=$payloadDigest;schema='wss-selected-csharp-tests/v1';role=$Role;product_root=$ProductRoot;product_sha=$ProductSha;integration_root=$IntegrationRoot;integration_sha=$IntegrationSha;payload_root=$PayloadRoot;test_root=$bundle.root;test_sha=$bundle.sha;test_repository=$bundle.repository;test_selection_id=$bundle.selection_id;test_contract_sha256=$bundle.contract_sha256;passed=$true}
 $evidence | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $WorkRoot 'test-source-evidence.json')
 $evidence

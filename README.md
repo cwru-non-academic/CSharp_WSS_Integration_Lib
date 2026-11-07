@@ -468,3 +468,4 @@ identities only after source and payload postchecks pass. Workflow selection and
 campaign evidence adoption must land separately before repository variables are
 advertised as active.
 Selected C# runs require fresh product checkouts without prior bin/obj outputs. This prevents stale NuGet intermediate imports from affecting the build; generated outputs from this run are allowed only during postchecks.
+The product project is built from a trusted git archive at the declared integration SHA in the new work directory. Original product checkouts remain pristine for Core evidence verification; staged source hashes are rechecked after execution.
