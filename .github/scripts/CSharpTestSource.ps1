@@ -35,7 +35,13 @@ function Resolve-CSharpTestBundle([string]$Role,[string]$ProductRoot,[string]$Te
     $dir=if ($Role -ceq 'wrapper') {'tests/Wss.CSharpImplementation.Tests'} else {'tests/Wss.Cli.Tests'}
     $contractPath=Join-Path $root 'tests/test-contract.json'
     $contract=Get-Content -LiteralPath $contractPath -Raw | ConvertFrom-Json
-    if (@(Compare-Object @('schema','role','test_directory') @($contract.PSObject.Properties.Name) -CaseSensitive).Count -ne 0 -or $contract.schema -cne 'wss-csharp-tests/v1' -or $contract.role -cne $Role -or $contract.test_directory -cne $dir) { throw 'Invalid test-only contract; product config and executable paths are not selectable.' }
+    $schema='wss-csharp-tests/v1'
+    # Version 2 has one fixed wrapper-only location, separate from ordinary tests.
+    # Neither schema permits caller-selected paths, projects or executable config.
+    if ($Role -ceq 'wrapper' -and $contract.schema -ceq 'wss-csharp-tests/v2') {
+        $schema='wss-csharp-tests/v2';$dir='tests/SelectedWrapper.Tests'
+    }
+    if (@(Compare-Object @('schema','role','test_directory') @($contract.PSObject.Properties.Name) -CaseSensitive).Count -ne 0 -or $contract.schema -cne $schema -or $contract.role -cne $Role -or $contract.test_directory -cne $dir) { throw 'Invalid test-only contract; product config and executable paths are not selectable.' }
     $tracked=@(Invoke-TestBundleGit $root @('ls-files','--stage','--',$dir,'tests/test-contract.json'))
     if (@($tracked | Where-Object { $_ -cnotmatch '^100644 ' }).Count) { throw 'Selected tests must be regular tracked files, not symlinks or submodules.' }
     if (@(Invoke-TestBundleGit $root @('status','--porcelain','--untracked-files=all','--ignored','--',$dir,'tests/test-contract.json')).Count) { throw 'Selected test directory contains ignored or untracked overrides.' }

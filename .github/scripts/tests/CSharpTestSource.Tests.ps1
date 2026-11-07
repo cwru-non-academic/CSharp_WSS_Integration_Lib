@@ -78,4 +78,37 @@ if((Get-CanonicalCSharpFixtureHash $lf) -ceq (Get-CanonicalCSharpFixtureHash $cr
 $count++
 Remove-Item -LiteralPath $lf,$crlf
 
+# Fixed v2 wrapper bundle is separate from ordinary legacy test inputs.
+$wrapper=Join-Path (Split-Path $root) ('wss-wrapper-v2-'+[guid]::NewGuid().ToString('N'))
+$null=New-Item -ItemType Directory -Path "$wrapper/tests/SelectedWrapper.Tests" -Force
+Copy-Item -LiteralPath "$PSScriptRoot/../../../tools/CSharpProfiles/fixtures/layered-v1/StimulationControllerConformanceTests.cs" -Destination "$wrapper/tests/SelectedWrapper.Tests/StimulationControllerConformanceTests.cs"
+$null=& git -C $wrapper init --quiet
+$wrapper=(& git -C $wrapper rev-parse --show-toplevel).Trim()
+function Commit-WrapperContract([string]$Schema,[string]$Directory,[string]$Role='wrapper') {
+    @{schema=$Schema;role=$Role;test_directory=$Directory} | ConvertTo-Json | Set-Content "$wrapper/tests/test-contract.json"
+    $null=& git -C $wrapper add .
+    $null=& git -C $wrapper -c user.name=Test -c user.email=test@example.invalid commit --quiet -m contract
+    (& git -C $wrapper rev-parse HEAD).Trim()
+}
+$wrapperRepo='cwru-non-academic/CSharp_WSS_Integration_Lib'
+$wrapperSha=Commit-WrapperContract 'wss-csharp-tests/v2' 'tests/SelectedWrapper.Tests'
+$v2=Resolve-CSharpTestBundle wrapper $product $wrapper $wrapperSha $wrapperRepo $id
+Assert-CSharpTestBundle $v2
+if($v2.directory -cne 'tests/SelectedWrapper.Tests'){throw 'Wrong v2 bundle directory'}
+$count++
+foreach($badDirectory in @('tests/Wss.CSharpImplementation.Tests','../outside','tests/Other')) {
+    $wrapperSha=Commit-WrapperContract 'wss-csharp-tests/v2' $badDirectory
+    Expect-Rejection {Resolve-CSharpTestBundle wrapper $product $wrapper $wrapperSha $wrapperRepo $id} "v2 arbitrary directory $badDirectory"
+}
+$wrapperSha=Commit-WrapperContract 'wss-csharp-tests/v3' 'tests/SelectedWrapper.Tests'
+Expect-Rejection {Resolve-CSharpTestBundle wrapper $product $wrapper $wrapperSha $wrapperRepo $id} 'unknown schema'
+$wrapperSha=Commit-WrapperContract 'wss-csharp-tests/v2' 'tests/SelectedWrapper.Tests' 'cli'
+Expect-Rejection {Resolve-CSharpTestBundle cli $product $wrapper $wrapperSha $repo $id} 'v2 cannot extend CLI paths'
+$wrapperSha=Commit-WrapperContract 'wss-csharp-tests/v2' 'tests/SelectedWrapper.Tests'
+Add-Content "$wrapper/tests/SelectedWrapper.Tests/StimulationControllerConformanceTests.cs" '// mutated mandatory fixture'
+$null=& git -C $wrapper add .
+$null=& git -C $wrapper -c user.name=Test -c user.email=test@example.invalid commit --quiet -m mutation
+$wrapperSha=(& git -C $wrapper rev-parse HEAD).Trim()
+Expect-Rejection {Resolve-CSharpTestBundle wrapper $product $wrapper $wrapperSha $wrapperRepo $id} 'v2 canonical mutation'
+
 Write-Output "$count selected-test binding checks passed. Fixture: $root"
