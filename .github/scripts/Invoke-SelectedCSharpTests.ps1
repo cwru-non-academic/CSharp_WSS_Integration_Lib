@@ -15,10 +15,16 @@ $ErrorActionPreference='Stop'
 . "$PSScriptRoot/CSharpTestSource.ps1"
 $ProductRoot=[IO.Path]::GetFullPath($ProductRoot)
 $PayloadRoot=[IO.Path]::GetFullPath($PayloadRoot)
-Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config')
+Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config','.github')
 if ($Role -ceq 'wrapper') { $IntegrationRoot=$ProductRoot; $IntegrationSha=$ProductSha }
-else { if (!$IntegrationRoot -or !$IntegrationSha) { throw 'CLI test selection requires its unchanged integration product root and SHA.' }; $IntegrationRoot=[IO.Path]::GetFullPath($IntegrationRoot); Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src') }
+else { if (!$IntegrationRoot -or !$IntegrationSha) { throw 'CLI test selection requires its unchanged integration product root and SHA.' }; $IntegrationRoot=[IO.Path]::GetFullPath($IntegrationRoot); Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src','.github') }
 $bundle=Resolve-CSharpTestBundle $Role $ProductRoot $TestRoot $TestSha $TestRepository $TestSelectionId
+function Get-SelectedPayloadDigest([string]$Root) {
+    $entries=@(Get-ChildItem -LiteralPath $Root -Recurse -File | Sort-Object FullName | ForEach-Object { [IO.Path]::GetRelativePath($Root,$_.FullName).Replace('\','/')+':'+(Get-TestBundleFileHash $_.FullName) })
+    if ($entries.Count -eq 0) { throw 'Selected payload is empty.' }
+    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($entries -join "`n")))).ToLowerInvariant()
+}
+$payloadDigest=Get-SelectedPayloadDigest $PayloadRoot
 if (Test-Path -LiteralPath $WorkRoot) { throw 'Selected test work directory must be new.' }
 $null=New-Item -ItemType Directory -Path $WorkRoot
 $WorkRoot=[IO.Path]::GetFullPath($WorkRoot)
@@ -74,9 +80,10 @@ if ($Role -ceq 'wrapper') {
     if ($results.Count -ne 10 -or @(Compare-Object $expected @($results.testName) -CaseSensitive).Count -ne 0 -or @($trx.TestRun.Results.UnitTestResult | Where-Object outcome -cne 'Passed').Count -ne 0) { throw 'Selected CLI suite lost mandatory command coverage.' }
 }
 Assert-CSharpTestBundle $bundle
-Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config')
-Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src')
+Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config','.github')
+Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src','.github')
 & $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
-$evidence=@{schema='wss-selected-csharp-tests/v1';role=$Role;product_root=$ProductRoot;product_sha=$ProductSha;integration_root=$IntegrationRoot;integration_sha=$IntegrationSha;payload_root=$PayloadRoot;test_root=$bundle.root;test_sha=$bundle.sha;test_repository=$bundle.repository;test_selection_id=$bundle.selection_id;test_contract_sha256=$bundle.contract_sha256;passed=$true}
+if ((Get-SelectedPayloadDigest $PayloadRoot) -cne $payloadDigest) { throw 'Selected payload changed during execution.' }
+$evidence=@{payload_sha256=$payloadDigest;schema='wss-selected-csharp-tests/v1';role=$Role;product_root=$ProductRoot;product_sha=$ProductSha;integration_root=$IntegrationRoot;integration_sha=$IntegrationSha;payload_root=$PayloadRoot;test_root=$bundle.root;test_sha=$bundle.sha;test_repository=$bundle.repository;test_selection_id=$bundle.selection_id;test_contract_sha256=$bundle.contract_sha256;passed=$true}
 $evidence | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $WorkRoot 'test-source-evidence.json')
 $evidence
