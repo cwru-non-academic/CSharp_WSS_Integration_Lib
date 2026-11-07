@@ -10,8 +10,8 @@ function Assert-ReviewedSelectionCore([string]$CoreRoot) {
     if(((Invoke-SelectedContextGit $CoreRoot @('rev-parse','HEAD')) -join '').Trim() -cne $lock.source_commit){throw 'Core bootstrap differs from the reviewed immutable lock.'}
     $remote=((Invoke-SelectedContextGit $CoreRoot @('remote','get-url','origin')) -join '').Trim()
     if($remote -cnotmatch '^(https://github.com/|git@github.com:)cwru-non-academic/WSSCore(\.git)?$'){throw 'Core bootstrap repository differs from its reviewed identity.'}
-    if(@(Invoke-SelectedContextGit $CoreRoot @('status','--porcelain','--untracked-files=all','--ignored','--','tools')).Count -or
-       @(Invoke-SelectedContextGit $CoreRoot @('ls-files','-v','--','tools') | Where-Object {$_ -cnotmatch '^H '}).Count){throw 'Core bootstrap source is not pristine.'}
+    if(@(Invoke-SelectedContextGit $CoreRoot @('status','--porcelain','--untracked-files=all','--ignored')).Count -or
+       @(Invoke-SelectedContextGit $CoreRoot @('ls-files','-v') | Where-Object {$_ -cnotmatch '^H '}).Count){throw 'Core bootstrap source is not pristine.'}
     if(!(Test-Path -LiteralPath (Join-Path $CoreRoot 'tools/ci/ci-test-selection.mjs'))){throw 'Reviewed Core lock does not yet support selected-test adoption.'}
 }
 function Invoke-ReviewedSelectionCore([string]$CoreRoot,[string]$Operation,[string]$TargetId,[string]$ContextPath,[string]$RootsPath,[string]$EvidencePath='') {
