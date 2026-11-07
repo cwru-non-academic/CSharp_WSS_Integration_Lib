@@ -2,21 +2,31 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "d965f6abda5dcad8ddda374ac00b67f5e5ddea91",
-  "source_ref": "refs/heads/ci/tooling/d965f6abda5dcad8ddda374ac00b67f5e5ddea91",
+  "source_commit": "7d3c50cfac12107e5eca9fc7f60381a0c019ffd3",
+  "source_ref": "refs/heads/ci/tooling/7d3c50cfac12107e5eca9fc7f60381a0c019ffd3",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "5caa943d5472a4709e4eb77176650acbef52d8a4",
-      "ref": "refs/heads/ci/tooling/5caa943d5472a4709e4eb77176650acbef52d8a4"
+      "commit": "c266ff8e5bdcdde840bec87b757cd6d23e888e76",
+      "ref": "refs/heads/ci/tooling/c266ff8e5bdcdde840bec87b757cd6d23e888e76"
     }
   },
   "files": {
+    ".github/scripts/wss-ci/campaign-test-selection.mjs": {
+      "origin": "core",
+      "source": "tools/release/campaign-test-selection.mjs",
+      "sha256": "9c4ce1ba59b807d5b5ef03aa9c5e02fea68181c118b35d8bff5f611a1a1f90fe"
+    },
+    ".github/scripts/wss-ci/test-selection-contract.mjs": {
+      "origin": "core",
+      "source": "tools/release/test-selection-contract.mjs",
+      "sha256": "10cbbee55fcc53a0f0dd8cff6849f1547def4fc43b223dac9e152ae0a067f45a"
+    },
     ".github/scripts/wss-ci/verify.mjs": {
       "origin": "core",
       "source": "tools/release/verify.mjs",
-      "sha256": "b811a425fc0793b7aa08c3ea8d7b12f7c14ba590a08702d5c247c174482cb1ea"
+      "sha256": "4b20fd712d14f05319fa1cac3309a322a1cfff69d29909751d24d3360e0c22d1"
     },
     ".github/scripts/wss-ci/producer-jobs.mjs": {
       "origin": "core",
@@ -31,7 +41,7 @@
     ".github/scripts/wss-ci/github.mjs": {
       "origin": "core",
       "source": "tools/release/github.mjs",
-      "sha256": "c9c00534af35b84d704599a7378855b579ec5e11a186c6867205b7d3b1a11899"
+      "sha256": "84a21a210337a2e6e01b0d58204f0809c2c67b8c99946a20a06c977b1cdfa083"
     },
     ".github/scripts/wss-ci/policy.mjs": {
       "origin": "core",
@@ -41,7 +51,7 @@
     ".github/scripts/wss-ci/receipt.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/receipt.mjs",
-      "sha256": "903fd283a4038fd4a110a21d32519697eecca9393114713b13c5e809130326fe"
+      "sha256": "2038d78ec22754fd8aaf68c69ccccd22914f12b97bcb942582a4db7ec4b197a0"
     },
     ".github/scripts/wss-ci/promotion.mjs": {
       "origin": "integration",
