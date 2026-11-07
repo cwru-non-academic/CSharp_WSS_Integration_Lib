@@ -7,13 +7,31 @@ on:
       - main
       - dev
 
-env:
-  WSS_CI_CHANNEL: dev
 permissions:
   contents: read
 
 jobs:
+  resolve-channel:
+    name: Verified ordinary CI channel
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.channel.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Bind the channel to the actual event and workflow source
+        id: channel
+        shell: pwsh
+        run: ./.github/scripts/Resolve-OrdinaryCiChannel.ps1
+      - name: Exercise ordinary channel and workflow contracts
+        shell: pwsh
+        run: ./.github/scripts/tests/OrdinaryCiChannel.Tests.ps1
+
   package-contracts:
+    needs: resolve-channel
+    env:
+      WSS_CI_CHANNEL: ${{ needs.resolve-channel.outputs.channel }}
     name: Committed universal package contracts
     runs-on: ubuntu-latest
     steps:
@@ -77,6 +95,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Selected universal package contracts failed.' }
 
   receipt-policy-boundary:
+    needs: resolve-channel
+    env:
+      WSS_CI_CHANNEL: ${{ needs.resolve-channel.outputs.channel }}
     name: Receipt policy bridge (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -90,8 +111,14 @@ jobs:
           node-version: '24'
       - name: Exercise canonical policy through the actual PowerShell adapter
         shell: pwsh
+        # Dev here is only the synthetic contract fixture, never the execution channel.
+        env:
+          WSS_CI_CHANNEL: dev
         run: ./.github/scripts/tests/WssReleaseReceipt.Tests.ps1
   behavioral-tests:
+    needs: resolve-channel
+    env:
+      WSS_CI_CHANNEL: ${{ needs.resolve-channel.outputs.channel }}
     name: Integration behavioral tests
     runs-on: ubuntu-latest
     steps:
@@ -102,6 +129,9 @@ jobs:
 
       - name: Validate promotion safety contracts
         shell: pwsh
+        # Dev here is only the synthetic contract fixture, never the execution channel.
+        env:
+          WSS_CI_CHANNEL: dev
         run: |
           ./.github/scripts/tests/MacOSBleEvidence.Tests.ps1
           ./.github/scripts/tests/MissingNativeEvidence.Tests.ps1
@@ -158,6 +188,9 @@ jobs:
         run: ./.github/scripts/Invoke-WssBehavioralConformance.ps1
 
   compatibility:
+    needs: resolve-channel
+    env:
+      WSS_CI_CHANNEL: ${{ needs.resolve-channel.outputs.channel }}
     name: Integration compatibility (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -229,6 +262,9 @@ jobs:
           -p:TreatWarningsAsErrors=true
 
   macos_architecture:
+    needs: resolve-channel
+    env:
+      WSS_CI_CHANNEL: ${{ needs.resolve-channel.outputs.channel }}
     name: macOS BLE detail (${{ matrix.cpu }})
     strategy:
       fail-fast: false
@@ -354,10 +390,19 @@ jobs:
 
   macos_compatibility:
     name: Integration compatibility (macOS)
-    needs: macos_architecture
+    needs: [resolve-channel, macos_architecture]
+    env:
+      WSS_CI_CHANNEL: ${{ needs.resolve-channel.outputs.channel }}
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Require successful channel resolution
+        if: always()
+        shell: pwsh
+        env:
+          CHANNEL_RESULT: ${{ needs.resolve-channel.result }}
+        run: |
+          if ($env:CHANNEL_RESULT -cne 'success' -or $env:WSS_CI_CHANNEL -cnotin @('dev', 'main')) { throw 'Ordinary channel resolution did not succeed.' }
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
