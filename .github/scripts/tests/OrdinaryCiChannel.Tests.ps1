@@ -50,7 +50,8 @@ foreach ($repository in $repositories) {
         foreach ($ref in $refs) {
             foreach ($base in @('', 'dev', 'main', 'feature', 'Main')) {
                 $f = New-OrdinaryFixture $repository $eventName $ref $base
-                if ($eventName -ceq 'pull_request') {
+                if (!$ref) { Expect-Rejection $f 'Ordinary CI workflow and execution source identities disagree.' }
+                elseif ($eventName -ceq 'pull_request') {
                     if ($ref -cne 'refs/pull/1/merge') { Expect-Rejection $f 'Ordinary CI requires the current open pull request merge source.' }
                     elseif ($base -cnotin @('dev', 'main')) { Expect-Rejection $f 'Ordinary CI pull request base and source identities disagree.' }
                     else { Expect-Channel $f $base }
@@ -159,6 +160,126 @@ foreach ($repository in $repositories) {
     }
 }
 $identityCount = $passed - $matrixCount
+# Every consumed payload field is mutated through actual JSON serialization/parsing.
+# Collections must stay collections: comparisons and casts are not schema validators.
+function Set-OrdinaryJsonField($Object, [string]$Path, $Value, [switch]$Missing) {
+    $keys = $Path.Split('.')
+    $parent = $Object
+    for ($i = 0; $i -lt $keys.Length - 1; $i++) { $parent = $parent[$keys[$i]] }
+    if ($Missing) { $null = $parent.Remove($keys[-1]) } else { $parent[$keys[-1]] = $Value }
+}
+function Get-OrdinaryJsonField($Object, [string]$Path) {
+    $value = $Object
+    foreach ($key in $Path.Split('.')) { $value = $value[$key] }
+    # Preserve arrays as one value, including empty/single-element arrays.
+    Write-Output -NoEnumerate $value
+}
+function Convert-OrdinaryJsonFixture($Fixture) {
+    $Fixture.event = ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $Fixture.event -Depth 20 -Compress) -AsHashtable -NoEnumerate
+    $Fixture
+}
+$repositoryReason = 'Ordinary CI repository identities disagree.'
+$prShapeReason = 'Ordinary CI requires a complete pull request identity.'
+$prSourceReason = 'Ordinary CI requires the current open pull request merge source.'
+$prBaseReason = 'Ordinary CI pull request base and source identities disagree.'
+$pushReason = 'Ordinary CI push source identities disagree.'
+$dispatchReason = 'Ordinary CI dispatch must use its registered branch without caller inputs.'
+foreach ($repository in $repositories) {
+    foreach ($eventName in @('pull_request', 'push', 'workflow_dispatch')) {
+        foreach ($channel in @('dev', 'main')) {
+            $ref = if ($eventName -ceq 'pull_request') { 'refs/pull/1/merge' } else { "refs/heads/$channel" }
+            $base = if ($eventName -ceq 'pull_request') { $channel } else { '' }
+            Expect-Channel (Convert-OrdinaryJsonFixture (New-OrdinaryFixture $repository $eventName $ref $base)) $channel
+            $fields = @(
+                @{ path = 'repository'; type = 'object'; reason = $repositoryReason },
+                @{ path = 'repository.full_name'; type = 'string'; reason = $repositoryReason },
+                @{ path = 'repository.id'; type = 'integer'; reason = $repositoryReason }
+            )
+            if ($eventName -ceq 'pull_request') {
+                $fields += @(
+                    @{ path = 'pull_request'; type = 'object'; reason = $prShapeReason },
+                    @{ path = 'pull_request.base'; type = 'object'; reason = $prShapeReason },
+                    @{ path = 'pull_request.head'; type = 'object'; reason = $prShapeReason },
+                    @{ path = 'pull_request.base.repo'; type = 'object'; reason = $prShapeReason },
+                    @{ path = 'number'; type = 'integer'; reason = $prSourceReason },
+                    @{ path = 'action'; type = 'string'; reason = $prSourceReason },
+                    @{ path = 'pull_request.number'; type = 'integer'; reason = $prSourceReason },
+                    @{ path = 'pull_request.merge_commit_sha'; type = 'string'; reason = $prSourceReason },
+                    @{ path = 'pull_request.state'; type = 'string'; reason = $prSourceReason },
+                    @{ path = 'pull_request.merged'; type = 'boolean'; reason = $prSourceReason },
+                    @{ path = 'pull_request.base.ref'; type = 'string'; reason = $prBaseReason },
+                    @{ path = 'pull_request.base.repo.full_name'; type = 'string'; reason = $prBaseReason },
+                    @{ path = 'pull_request.base.repo.id'; type = 'integer'; reason = $prBaseReason },
+                    @{ path = 'pull_request.base.sha'; type = 'string'; reason = $prBaseReason },
+                    @{ path = 'pull_request.head.sha'; type = 'string'; reason = $prBaseReason },
+                    @{ path = 'pull_request.head.ref'; type = 'string'; reason = $prBaseReason }
+                )
+            } elseif ($eventName -ceq 'push') {
+                $fields += @(
+                    @{ path = 'ref'; type = 'string'; reason = $pushReason },
+                    @{ path = 'after'; type = 'string'; reason = $pushReason },
+                    @{ path = 'head_commit'; type = 'object'; reason = $pushReason },
+                    @{ path = 'head_commit.id'; type = 'string'; reason = $pushReason },
+                    @{ path = 'deleted'; type = 'boolean'; reason = $pushReason }
+                )
+            } else { $fields += @{ path = 'ref'; type = 'string'; reason = $dispatchReason } }
+            foreach ($field in $fields) {
+                $original = New-OrdinaryFixture $repository $eventName $ref $base
+                $valid = Get-OrdinaryJsonField $original.event $field.path
+                $validJson = ConvertTo-Json -InputObject $valid -Depth 20 -Compress
+                $invalid = @(
+                    @{ name = 'missing'; json = 'null' }, @{ name = 'null'; json = 'null' },
+                    @{ name = 'empty-array'; json = '[]' }, @{ name = 'singleton-array'; json = "[$validJson]" },
+                    @{ name = 'duplicate-array'; json = "[$validJson,$validJson]" },
+                    @{ name = 'mixed-array'; json = "[null,$validJson]" },
+                    @{ name = 'number'; json = '0' }, @{ name = 'float'; json = '1.5' },
+                    @{ name = 'empty-string'; json = '""' }, @{ name = 'whitespace-string'; json = '" "' }
+                )
+                if ($field.type -cne 'boolean') { $invalid += @{ name = 'false'; json = 'false' } }
+                $invalid += @{ name = 'true'; json = 'true' }
+                if ($field.type -cne 'object') {
+                    $invalid += @{ name = 'empty-object'; json = '{}' }
+                    $invalid += @{ name = 'value-object'; json = "{`"value`":$validJson}" }
+                }
+                if ($field.type -ceq 'string') {
+                    # Regex end-of-line anchors must not accept a trailing newline in a SHA.
+                    foreach ($suffix in @("`n", "`r`n")) {
+                        $invalid += @{ name = 'trailing-newline'; json = (ConvertTo-Json -InputObject ([string]$valid + $suffix) -Compress) }
+                    }
+                }
+                if ($field.type -ceq 'integer') {
+                    $invalid += @{ name = 'numeric-string'; json = "`"$valid`"" }
+                    $invalid += @{ name = 'integral-float'; json = '1.0' }
+                    $invalid += @{ name = 'negative'; json = '-1' }
+                } elseif ($field.type -ceq 'boolean') {
+                    $invalid += @{ name = 'boolean-string'; json = '"false"' }
+                }
+                foreach ($case in $invalid) {
+                    $f = New-OrdinaryFixture $repository $eventName $ref $base
+                    $value = ConvertFrom-Json -InputObject $case.json -AsHashtable -NoEnumerate
+                    Set-OrdinaryJsonField $f.event $field.path $value -Missing:($case.name -ceq 'missing')
+                    $f = Convert-OrdinaryJsonFixture $f
+                    Expect-Rejection $f $field.reason
+                }
+            }
+            if ($eventName -ceq 'workflow_dispatch') {
+                # Omitted/null/empty object remain valid; every other JSON input shape is forbidden.
+                foreach ($json in @('[]', '[{}]', 'false', 'true', '0', '""', '{"Count":0}', '{"get_Count":0}', '{"channel":"main"}')) {
+                    $f = New-OrdinaryFixture $repository $eventName $ref $base
+                    $f.event.inputs = ConvertFrom-Json -InputObject $json -AsHashtable -NoEnumerate
+                    Expect-Rejection (Convert-OrdinaryJsonFixture $f) $dispatchReason
+                }
+                foreach ($kind in @('missing', 'null', 'empty-object')) {
+                    $f = New-OrdinaryFixture $repository $eventName $ref $base
+                    if ($kind -ceq 'missing') { $null = $f.event.Remove('inputs') }
+                    elseif ($kind -ceq 'null') { $f.event.inputs = $null }
+                    Expect-Channel (Convert-OrdinaryJsonFixture $f) $channel
+                }
+            }
+        }
+    }
+}
+$jsonCount = $passed - $matrixCount - $identityCount
 
 # Lock the original mandatory workflow execution while reviewing this channel-only change.
 # A future intentional baseline/workflow change must update its reviewed fingerprint too.
@@ -261,8 +382,8 @@ foreach ($change in @(
     if (!$rejected) { throw 'Unsafe ordinary workflow mutation was accepted.' }
     $passed++
 }
-$workflowCount = $passed - $matrixCount - $identityCount
-"Ordinary CI channel contracts passed: $passed ($matrixCount event/ref/base cases, $identityCount identity/override cases, $workflowCount workflow-preservation cases). Push resolution is helper-only; registered workflow triggers are unchanged."
+$workflowCount = $passed - $matrixCount - $identityCount - $jsonCount
+"Ordinary CI channel contracts passed: $passed ($matrixCount event/ref/base cases, $identityCount identity/override cases, $jsonCount JSON-roundtrip cases, $workflowCount workflow-preservation cases). Push resolution is helper-only; registered workflow triggers are unchanged."
 
 # Exercise the real entrypoint's runner-file read, Git source binding and atomic output.
 # These synthetic local contexts prove rejection/selection behavior, not hosted acceptance.
@@ -275,6 +396,60 @@ $null = New-Item -ItemType Directory -Path $scratch
 $saved = @{}
 try {
     $entrypointCount = 0
+    # Real entrypoint parsing must reject non-object JSON roots without unwrapping arrays.
+    # Also repeat the reviewed array bypasses through the event file, not only the pure helper.
+    foreach ($channel in @('dev', 'main')) {
+        foreach ($eventName in @('pull_request', 'push', 'workflow_dispatch')) {
+            $ref = if ($eventName -ceq 'pull_request') { 'refs/pull/1/merge' } else { "refs/heads/$channel" }
+            $base = if ($eventName -ceq 'pull_request') { $channel } else { '' }
+            $f = New-OrdinaryFixture $repository $eventName $ref $base
+            $f.runtime.GITHUB_SHA = $actualSha; $f.runtime.GITHUB_WORKFLOW_SHA = $actualSha
+            if ($eventName -ceq 'pull_request') { $f.event.pull_request.merge_commit_sha = $actualSha }
+            elseif ($eventName -ceq 'push') { $f.event.after = $actualSha; $f.event.head_commit.id = $actualSha }
+            $validJson = ConvertTo-Json -InputObject $f.event -Depth 20 -Compress
+            $cases = @(@{ json = $validJson; reason = '' })
+            foreach ($json in @('null', 'false', 'true', '123', '"object"', '[]', "[$validJson]", "[$validJson,$validJson]")) {
+                $cases += @{ json = $json; reason = 'Ordinary CI requires a JSON event object.' }
+            }
+            $fields = @(@{ path = 'repository.full_name'; reason = $repositoryReason })
+            if ($eventName -ceq 'pull_request') {
+                $fields += @(
+                    @{ path = 'pull_request.merge_commit_sha'; reason = $prSourceReason },
+                    @{ path = 'pull_request.state'; reason = $prSourceReason },
+                    @{ path = 'pull_request.base.repo.full_name'; reason = $prBaseReason },
+                    @{ path = 'pull_request.base.sha'; reason = $prBaseReason },
+                    @{ path = 'pull_request.head.sha'; reason = $prBaseReason }
+                )
+            } elseif ($eventName -ceq 'push') {
+                $fields += @(@{ path = 'ref'; reason = $pushReason }, @{ path = 'after'; reason = $pushReason }, @{ path = 'head_commit.id'; reason = $pushReason })
+            } else { $fields += @{ path = 'ref'; reason = $dispatchReason } }
+            foreach ($field in $fields) {
+                $valid = Get-OrdinaryJsonField $f.event $field.path
+                $valueJson = ConvertTo-Json -InputObject $valid -Compress
+                foreach ($json in @('[]', "[$valueJson]", "[$valueJson,$valueJson]")) {
+                    $event = ConvertFrom-Json -InputObject $validJson -AsHashtable -NoEnumerate
+                    Set-OrdinaryJsonField $event $field.path (ConvertFrom-Json -InputObject $json -AsHashtable -NoEnumerate)
+                    $cases += @{ json = (ConvertTo-Json -InputObject $event -Depth 20 -Compress); reason = $field.reason }
+                }
+            }
+            $f.runtime.GITHUB_EVENT_PATH = Join-Path $scratch 'schema-event.json'
+            $f.runtime.GITHUB_OUTPUT = Join-Path $scratch 'schema-output.txt'
+            foreach ($key in $f.runtime.Keys) {
+                if (!$saved.ContainsKey($key)) { $saved[$key] = [Environment]::GetEnvironmentVariable($key) }
+                [Environment]::SetEnvironmentVariable($key, $f.runtime[$key])
+            }
+            foreach ($case in $cases) {
+                [IO.File]::WriteAllText($env:GITHUB_EVENT_PATH, $case.json, [Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText($env:GITHUB_OUTPUT, '', [Text.UTF8Encoding]::new($false))
+                $errorText = ''
+                try { $null = & "$PSScriptRoot/../Resolve-OrdinaryCiChannel.ps1" } catch { $errorText = $_.Exception.Message }
+                if ($errorText -cne $case.reason) { throw "JSON entrypoint expected '$($case.reason)', got '$errorText'." }
+                $expectedOutput = if ($case.reason) { '' } else { "channel=$channel`n" }
+                if ([IO.File]::ReadAllText($env:GITHUB_OUTPUT).Replace("`r`n", "`n") -cne $expectedOutput) { throw 'Malformed JSON entrypoint emitted a channel.' }
+                $entrypointCount++
+            }
+        }
+    }
     foreach ($channel in @('dev', 'main')) {
         foreach ($kind in @('valid', 'checkout-mismatch', 'dispatch-override', 'repository-mismatch')) {
             $f = New-OrdinaryFixture $repository 'workflow_dispatch' "refs/heads/$channel" ''
