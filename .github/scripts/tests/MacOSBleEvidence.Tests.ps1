@@ -48,9 +48,10 @@ $workflowRoot=Join-Path $PSScriptRoot '../../workflows'
 $normal=if (Test-Path (Join-Path $workflowRoot 'cli-ci.yml')) { 'cli-ci.yml' } else { 'wss-compatibility.yml' }
 foreach ($file in @($normal,'wss-preflight.yml')) {
     $workflow=Get-Content (Join-Path $workflowRoot $file) -Raw
+    $expectedDependencies=if ($file -ceq $normal) { '    needs: [resolve-channel, macos_architecture]' } else { '    needs: macos_architecture' }
     if (!$workflow.Contains('os: macos-15-intel') -or !$workflow.Contains('os: macos-15') -or
         !$workflow.Contains('cpu: Intel x86_64') -or !$workflow.Contains('cpu: Apple Silicon arm64') -or
-        !$workflow.Contains('needs: macos_architecture') -or !$workflow.Contains('Complete-WssMacOSGate ') -or
+        !(($workflow -split '\r?\n') -ccontains $expectedDependencies) -or !$workflow.Contains('Complete-WssMacOSGate ') -or
         !$workflow.Contains('RunConfiguration.TargetPlatform=') -or !$workflow.Contains('name: wss-macos-') -or
         !$workflow.Contains('name: Record canonical packaged BLE result before any synthetic fixture')) { throw 'Both native architectures, fixed test-host target and fail-closed aggregate are required.' }
     $gate=[regex]::Match($workflow,'(?ms)^  macos_compatibility:\r?\n(?<body>.*)\z')
