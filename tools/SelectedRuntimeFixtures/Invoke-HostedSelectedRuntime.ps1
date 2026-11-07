@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][ValidateSet('Prepare','Run')][string]$Stage,[Parameter(Mandatory)][string]$FixtureRoot,[string]$BootstrapRoot=(Join-Path $PSScriptRoot '../..'),[string]$AdapterRoot='',[string]$TestSeedRoot='',[string]$ProductSeedRoot='')
+param([Parameter(Mandatory)][ValidateSet('Prepare','Run')][string]$Stage,[Parameter(Mandatory)][string]$FixtureRoot,[string]$BootstrapRoot=(Join-Path $PSScriptRoot '../..'),[string]$AdapterRoot='',[string]$TestSeedRoot='',[string]$ProductSeedRoot='',[string]$VerifiedInputRoot,[ValidateSet('layered-v1','legacy-v1')][string]$FixtureProfile='layered-v1')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $BootstrapRoot=[IO.Path]::GetFullPath($BootstrapRoot)
@@ -21,6 +21,11 @@ if($Stage -ceq 'Prepare'){
  foreach($clone in @(@{source=$ProductSeedRoot;target=$product;sha=$sha},@{source=$TestSeedRoot;target=$tests;sha=$seedSha})){
   $null=Invoke-FixtureGit $BootstrapRoot @('clone','--quiet','--no-hardlinks','--no-checkout',$clone.source,$clone.target)
   $null=Invoke-FixtureGit $clone.target @('checkout','--quiet','--detach',$clone.sha)
+ }
+ if($FixtureProfile -ceq 'legacy-v1'){
+  Require ($sha -ceq 'aafeef78536fe06094c6a694dd64d9a9e1433b21' -and $seedSha -ceq $sha) 'Legacy fixture must use exact reviewed historical sources.'
+  Require (!(Test-Path (Join-Path $tests 'tests/test-contract.json'))) 'Historical fixture unexpectedly has a manifest.'
+  @{schema='wss-csharp-tests/v1';role='wrapper';test_directory='tests/Wss.CSharpImplementation.Tests'} | ConvertTo-Json | Set-Content (Join-Path $tests 'tests/test-contract.json')
  }
  $contract=Get-Content (Join-Path $tests 'tests/test-contract.json') -Raw | ConvertFrom-Json
  Require ($contract.test_directory -cin @('tests/Wss.CSharpImplementation.Tests','tests/SelectedWrapper.Tests')) 'Unexpected fixture source directory.'
@@ -49,8 +54,11 @@ public sealed class HostedSelectedFixtureTests {
  $null=Invoke-FixtureGit $tests @('-c','user.name=Synthetic Runtime Fixture','-c','user.email=fixture@example.invalid','commit','--quiet','-m','Synthetic runtime fixture, never acceptance evidence')
  $testSha=(Invoke-FixtureGit $tests @('rev-parse','HEAD') -join '').Trim()
  Require ($testSha -cne $sha) 'Selected fixture must differ from product.'
- $payload=Join-Path $FixtureRoot 'payload';Copy-Item -LiteralPath (Join-Path $product 'lib') -Destination $payload -Recurse
- @{schema='wss-synthetic-selected-runtime-fixture/v1';acceptance=$false;product_root=$product;product_sha=$sha;test_root=$tests;test_sha=$testSha;test_seed_sha=$seedSha;payload_root=$payload;selection_id=('a'*64)} | ConvertTo-Json | Set-Content (Join-Path $FixtureRoot 'fixture.json')
+ Require (![string]::IsNullOrWhiteSpace($VerifiedInputRoot)) 'Authenticated payload seed is required.'
+ $payload=Join-Path $FixtureRoot 'payload';Copy-Item -LiteralPath (Join-Path $VerifiedInputRoot 'extracted/WSS-Universal') -Destination $payload -Recurse
+ @{candidate=(Get-Content (Join-Path $VerifiedInputRoot 'candidate.json') -Raw | ConvertFrom-Json)} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $payload 'wss-candidate.json')
+ if($FixtureProfile -ceq 'layered-v1'){Require ((Get-FileHash (Join-Path $product 'lib/WSS_Core_Interface.dll')).Hash -cne (Get-FileHash (Join-Path $payload 'WSS_Core_Interface.dll')).Hash) 'Modern collision regression requires different archived and authenticated candidate bytes.'}
+ @{schema='wss-synthetic-selected-runtime-fixture/v1';acceptance=$false;fixture_profile=$FixtureProfile;product_root=$product;product_sha=$sha;test_root=$tests;test_sha=$testSha;test_seed_sha=$seedSha;payload_root=$payload;selection_id=('a'*64)} | ConvertTo-Json | Set-Content (Join-Path $FixtureRoot 'fixture.json')
  foreach($entry in @{WSS_FIXTURE_ROOT=$FixtureRoot;WSS_FIXTURE_PRODUCT=$product;WSS_FIXTURE_PAYLOAD=$payload}.GetEnumerator()){
   Require ($entry.Value -notmatch '[\r\n]') 'Invalid fixture workflow path.'
   "$($entry.Key)=$($entry.Value)" | Add-Content -LiteralPath $env:GITHUB_ENV
@@ -67,13 +75,24 @@ $scripts=Join-Path $AdapterRoot '.github/scripts'
 . "$scripts/PreparedProfileProof.ps1"
 . "$scripts/TrustedBaseline.ps1"
 $profilePath=Join-Path $FixtureRoot 'profile/profile.json'
-$proof=New-PreparedProfileProof $profilePath $state.payload_root $state.product_root $state.product_sha $true
+$legacy=$state.fixture_profile -ceq 'legacy-v1'
+$proof=New-PreparedProfileProof $profilePath $state.payload_root $state.product_root $state.product_sha (!$legacy)
+if($legacy){
+ $rejected=$false;try{$null=New-PreparedProfileProof $profilePath $state.payload_root $state.product_root $state.product_sha $true}catch{if($_.Exception.Message -notlike '*campaigns require*'){throw};$rejected=$true}
+ Require $rejected 'Legacy campaign profile was accepted.'
+ . "$PSScriptRoot/LegacyInventory.ps1"
+}
 $baseline=Join-Path $FixtureRoot 'baseline-results'
 $names=@('GH_TOKEN','GITHUB_TOKEN','WSS_TEST_VARIABLE_READ_TOKEN','WSS_EVIDENCE_READ_TOKEN','GITHUB_ENV','GITHUB_OUTPUT','GITHUB_PATH','GITHUB_STATE');$prior=@{}
 try{
  foreach($name in $names){$prior[$name]=[Environment]::GetEnvironmentVariable($name);[Environment]::SetEnvironmentVariable($name,'synthetic-parent-only')}
  Invoke-CredentialFreeSelectedPowerShell "$scripts/Invoke-ProfileFullTests.ps1" @{EvidencePath=$profilePath;ResultsDirectory=$baseline}
  Assert-PreparedProfileProof $proof
+ & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $proof.state.output_root 'Release/net9.0')
+ & dotnet publish (Join-Path $proof.state.source_root 'src/Wss.CSharpImplementation.csproj') -c Release --no-restore -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$($state.payload_root)" "-p:WSS_BLE_ARTIFACT_DIR=$($state.payload_root)" -o (Join-Path $FixtureRoot 'staged-publish')
+ if($LASTEXITCODE -ne 0){throw 'Restored staged product publish failed.'}
+ & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $FixtureRoot 'staged-publish')
+ if($legacy){Assert-LegacyFullInventory (Join-Path $baseline 'all.trx');[xml]$missing=Get-Content (Join-Path $baseline 'all.trx') -Raw;$null=$missing.TestRun.Results.RemoveChild($missing.TestRun.Results.UnitTestResult[0]);$negative=Join-Path $FixtureRoot 'missing-baseline.trx';$missing.Save($negative);$rejected=$false;try{Assert-LegacyFullInventory $negative}catch{$rejected=$true};Require $rejected 'Missing historical baseline case was accepted.'}
  $baselineRoots=@($proof.state.output_root,$baseline)
  $baselineSnapshot=New-TrustedBaselineSnapshot $baselineRoots
  function Assert-BaselineFiles {Assert-TrustedBaselineSnapshot $baselineSnapshot}
@@ -85,7 +104,8 @@ try{
   $extra=@($trx.TestRun.Results.UnitTestResult | Where-Object testName -ceq 'SelectedOnlyFixtureChecksIsolationAndOptionalMutation')
   Require ($extra.Count -eq 1 -and $extra[0].outcome -ceq 'Passed') 'Selected-only fixture was not executed exactly once.'
   $stages=@(Get-Content (Join-Path $root 'behavior/conformance-stages.json') -Raw | ConvertFrom-Json)
-  Require ($stages.Count -eq 2 -and @($stages | Where-Object passed -ne 16).Count -eq 0) 'Mandatory modern16+16 missing.'
+  if($legacy){Require ($stages.Count -eq 1 -and $stages[0].stage -ceq 'legacy' -and $stages[0].passed -eq 10) 'Mandatory legacy10 missing.';Assert-LegacyFullInventory (Join-Path $root 'all/all.trx') -SelectedExtra}
+  else{Require ($stages.Count -eq 2 -and @($stages | Where-Object passed -ne 16).Count -eq 0) 'Mandatory modern16+16 missing.'}
  }
  Invoke-CredentialFreeSelectedPowerShell "$scripts/Invoke-SelectedCSharpTests.ps1" (SelectedOptions 'selected-success')
  Assert-SelectedResults 'selected-success';Assert-PreparedProfileProof $proof;Assert-BaselineFiles
@@ -120,5 +140,5 @@ try{
  Assert-TestBundleCheckout $state.product_root $state.product_sha
  Assert-TestBundleCheckout $state.test_root $state.test_sha
  Require (@(Get-ChildItem $FixtureRoot -Recurse -Filter evidence.json | Where-Object FullName -match '[/\\]selection[/\\]').Count -eq 0) 'Synthetic fixture emitted generic selection evidence.'
- @{schema='wss-synthetic-selected-runtime-result/v1';acceptance=$false;product_sha=$state.product_sha;test_sha=$state.test_sha;test_seed_sha=$state.test_seed_sha;mandatory_stages='16+16';selected_only_test=$true;baseline_mutation_rejected=$true;baseline_addition_rejected=$true;payload_mutation_rejected=$true;credential_isolation=$true;passed=$true} | ConvertTo-Json | Set-Content (Join-Path $FixtureRoot 'synthetic-result.json')
+ @{schema='wss-synthetic-selected-runtime-result/v1';acceptance=$false;product_sha=$state.product_sha;test_sha=$state.test_sha;test_seed_sha=$state.test_seed_sha;mandatory_stages=$(if($legacy){'legacy10'}else{'16+16'});historical_baseline_full22=$legacy;selected_only_test=$true;baseline_mutation_rejected=$true;baseline_addition_rejected=$true;payload_mutation_rejected=$true;credential_isolation=$true;passed=$true} | ConvertTo-Json | Set-Content (Join-Path $FixtureRoot 'synthetic-result.json')
 }finally{foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$prior[$name])}}

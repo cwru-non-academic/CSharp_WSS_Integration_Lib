@@ -24,7 +24,7 @@ function Assert-TestBundleCheckout([string]$Root,[string]$Sha,[string[]]$Paths=@
     if ($ignored.Count) { throw 'Ignored source overrides are forbidden.' }
     if (@(Invoke-TestBundleGit $full (@('status','--porcelain','--untracked-files=all','--')+$Paths)).Count) { throw 'Selected source contains changed or untracked files.' }
 }
-function Resolve-CSharpTestBundle([string]$Role,[string]$ProductRoot,[string]$TestRoot,[string]$TestSha,[string]$TestRepository,[string]$TestSelectionId,[string]$Profile='layered-v1') {
+function Resolve-CSharpTestBundle([string]$Role,[string]$ProductRoot,[string]$TestRoot,[string]$TestSha,[string]$TestRepository,[string]$TestSelectionId,[ValidateSet('legacy-v1','layered-v1')][string]$Profile='layered-v1') {
     if (!$TestRoot -or !$TestSha -or !$TestRepository -or !$TestSelectionId) { throw 'TestRoot, TestSha, TestRepository and TestSelectionId must be supplied together.' }
     if ($Role -cnotin @('wrapper','cli') -or $TestSelectionId -cnotmatch '^[a-f0-9]{64}$') { throw 'Invalid test role or frozen selection ID.' }
     $expectedRepo=if ($Role -ceq 'wrapper') { 'cwru-non-academic/CSharp_WSS_Integration_Lib' } else { 'cwru-non-academic/CLI_CSharp_WSS_Application' }
@@ -39,6 +39,7 @@ function Resolve-CSharpTestBundle([string]$Role,[string]$ProductRoot,[string]$Te
     # Version 2 has one fixed wrapper-only location, separate from ordinary tests.
     # Neither schema permits caller-selected paths, projects or executable config.
     if ($Role -ceq 'wrapper' -and $contract.schema -ceq 'wss-csharp-tests/v2') {
+        if($Profile -cne 'layered-v1'){throw 'Modern v2 selected bundles require the layered product profile.'}
         $schema='wss-csharp-tests/v2';$dir='tests/SelectedWrapper.Tests'
     }
     if (@(Compare-Object @('schema','role','test_directory') @($contract.PSObject.Properties.Name) -CaseSensitive).Count -ne 0 -or $contract.schema -cne $schema -or $contract.role -cne $Role -or $contract.test_directory -cne $dir) { throw 'Invalid test-only contract; product config and executable paths are not selectable.' }
@@ -49,7 +50,8 @@ function Resolve-CSharpTestBundle([string]$Role,[string]$ProductRoot,[string]$Te
     if ($sources.Count -eq 0) { throw 'Selected test bundle contains no C# tests.' }
     if ($Role -ceq 'wrapper') {
         $canonical=Join-Path $root "$dir/StimulationControllerConformanceTests.cs"
-        if ((Get-CanonicalCSharpFixtureHash $canonical) -cne '96812ab33be7ede8840ddb78131a50796fd3f797d9627f958251b3e58796baf8') { throw 'Selected bundle cannot replace the reviewed canonical assertions.' }
+        $expectedHash=if($Profile -ceq 'legacy-v1'){'f6aeced83d35255532b6685d9c870307f856aad140da133695a77e9de6104ee2'}else{'96812ab33be7ede8840ddb78131a50796fd3f797d9627f958251b3e58796baf8'}
+        if ((Get-CanonicalCSharpFixtureHash $canonical) -cne $expectedHash) { throw 'Selected bundle cannot replace the reviewed canonical assertions.' }
     }
     [pscustomobject]@{root=$root;sha=$TestSha;repository=$TestRepository;selection_id=$TestSelectionId;contract_sha256=(Get-TestBundleFileHash $contractPath);role=$Role;directory=$dir;sources=@($sources.FullName);hashes=@($sources | ForEach-Object { @{path=$_.FullName;sha256=(Get-TestBundleFileHash $_.FullName)} })}
 }

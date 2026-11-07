@@ -111,4 +111,26 @@ $null=& git -C $wrapper -c user.name=Test -c user.email=test@example.invalid com
 $wrapperSha=(& git -C $wrapper rev-parse HEAD).Trim()
 Expect-Rejection {Resolve-CSharpTestBundle wrapper $product $wrapper $wrapperSha $wrapperRepo $id} 'v2 canonical mutation'
 
+# v1 follows the authenticated product profile; no fallback or source replacement.
+$legacyDirectory='tests/Wss.CSharpImplementation.Tests'
+$null=New-Item -ItemType Directory -Path "$wrapper/$legacyDirectory" -Force
+$canonical="$wrapper/$legacyDirectory/StimulationControllerConformanceTests.cs"
+Copy-Item "$PSScriptRoot/../../../tools/CSharpProfiles/fixtures/legacy-v1/StimulationControllerConformanceTests.cs" $canonical
+$wrapperSha=Commit-WrapperContract 'wss-csharp-tests/v1' $legacyDirectory
+$legacy=Resolve-CSharpTestBundle wrapper $product $wrapper $wrapperSha $wrapperRepo $id legacy-v1
+Assert-CSharpTestBundle $legacy;$count++
+Expect-Rejection {Resolve-CSharpTestBundle wrapper $product $wrapper $wrapperSha $wrapperRepo $id layered-v1} 'legacy v1 cannot run as modern'
+Copy-Item "$PSScriptRoot/../../../tools/CSharpProfiles/fixtures/layered-v1/StimulationControllerConformanceTests.cs" $canonical
+$wrapperSha=Commit-WrapperContract 'wss-csharp-tests/v1' $legacyDirectory
+$modern=Resolve-CSharpTestBundle wrapper $product $wrapper $wrapperSha $wrapperRepo $id layered-v1
+Assert-CSharpTestBundle $modern;$count++
+Expect-Rejection {Resolve-CSharpTestBundle wrapper $product $wrapper $wrapperSha $wrapperRepo $id legacy-v1} 'modern v1 cannot run as legacy'
+Expect-Rejection {Resolve-CSharpTestBundle wrapper $product $wrapper $wrapperSha $wrapperRepo $id unknown} 'unknown authenticated profile'
+$wrapperSha=Commit-WrapperContract 'wss-csharp-tests/v2' 'tests/SelectedWrapper.Tests'
+Expect-Rejection {Resolve-CSharpTestBundle wrapper $product $wrapper $wrapperSha $wrapperRepo $id legacy-v1} 'v2 is modern-only'
+Copy-Item "$PSScriptRoot/../../../tools/CSharpProfiles/fixtures/legacy-v1/StimulationControllerConformanceTests.cs" "$wrapper/tests/SelectedWrapper.Tests/StimulationControllerConformanceTests.cs"
+$wrapperSha=Commit-WrapperContract 'wss-csharp-tests/v2' 'tests/SelectedWrapper.Tests'
+Expect-Rejection {Resolve-CSharpTestBundle wrapper $product $wrapper $wrapperSha $wrapperRepo $id legacy-v1} 'v2 cannot become legacy by changing canonical bytes'
+Expect-Rejection {Resolve-CSharpTestBundle wrapper $product $wrapper $wrapperSha $wrapperRepo $id layered-v1} 'v2 requires modern canonical bytes'
+
 Write-Output "$count selected-test binding checks passed. Fixture: $root"
