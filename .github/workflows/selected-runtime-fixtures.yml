@@ -99,7 +99,7 @@ jobs:
           -PayloadRoot "$env:WSS_FIXTURE_PAYLOAD"
           -WorkRoot "$env:WSS_FIXTURE_ROOT/profile"
           -OutputRoot "$env:WSS_FIXTURE_ROOT/baseline-output"
-          -SelectionEnabledCampaign:('${{ matrix.bundle }}' -ne 'legacy-v1')
+          ${{ matrix.bundle != 'legacy-v1' && '-SelectionEnabledCampaign' || '' }}
           -VerifiedReleaseRoot "${{ runner.temp }}/synthetic-verified-input"
       - name: Exercise actual isolated adapters and negative mutation fixtures
         shell: pwsh
