@@ -1,0 +1,61 @@
+name: Synthetic selected runtime proof
+on:
+  pull_request:
+    branches: [dev, main]
+    paths: ['.github/scripts/**', 'tools/CSharpProfiles/**', 'tools/SelectedRuntimeFixtures/**', '.github/workflows/selected-runtime-fixtures.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-runtime:
+    name: Synthetic selected runtime (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Create distinct immutable synthetic sources
+        shell: pwsh
+        run: ./tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1 -Stage Prepare -FixtureRoot "${{ runner.temp }}/synthetic-selected-runtime"
+      - name: Create existing-scope producer read token
+        id: producer-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore
+          permission-contents: read
+          permission-actions: read
+      - name: Authenticate modern fixture payload using trusted preparation
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.producer-token.outputs.token }}
+        run: >-
+          ./.github/scripts/Prepare-CSharpProfile.ps1
+          -IntegrationRoot "$env:WSS_FIXTURE_PRODUCT"
+          -PayloadRoot "$env:WSS_FIXTURE_PAYLOAD"
+          -WorkRoot "$env:WSS_FIXTURE_ROOT/profile"
+          -OutputRoot "$env:WSS_FIXTURE_ROOT/baseline-output"
+          -SelectionEnabledCampaign
+      - name: Exercise actual isolated adapters and negative mutation fixtures
+        shell: pwsh
+        run: ./tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1 -Stage Run -FixtureRoot "$env:WSS_FIXTURE_ROOT"
+      - name: Retain synthetic-only runtime diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-runtime-fixture-${{ matrix.os }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/synthetic-selected-runtime/synthetic-result.json
+            ${{ runner.temp }}/synthetic-selected-runtime/**/conformance-stages.json
+            ${{ runner.temp }}/synthetic-selected-runtime/**/*.trx
+          if-no-files-found: warn
