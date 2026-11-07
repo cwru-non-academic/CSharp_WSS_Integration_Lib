@@ -1,0 +1,5 @@
+{
+  "schema": "wss-csharp-tests/v2",
+  "role": "wrapper",
+  "test_directory": "tests/SelectedWrapper.Tests"
+}
