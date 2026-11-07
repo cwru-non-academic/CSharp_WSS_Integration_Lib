@@ -33,3 +33,5 @@ The product is the explicit immutable modern2d58507 fixture on either branch.
 The identical main workflow therefore leaves its installed legacy product intact.
 Producer verification resolves that same fixture's provenance, not the host
 branch's installed payload. Runtime adapters remain separately selected/current.
+
+Legacy v1 extension: immutable wrapper/product seed `aafeef78536fe06094c6a694dd64d9a9e1433b21` uses authenticated Core `76803c03c7aa55b8951499053641ad9ce83504b8`, run `42230527501`, artifact `13507483694`, archive SHA256 `856566f5710a5662254373cc8c5d3ecf3527b89506f0df140824261ca50d2167`. A separate synthetic commit adds its missing v1 manifest and isolation test; that commit is not advertised as selectable from GitHub. The exact original full22 inventory and mandatory legacy10 stage must pass, with full23 only after the synthetic extra case is added. Legacy campaign preparation must fail. macOS preserves the historical explicit unsupported-BLE assertion where the payload lacks that backend; it does not claim modern native BLE support. Modern v1/v2 proofs remain unchanged. CLI command10 is unchanged by this wrapper-only correction.
