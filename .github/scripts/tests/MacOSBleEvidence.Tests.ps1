@@ -58,8 +58,8 @@ foreach ($file in @($normal,'wss-preflight.yml')) {
         !$gate.Groups['body'].Value.Contains('continue-on-error: true')) { throw 'Aggregate must report failed/skipped workers and missing artifacts.' }
     $worker=[regex]::Match($workflow,'(?ms)^  macos_architecture:\r?\n(?<body>.*?)(?=^  macos_compatibility:)').Groups['body'].Value
     $recordAt=$worker.IndexOf('name: Record canonical packaged BLE result before any synthetic fixture')
-    $fixtureAt=$worker.IndexOf('name: Verify declared macOS native fixture and fail-closed missing payload')
-    if ($recordAt -lt 0 -or ($fixtureAt -ge 0 -and $fixtureAt -le $recordAt)) { throw 'Synthetic fixture cannot replace canonical packaged evidence.' }
+    $fixtureAt=$worker.IndexOf('name: Verify selected macOS output rejects missing native payload')
+    if ($recordAt -lt 0 -or ($fixtureAt -le $recordAt)) { throw 'Synthetic fixture cannot replace canonical packaged evidence.' }
     if ([regex]::Matches($worker,'(?m)^            arch:').Count -ne 2) { throw 'Exactly two native architecture workers are required.' }
     $expectedGate=if ($normal -ceq 'cli-ci.yml') { 'CLI platform compatibility (macOS)' } elseif ($file -ceq 'wss-preflight.yml') { 'Preflight compatibility (macOS)' } else { 'Integration compatibility (macOS)' }
     if ([regex]::Matches($workflow,('(?m)^    name: '+[regex]::Escape($expectedGate)+'\r?$')).Count -ne 1) { throw 'The existing logical required check name must remain unique and unchanged.' }
