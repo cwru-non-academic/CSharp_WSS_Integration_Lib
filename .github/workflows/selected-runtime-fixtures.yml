@@ -8,16 +8,19 @@ permissions:
   contents: read
 jobs:
   verify-input:
-    name: Authenticate synthetic payload input
+    name: Authenticate synthetic payload input (${{ matrix.profile }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        profile: [layered-v1, legacy-v1]
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Check out immutable modern product fixture
+      - name: Check out immutable product fixture
         uses: actions/checkout@v4
         with:
-          ref: 2d58507e812a097a26d59b3199c1533ab083da78
+          ref: ${{ matrix.profile == 'legacy-v1' && 'aafeef78536fe06094c6a694dd64d9a9e1433b21' || '2d58507e812a097a26d59b3199c1533ab083da78' }}
           path: .fixture-product
           persist-credentials: false
       - name: Create existing-scope producer read token
@@ -40,7 +43,7 @@ jobs:
       - name: Publish verified input only, without running selected code
         uses: actions/upload-artifact@v4
         with:
-          name: synthetic-verified-payload-input
+          name: synthetic-verified-payload-input-${{ matrix.profile }}
           path: |
             ${{ runner.temp }}/synthetic-verified-input/candidate.json
             ${{ runner.temp }}/synthetic-verified-input/extracted/WSS-Universal/**
@@ -54,7 +57,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        bundle: [baseline-v1, main-v2]
+        bundle: [baseline-v1, main-v2, legacy-v1]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,7 +65,7 @@ jobs:
       - name: Check out immutable v1 fixture seed
         uses: actions/checkout@v4
         with:
-          ref: 2d58507e812a097a26d59b3199c1533ab083da78
+          ref: ${{ matrix.bundle == 'legacy-v1' && 'aafeef78536fe06094c6a694dd64d9a9e1433b21' || '2d58507e812a097a26d59b3199c1533ab083da78' }}
           path: .fixture-v1-bundle
           persist-credentials: false
       - name: Check out actual main bundle candidate
@@ -79,15 +82,16 @@ jobs:
         shell: pwsh
         run: >-
           ./tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1
+          -FixtureProfile ${{ matrix.bundle == 'legacy-v1' && 'legacy-v1' || 'layered-v1' }}
           -Stage Prepare -FixtureRoot "${{ runner.temp }}/synthetic-selected-runtime"
           -ProductSeedRoot "${{ github.workspace }}/.fixture-v1-bundle"
           -TestSeedRoot "${{ github.workspace }}/${{ matrix.bundle == 'main-v2' && '.fixture-main-bundle' || '.fixture-v1-bundle' }}"
       - name: Download authenticated synthetic payload input
         uses: actions/download-artifact@v4
         with:
-          name: synthetic-verified-payload-input
+          name: synthetic-verified-payload-input-${{ matrix.bundle == 'legacy-v1' && 'legacy-v1' || 'layered-v1' }}
           path: ${{ runner.temp }}/synthetic-verified-input
-      - name: Authenticate modern fixture payload using trusted preparation
+      - name: Authenticate fixture payload using trusted preparation
         shell: pwsh
         run: >-
           ./.github/scripts/Prepare-CSharpProfile.ps1
@@ -95,7 +99,7 @@ jobs:
           -PayloadRoot "$env:WSS_FIXTURE_PAYLOAD"
           -WorkRoot "$env:WSS_FIXTURE_ROOT/profile"
           -OutputRoot "$env:WSS_FIXTURE_ROOT/baseline-output"
-          -SelectionEnabledCampaign
+          -SelectionEnabledCampaign:('${{ matrix.bundle }}' -ne 'legacy-v1')
           -VerifiedReleaseRoot "${{ runner.temp }}/synthetic-verified-input"
       - name: Exercise actual isolated adapters and negative mutation fixtures
         shell: pwsh
