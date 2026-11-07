@@ -1,0 +1,122 @@
+name: Synthetic selected runtime proof
+on:
+  pull_request:
+    branches: [dev, main]
+    paths: ['.github/scripts/**', 'tools/CSharpProfiles/**', 'tools/SelectedRuntimeFixtures/**', '.github/workflows/selected-runtime-fixtures.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-input:
+    name: Authenticate synthetic payload input
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out immutable modern product fixture
+        uses: actions/checkout@v4
+        with:
+          ref: 2d58507e812a097a26d59b3199c1533ab083da78
+          path: .fixture-product
+          persist-credentials: false
+      - name: Create existing-scope producer read token
+        id: producer-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore
+          permission-contents: read
+          permission-actions: read
+      - name: Resolve exact authenticated producer archive
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.producer-token.outputs.token }}
+        run: |
+          $c = (Get-Content .fixture-product/lib/wss-candidate.json -Raw | ConvertFrom-Json).candidate
+          ./.github/scripts/Resolve-WssRelease.ps1 -ProducerRepository $c.repository -RunId $c.run_id -ExpectedCommit $c.commit -ArchiveName $c.archive -ExpectedSha256 $c.sha256 -OutputRoot "$env:RUNNER_TEMP/synthetic-verified-input"
+      - name: Publish verified input only, without running selected code
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-verified-payload-input
+          path: |
+            ${{ runner.temp }}/synthetic-verified-input/candidate.json
+            ${{ runner.temp }}/synthetic-verified-input/extracted/WSS-Universal/**
+          if-no-files-found: error
+  synthetic-runtime:
+    needs: verify-input
+    name: Synthetic selected runtime (${{ matrix.os }}, ${{ matrix.bundle }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        bundle: [baseline-v1, main-v2]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out immutable v1 fixture seed
+        uses: actions/checkout@v4
+        with:
+          ref: 2d58507e812a097a26d59b3199c1533ab083da78
+          path: .fixture-v1-bundle
+          persist-credentials: false
+      - name: Check out reviewed v2 adapter candidate
+        if: matrix.bundle == 'main-v2'
+        uses: actions/checkout@v4
+        with:
+          ref: 98a7c47341b75666b56db1615940a6b9cc2a078d
+          path: .fixture-adapter
+          persist-credentials: false
+      - name: Check out actual main bundle candidate
+        if: matrix.bundle == 'main-v2'
+        uses: actions/checkout@v4
+        with:
+          ref: a5a7c630dc9acdf0463a9cbcd9666ea5897d3f39
+          path: .fixture-main-bundle
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Create distinct immutable synthetic sources
+        shell: pwsh
+        run: >-
+          ./tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1
+          -Stage Prepare -FixtureRoot "${{ runner.temp }}/synthetic-selected-runtime"
+          -ProductSeedRoot "${{ github.workspace }}/.fixture-v1-bundle"
+          -TestSeedRoot "${{ github.workspace }}/${{ matrix.bundle == 'main-v2' && '.fixture-main-bundle' || '.fixture-v1-bundle' }}"
+      - name: Download authenticated synthetic payload input
+        uses: actions/download-artifact@v4
+        with:
+          name: synthetic-verified-payload-input
+          path: ${{ runner.temp }}/synthetic-verified-input
+      - name: Authenticate modern fixture payload using trusted preparation
+        shell: pwsh
+        run: >-
+          ./${{ matrix.bundle == 'main-v2' && '.fixture-adapter/' || '' }}.github/scripts/Prepare-CSharpProfile.ps1
+          -IntegrationRoot "$env:WSS_FIXTURE_PRODUCT"
+          -PayloadRoot "$env:WSS_FIXTURE_PAYLOAD"
+          -WorkRoot "$env:WSS_FIXTURE_ROOT/profile"
+          -OutputRoot "$env:WSS_FIXTURE_ROOT/baseline-output"
+          -SelectionEnabledCampaign
+          -VerifiedReleaseRoot "${{ runner.temp }}/synthetic-verified-input"
+      - name: Exercise actual isolated adapters and negative mutation fixtures
+        shell: pwsh
+        run: >-
+          ./tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1
+          -Stage Run -FixtureRoot "$env:WSS_FIXTURE_ROOT"
+          -AdapterRoot "${{ github.workspace }}/${{ matrix.bundle == 'main-v2' && '.fixture-adapter' || '.' }}"
+      - name: Retain synthetic-only runtime diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-runtime-fixture-${{ matrix.os }}-${{ matrix.bundle }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/synthetic-selected-runtime/synthetic-result.json
+            ${{ runner.temp }}/synthetic-selected-runtime/**/conformance-stages.json
+            ${{ runner.temp }}/synthetic-selected-runtime/**/*.trx
+          if-no-files-found: warn
