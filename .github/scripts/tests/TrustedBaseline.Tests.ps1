@@ -10,7 +10,7 @@ function Reject([scriptblock]$Action){$rejected=$false;try{& $Action}catch{$reje
 Assert-TrustedBaselineSnapshot $snapshot
 [IO.File]::WriteAllText($file,'changed');Reject {Assert-TrustedBaselineSnapshot $snapshot};[IO.File]::WriteAllText($file,'baseline')
 Remove-Item -LiteralPath $file;Reject {Assert-TrustedBaselineSnapshot $snapshot};[IO.File]::WriteAllText($file,'baseline')
-$extra=Join-Path $tree '.hidden-evidence';[IO.File]::WriteAllText($extra,'added');Reject {Assert-TrustedBaselineSnapshot $snapshot};Remove-Item -LiteralPath $extra
+$extra=Join-Path $tree '.hidden-evidence';[IO.File]::WriteAllText($extra,'added');Reject {Assert-TrustedBaselineSnapshot $snapshot};Remove-Item -LiteralPath $extra -Force
 $empty=Join-Path $tree 'empty';$null=New-Item -ItemType Directory -Path $empty;Reject {Assert-TrustedBaselineSnapshot $snapshot};Remove-Item -LiteralPath $empty
 # Windows junctions need no symlink privilege; Unix symlinks exercise the same reparse guard.
 $outside=Join-Path $root 'outside';$null=New-Item -ItemType Directory -Path $outside
