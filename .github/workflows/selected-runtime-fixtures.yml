@@ -8,23 +8,47 @@ permissions:
   contents: read
 jobs:
   synthetic-runtime:
-    name: Synthetic selected runtime (${{ matrix.os }})
+    name: Synthetic selected runtime (${{ matrix.os }}, ${{ matrix.bundle }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        bundle: [baseline-v1, main-v2]
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
+      - name: Check out immutable v1 fixture seed
+        uses: actions/checkout@v4
+        with:
+          ref: 2d58507e812a097a26d59b3199c1533ab083da78
+          path: .fixture-v1-bundle
+          persist-credentials: false
+      - name: Check out reviewed v2 adapter candidate
+        if: matrix.bundle == 'main-v2'
+        uses: actions/checkout@v4
+        with:
+          ref: 98a7c47341b75666b56db1615940a6b9cc2a078d
+          path: .fixture-adapter
+          persist-credentials: false
+      - name: Check out actual main bundle candidate
+        if: matrix.bundle == 'main-v2'
+        uses: actions/checkout@v4
+        with:
+          ref: a5a7c630dc9acdf0463a9cbcd9666ea5897d3f39
+          path: .fixture-main-bundle
           persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
       - name: Create distinct immutable synthetic sources
         shell: pwsh
-        run: ./tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1 -Stage Prepare -FixtureRoot "${{ runner.temp }}/synthetic-selected-runtime"
+        run: >-
+          ./tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1
+          -Stage Prepare -FixtureRoot "${{ runner.temp }}/synthetic-selected-runtime"
+          -TestSeedRoot "${{ github.workspace }}/${{ matrix.bundle == 'main-v2' && '.fixture-main-bundle' || '.fixture-v1-bundle' }}"
       - name: Create existing-scope producer read token
         id: producer-token
         uses: actions/create-github-app-token@v2
@@ -40,7 +64,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.producer-token.outputs.token }}
         run: >-
-          ./.github/scripts/Prepare-CSharpProfile.ps1
+          ./${{ matrix.bundle == 'main-v2' && '.fixture-adapter/' || '' }}.github/scripts/Prepare-CSharpProfile.ps1
           -IntegrationRoot "$env:WSS_FIXTURE_PRODUCT"
           -PayloadRoot "$env:WSS_FIXTURE_PAYLOAD"
           -WorkRoot "$env:WSS_FIXTURE_ROOT/profile"
@@ -48,12 +72,15 @@ jobs:
           -SelectionEnabledCampaign
       - name: Exercise actual isolated adapters and negative mutation fixtures
         shell: pwsh
-        run: ./tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1 -Stage Run -FixtureRoot "$env:WSS_FIXTURE_ROOT"
+        run: >-
+          ./tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1
+          -Stage Run -FixtureRoot "$env:WSS_FIXTURE_ROOT"
+          -AdapterRoot "${{ github.workspace }}/${{ matrix.bundle == 'main-v2' && '.fixture-adapter' || '.' }}"
       - name: Retain synthetic-only runtime diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: synthetic-runtime-fixture-${{ matrix.os }}-${{ github.run_attempt }}
+          name: synthetic-runtime-fixture-${{ matrix.os }}-${{ matrix.bundle }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/synthetic-selected-runtime/synthetic-result.json
             ${{ runner.temp }}/synthetic-selected-runtime/**/conformance-stages.json

@@ -1,7 +1,11 @@
-param([Parameter(Mandatory)][ValidateSet('Prepare','Run')][string]$Stage,[Parameter(Mandatory)][string]$FixtureRoot,[string]$BootstrapRoot=(Join-Path $PSScriptRoot '../..'))
+param([Parameter(Mandatory)][ValidateSet('Prepare','Run')][string]$Stage,[Parameter(Mandatory)][string]$FixtureRoot,[string]$BootstrapRoot=(Join-Path $PSScriptRoot '../..'),[string]$AdapterRoot='',[string]$TestSeedRoot='')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $BootstrapRoot=[IO.Path]::GetFullPath($BootstrapRoot)
+if(!$AdapterRoot){$AdapterRoot=$BootstrapRoot}
+if(!$TestSeedRoot){$TestSeedRoot=$BootstrapRoot}
+$AdapterRoot=[IO.Path]::GetFullPath($AdapterRoot)
+$TestSeedRoot=[IO.Path]::GetFullPath($TestSeedRoot)
 function Invoke-FixtureGit([string]$Root,[string[]]$Arguments){$result=& git -C $Root @Arguments;if($LASTEXITCODE -ne 0){throw 'Fixture git operation failed'};@($result)}
 function Require([bool]$Condition,[string]$Message){if(!$Condition){throw $Message}}
 if($Stage -ceq 'Prepare'){
@@ -11,11 +15,14 @@ if($Stage -ceq 'Prepare'){
  $FixtureRoot=[IO.Path]::GetFullPath($FixtureRoot)
  $product=Join-Path $FixtureRoot 'product';$tests=Join-Path $FixtureRoot 'selected-tests'
  $sha=(Invoke-FixtureGit $BootstrapRoot @('rev-parse','HEAD') -join '').Trim()
- foreach($target in @($product,$tests)){
-  $null=Invoke-FixtureGit $BootstrapRoot @('clone','--quiet','--no-hardlinks','--no-checkout',$BootstrapRoot,$target)
-  $null=Invoke-FixtureGit $target @('checkout','--quiet','--detach',$sha)
+ $seedSha=(Invoke-FixtureGit $TestSeedRoot @('rev-parse','HEAD') -join '').Trim()
+ foreach($clone in @(@{source=$BootstrapRoot;target=$product;sha=$sha},@{source=$TestSeedRoot;target=$tests;sha=$seedSha})){
+  $null=Invoke-FixtureGit $BootstrapRoot @('clone','--quiet','--no-hardlinks','--no-checkout',$clone.source,$clone.target)
+  $null=Invoke-FixtureGit $clone.target @('checkout','--quiet','--detach',$clone.sha)
  }
- $directory=Join-Path $tests 'tests/Wss.CSharpImplementation.Tests'
+ $contract=Get-Content (Join-Path $tests 'tests/test-contract.json') -Raw | ConvertFrom-Json
+ Require ($contract.test_directory -cin @('tests/Wss.CSharpImplementation.Tests','tests/SelectedWrapper.Tests')) 'Unexpected fixture source directory.'
+ $directory=Join-Path $tests $contract.test_directory
  $extra=@"
 using System;
 using System.IO;
@@ -41,7 +48,7 @@ public sealed class HostedSelectedFixtureTests {
  $testSha=(Invoke-FixtureGit $tests @('rev-parse','HEAD') -join '').Trim()
  Require ($testSha -cne $sha) 'Selected fixture must differ from product.'
  $payload=Join-Path $FixtureRoot 'payload';Copy-Item -LiteralPath (Join-Path $product 'lib') -Destination $payload -Recurse
- @{schema='wss-synthetic-selected-runtime-fixture/v1';acceptance=$false;product_root=$product;product_sha=$sha;test_root=$tests;test_sha=$testSha;payload_root=$payload;selection_id=('a'*64)} | ConvertTo-Json | Set-Content (Join-Path $FixtureRoot 'fixture.json')
+ @{schema='wss-synthetic-selected-runtime-fixture/v1';acceptance=$false;product_root=$product;product_sha=$sha;test_root=$tests;test_sha=$testSha;test_seed_sha=$seedSha;payload_root=$payload;selection_id=('a'*64)} | ConvertTo-Json | Set-Content (Join-Path $FixtureRoot 'fixture.json')
  foreach($entry in @{WSS_FIXTURE_ROOT=$FixtureRoot;WSS_FIXTURE_PRODUCT=$product;WSS_FIXTURE_PAYLOAD=$payload}.GetEnumerator()){
   Require ($entry.Value -notmatch '[\r\n]') 'Invalid fixture workflow path.'
   "$($entry.Key)=$($entry.Value)" | Add-Content -LiteralPath $env:GITHUB_ENV
@@ -51,7 +58,7 @@ public sealed class HostedSelectedFixtureTests {
 $FixtureRoot=[IO.Path]::GetFullPath($FixtureRoot)
 $state=Get-Content (Join-Path $FixtureRoot 'fixture.json') -Raw | ConvertFrom-Json
 Require ($state.acceptance -eq $false) 'Only explicitly synthetic fixtures may run.'
-$scripts=Join-Path $BootstrapRoot '.github/scripts'
+$scripts=Join-Path $AdapterRoot '.github/scripts'
 . "$scripts/SelectedProcessIsolation.ps1"
 . "$scripts/CSharpProfilesBootstrap.ps1"
 . "$scripts/CSharpTestSource.ps1"
@@ -97,5 +104,5 @@ try{
  Assert-TestBundleCheckout $state.product_root $state.product_sha
  Assert-TestBundleCheckout $state.test_root $state.test_sha
  Require (@(Get-ChildItem $FixtureRoot -Recurse -Filter evidence.json | Where-Object FullName -match '[/\\]selection[/\\]').Count -eq 0) 'Synthetic fixture emitted generic selection evidence.'
- @{schema='wss-synthetic-selected-runtime-result/v1';acceptance=$false;product_sha=$state.product_sha;test_sha=$state.test_sha;mandatory_stages='16+16';selected_only_test=$true;baseline_mutation_rejected=$true;payload_mutation_rejected=$true;credential_isolation=$true;passed=$true} | ConvertTo-Json | Set-Content (Join-Path $FixtureRoot 'synthetic-result.json')
+ @{schema='wss-synthetic-selected-runtime-result/v1';acceptance=$false;product_sha=$state.product_sha;test_sha=$state.test_sha;test_seed_sha=$state.test_seed_sha;mandatory_stages='16+16';selected_only_test=$true;baseline_mutation_rejected=$true;payload_mutation_rejected=$true;credential_isolation=$true;passed=$true} | ConvertTo-Json | Set-Content (Join-Path $FixtureRoot 'synthetic-result.json')
 }finally{foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$prior[$name])}}

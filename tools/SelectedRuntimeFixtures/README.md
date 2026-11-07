@@ -16,3 +16,10 @@ never wss-selected-tests. This is runtime/guard validation, not authenticated
 campaign/acceptance evidence. A positive WithContext run is intentionally not
 simulated: it requires real Core-authenticated context and separately authorized
 activation. No repository variables, policy activation or App grants are changed.
+
+The matrix also consumes the actual immutable main-v2 bundle draft with its
+reviewed matching v2 adapter. It uses modern dev product sources and payload;
+it does not claim old main product supports modern reload APIs. The baseline-v1
+seed is immutable historical dev, retaining compatibility coverage. Main ordinary
+legacy coverage is independently exercised by the paired main bundle PR. Pins
+are fixture identities, not acceptance or mutable test selection policy.
