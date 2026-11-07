@@ -48,3 +48,27 @@ foreach($path in $files){
     Assert-TrustedBaselineSnapshot $authoritySnapshot
 }
 Write-Output 'Core code, lock, context and roots byte-mutation negatives passed.'
+
+# Root/module configuration and Git identity are outside tools but still authority.
+. "$PSScriptRoot/../SelectedTestContext.ps1"
+$core=Join-Path $root 'core-checkout';$null=New-Item -ItemType Directory -Path $core
+$null=Invoke-SelectedContextGit $core @('init','--quiet')
+$null=Invoke-SelectedContextGit $core @('config','user.name','Synthetic fixture')
+$null=Invoke-SelectedContextGit $core @('config','user.email','fixture@example.invalid')
+$package=Join-Path $core 'package.json';[IO.File]::WriteAllText($package,'{}')
+$null=Invoke-SelectedContextGit $core @('add','package.json')
+$null=Invoke-SelectedContextGit $core @('commit','--quiet','-m','Synthetic authority fixture')
+$coreSnapshot=New-TrustedBaselineSnapshot @(Get-ReviewedCoreAuthorityRoots $core)
+$null=Invoke-SelectedContextGit $core @('status','--porcelain','--untracked-files=all','--ignored')
+Assert-TrustedBaselineSnapshot $coreSnapshot
+foreach($path in @($package,(Join-Path $core '.git/config'),(Join-Path $core '.git/HEAD'))){
+    $original=[IO.File]::ReadAllBytes($path)
+    [IO.File]::AppendAllText($path,'shifted-authority')
+    Reject {Assert-TrustedBaselineSnapshot $coreSnapshot}
+    [IO.File]::WriteAllBytes($path,$original)
+    Assert-TrustedBaselineSnapshot $coreSnapshot
+}
+$module=Join-Path $core 'node_modules';$null=New-Item -ItemType Directory -Path $module
+Reject {Assert-TrustedBaselineSnapshot $coreSnapshot};Remove-Item -LiteralPath $module
+Assert-TrustedBaselineSnapshot $coreSnapshot
+Write-Output 'Complete Core checkout package/module/Git authority negatives and read-only Git positive passed.'
