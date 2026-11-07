@@ -65,13 +65,6 @@ jobs:
           ref: 2d58507e812a097a26d59b3199c1533ab083da78
           path: .fixture-v1-bundle
           persist-credentials: false
-      - name: Check out reviewed v2 adapter candidate
-        if: matrix.bundle == 'main-v2'
-        uses: actions/checkout@v4
-        with:
-          ref: 98a7c47341b75666b56db1615940a6b9cc2a078d
-          path: .fixture-adapter
-          persist-credentials: false
       - name: Check out actual main bundle candidate
         if: matrix.bundle == 'main-v2'
         uses: actions/checkout@v4
@@ -97,7 +90,7 @@ jobs:
       - name: Authenticate modern fixture payload using trusted preparation
         shell: pwsh
         run: >-
-          ./${{ matrix.bundle == 'main-v2' && '.fixture-adapter/' || '' }}.github/scripts/Prepare-CSharpProfile.ps1
+          ./.github/scripts/Prepare-CSharpProfile.ps1
           -IntegrationRoot "$env:WSS_FIXTURE_PRODUCT"
           -PayloadRoot "$env:WSS_FIXTURE_PAYLOAD"
           -WorkRoot "$env:WSS_FIXTURE_ROOT/profile"
@@ -109,7 +102,7 @@ jobs:
         run: >-
           ./tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1
           -Stage Run -FixtureRoot "$env:WSS_FIXTURE_ROOT"
-          -AdapterRoot "${{ github.workspace }}/${{ matrix.bundle == 'main-v2' && '.fixture-adapter' || '.' }}"
+          -AdapterRoot "${{ github.workspace }}"
       - name: Retain synthetic-only runtime diagnostics
         if: always()
         uses: actions/upload-artifact@v4
