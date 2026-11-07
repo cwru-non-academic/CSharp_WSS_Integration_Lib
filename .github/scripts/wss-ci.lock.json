@@ -2,8 +2,8 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "7d3c50cfac12107e5eca9fc7f60381a0c019ffd3",
-  "source_ref": "refs/heads/ci/tooling/7d3c50cfac12107e5eca9fc7f60381a0c019ffd3",
+  "source_commit": "a3ce85cbecc5903d79d2e615b200f6a2cfb03741",
+  "source_ref": "refs/heads/ci/tooling/a3ce85cbecc5903d79d2e615b200f6a2cfb03741",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
@@ -172,6 +172,21 @@
       "origin": "core",
       "source": "tools/release/entrypoint.mjs",
       "sha256": "6096766b5a0329d933c6cbefa951ea3349a251283dd8bf34e565a0f06ffba9e0"
+    },
+    ".github/scripts/wss-ci/local-test-variable-snapshot.mjs": {
+      "origin": "core",
+      "source": "tools/release/local-test-variable-snapshot.mjs",
+      "sha256": "3f1fe61cda6686111e0509b8372bca54fb9038a010c9a354122031f2958d495f"
+    },
+    ".github/scripts/wss-ci/capture-test-variables.mjs": {
+      "origin": "core",
+      "source": "tools/ci/shared/capture-test-variables.mjs",
+      "sha256": "6e2fc9d70e2650d9711dab8e7323b195f96a049549b5bb9c96aba85fe4a3a69a"
+    },
+    ".github/workflows/test-variable-snapshot.yml": {
+      "origin": "core",
+      "source": "tools/ci/shared/test-variable-snapshot.yml",
+      "sha256": "0942f861c1ecb7f791752da6627d288d4bf542122dad7916e642b17ed581bf3f"
     }
   }
 }
