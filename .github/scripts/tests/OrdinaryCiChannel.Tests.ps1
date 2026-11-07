@@ -259,7 +259,18 @@ foreach ($repository in $repositories) {
                     $value = ConvertFrom-Json -InputObject $case.json -AsHashtable -NoEnumerate
                     Set-OrdinaryJsonField $f.event $field.path $value -Missing:($case.name -ceq 'missing')
                     $f = Convert-OrdinaryJsonFixture $f
-                    Expect-Rejection $f $field.reason
+                    if ($field.path -ceq 'pull_request.merge_commit_sha' -and $case.name -ceq 'null') {
+                        # Explicit JSON null is a supported pending mergeability hint;
+                        # the production entrypoint must still prove the raw merge parents.
+                        Expect-Channel $f $channel
+                    } else { Expect-Rejection $f $field.reason }
+                }
+            }
+            if ($eventName -ceq 'pull_request') {
+                foreach ($action in @('opened', 'reopened', 'synchronize')) {
+                    $f = New-OrdinaryFixture $repository $eventName $ref $base
+                    $f.event.action = $action; $f.event.pull_request.merge_commit_sha = $null
+                    Expect-Channel (Convert-OrdinaryJsonFixture $f) $channel
                 }
             }
             if ($eventName -ceq 'workflow_dispatch') {
@@ -388,14 +399,43 @@ $workflowCount = $passed - $matrixCount - $identityCount - $jsonCount
 # Exercise the real entrypoint's runner-file read, Git source binding and atomic output.
 # These synthetic local contexts prove rejection/selection behavior, not hosted acceptance.
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
-$actualSha = (& git --no-optional-locks -C $root rev-parse HEAD).Trim()
-if ($LASTEXITCODE -ne 0) { throw 'Unable to read contract checkout identity.' }
 $repository = if ($workflow -ceq 'cli-ci.yml') { $repositories[1] } else { $repositories[0] }
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('wss-channel-contract-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $scratch
 $saved = @{}
 try {
     $entrypointCount = 0
+    function Invoke-OrdinaryFixtureGit([string]$Root, [string[]]$Arguments) {
+        $value = & git --no-optional-locks -C $Root @Arguments 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "Synthetic Git fixture failed: $($value -join ' ')" }
+        ($value -join "`n").Trim()
+    }
+    # Real commit objects, not mocked rev-list output. All writes remain in this
+    # fresh temporary fixture; the actual review worktree is never rewritten.
+    $fixtureRoot = Join-Path $scratch 'merge-source'
+    $null = New-Item -ItemType Directory -Path "$fixtureRoot/.github/scripts" -Force
+    Copy-Item -LiteralPath "$PSScriptRoot/../Resolve-OrdinaryCiChannel.ps1" -Destination "$fixtureRoot/.github/scripts/Resolve-OrdinaryCiChannel.ps1"
+    $null = Invoke-OrdinaryFixtureGit $fixtureRoot @('init', '--quiet', '--initial-branch=fixture')
+    $null = Invoke-OrdinaryFixtureGit $fixtureRoot @('config', 'user.name', 'Synthetic channel fixture')
+    $null = Invoke-OrdinaryFixtureGit $fixtureRoot @('config', 'user.email', 'channel@example.invalid')
+    $null = Invoke-OrdinaryFixtureGit $fixtureRoot @('add', '.github/scripts/Resolve-OrdinaryCiChannel.ps1')
+    $tree = Invoke-OrdinaryFixtureGit $fixtureRoot @('write-tree')
+    $baseSha = Invoke-OrdinaryFixtureGit $fixtureRoot @('commit-tree', $tree, '-m', 'Synthetic base')
+    $headSha = Invoke-OrdinaryFixtureGit $fixtureRoot @('commit-tree', $tree, '-p', $baseSha, '-m', 'Synthetic head')
+    $otherSha = Invoke-OrdinaryFixtureGit $fixtureRoot @('commit-tree', $tree, '-m', 'Foreign source')
+    $actualSha = Invoke-OrdinaryFixtureGit $fixtureRoot @('commit-tree', $tree, '-p', $baseSha, '-p', $headSha, '-m', 'Synthetic pull request merge')
+    $null = Invoke-OrdinaryFixtureGit $fixtureRoot @('update-ref', 'HEAD', $actualSha)
+    $null = Invoke-OrdinaryFixtureGit $fixtureRoot @('remote', 'add', 'origin', "https://github.com/$repository")
+    # Checkout depth 1 intentionally lacks parent objects. The raw commit header
+    # still proves both parents without fetching any additional history.
+    $shallowRoot = Join-Path $scratch 'shallow-source'
+    $fixtureUri = [Uri]::new([IO.Path]::GetFullPath($fixtureRoot)).AbsoluteUri
+    $null = Invoke-OrdinaryFixtureGit $scratch @('clone', '--quiet', '--depth', '1', '--no-local', $fixtureUri, $shallowRoot)
+    $null = Invoke-OrdinaryFixtureGit $shallowRoot @('remote', 'set-url', 'origin', "https://github.com/$repository")
+    if ((Invoke-OrdinaryFixtureGit $shallowRoot @('rev-parse', '--is-shallow-repository')) -cne 'true') { throw 'Expected a real depth-one fixture.' }
+    & git --no-optional-locks -C $shallowRoot cat-file -e "$baseSha^{commit}" 2>$null
+    if ($LASTEXITCODE -eq 0) { throw 'Depth-one fixture unexpectedly contains its base parent.' }
+    $entrypointScript = "$shallowRoot/.github/scripts/Resolve-OrdinaryCiChannel.ps1"
     # Real entrypoint parsing must reject non-object JSON roots without unwrapping arrays.
     # Also repeat the reviewed array bypasses through the event file, not only the pure helper.
     foreach ($channel in @('dev', 'main')) {
@@ -404,7 +444,10 @@ try {
             $base = if ($eventName -ceq 'pull_request') { $channel } else { '' }
             $f = New-OrdinaryFixture $repository $eventName $ref $base
             $f.runtime.GITHUB_SHA = $actualSha; $f.runtime.GITHUB_WORKFLOW_SHA = $actualSha
-            if ($eventName -ceq 'pull_request') { $f.event.pull_request.merge_commit_sha = $actualSha }
+            if ($eventName -ceq 'pull_request') {
+                $f.event.pull_request.merge_commit_sha = $actualSha
+                $f.event.pull_request.base.sha = $baseSha; $f.event.pull_request.head.sha = $headSha
+            }
             elseif ($eventName -ceq 'push') { $f.event.after = $actualSha; $f.event.head_commit.id = $actualSha }
             $validJson = ConvertTo-Json -InputObject $f.event -Depth 20 -Compress
             $cases = @(@{ json = $validJson; reason = '' })
@@ -442,7 +485,7 @@ try {
                 [IO.File]::WriteAllText($env:GITHUB_EVENT_PATH, $case.json, [Text.UTF8Encoding]::new($false))
                 [IO.File]::WriteAllText($env:GITHUB_OUTPUT, '', [Text.UTF8Encoding]::new($false))
                 $errorText = ''
-                try { $null = & "$PSScriptRoot/../Resolve-OrdinaryCiChannel.ps1" } catch { $errorText = $_.Exception.Message }
+                try { $null = & $entrypointScript } catch { $errorText = $_.Exception.Message }
                 if ($errorText -cne $case.reason) { throw "JSON entrypoint expected '$($case.reason)', got '$errorText'." }
                 $expectedOutput = if ($case.reason) { '' } else { "channel=$channel`n" }
                 if ([IO.File]::ReadAllText($env:GITHUB_OUTPUT).Replace("`r`n", "`n") -cne $expectedOutput) { throw 'Malformed JSON entrypoint emitted a channel.' }
@@ -476,7 +519,7 @@ try {
             [IO.File]::WriteAllText($env:GITHUB_EVENT_PATH, ($f.event | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
             [IO.File]::WriteAllText($env:GITHUB_OUTPUT, '', [Text.UTF8Encoding]::new($false))
             $errorText = ''
-            try { $null = & "$PSScriptRoot/../Resolve-OrdinaryCiChannel.ps1" } catch { $errorText = $_.Exception.Message }
+            try { $null = & $entrypointScript } catch { $errorText = $_.Exception.Message }
             if ($errorText -cne $expectedError) { throw "Entrypoint expected '$expectedError', got '$errorText'." }
             $output = [IO.File]::ReadAllText($env:GITHUB_OUTPUT).Replace("`r`n", "`n")
             $expectedOutput = if ($expectedError) { '' } else { "channel=$channel`n" }
@@ -484,9 +527,91 @@ try {
             $entrypointCount++
         }
     }
+    # Real raw merge-parent proofs cover accepted pending webhook metadata and
+    # reject graph/body/replacement substitutions before any channel is emitted.
+    $rawMergeCount = 0
+    $rawParentReason = 'Ordinary CI raw merge parents differ from the event base/head sources.'
+    $swappedSha = Invoke-OrdinaryFixtureGit $fixtureRoot @('commit-tree', $tree, '-p', $headSha, '-p', $baseSha, '-m', 'Swapped parents')
+    $foreignBaseSha = Invoke-OrdinaryFixtureGit $fixtureRoot @('commit-tree', $tree, '-p', $otherSha, '-p', $headSha, '-m', 'Foreign base')
+    $foreignHeadSha = Invoke-OrdinaryFixtureGit $fixtureRoot @('commit-tree', $tree, '-p', $baseSha, '-p', $otherSha, '-m', 'Foreign head')
+    $octopusSha = Invoke-OrdinaryFixtureGit $fixtureRoot @('commit-tree', $tree, '-p', $baseSha, '-p', $headSha, '-p', $otherSha, '-m', 'Three parents')
+    $bodySpoofSha = Invoke-OrdinaryFixtureGit $fixtureRoot @('commit-tree', $tree, '-m', "parent $baseSha`nparent $headSha")
+    $bodyNoiseSha = Invoke-OrdinaryFixtureGit $fixtureRoot @('commit-tree', $tree, '-p', $baseSha, '-p', $headSha, '-m', "parent $otherSha`nparent $baseSha")
+    $rawCases = @(
+        @{ name = 'two-parent'; commit = $actualSha; reason = '' },
+        @{ name = 'root'; commit = $baseSha; reason = $rawParentReason },
+        @{ name = 'one-parent'; commit = $headSha; reason = $rawParentReason },
+        @{ name = 'swapped'; commit = $swappedSha; reason = $rawParentReason },
+        @{ name = 'foreign-base'; commit = $foreignBaseSha; reason = $rawParentReason },
+        @{ name = 'foreign-head'; commit = $foreignHeadSha; reason = $rawParentReason },
+        @{ name = 'three-parents'; commit = $octopusSha; reason = $rawParentReason },
+        @{ name = 'body-spoof'; commit = $bodySpoofSha; reason = $rawParentReason },
+        @{ name = 'body-noise'; commit = $bodyNoiseSha; reason = '' },
+        @{ name = 'event-base-mismatch'; commit = $actualSha; base = $otherSha; reason = $rawParentReason },
+        @{ name = 'event-head-mismatch'; commit = $actualSha; head = $otherSha; reason = $rawParentReason },
+        @{ name = 'replace-good-with-bad'; commit = $actualSha; replacement = $headSha; reason = '' },
+        @{ name = 'replace-bad-with-good'; commit = $headSha; replacement = $actualSha; reason = $rawParentReason }
+    )
+    foreach ($channel in @('dev', 'main')) {
+        foreach ($case in $rawCases) {
+            foreach ($hint in @('source', 'null')) {
+                $null = Invoke-OrdinaryFixtureGit $fixtureRoot @('update-ref', 'HEAD', $case.commit)
+                if ($case.ContainsKey('replacement')) {
+                    $null = Invoke-OrdinaryFixtureGit $fixtureRoot @('replace', $case.commit, $case.replacement)
+                    $replaced = Invoke-OrdinaryFixtureGit $fixtureRoot @('cat-file', 'commit', $case.commit)
+                    $replacement = Invoke-OrdinaryFixtureGit $fixtureRoot @('--no-replace-objects', 'cat-file', 'commit', $case.replacement)
+                    if ($replaced -cne $replacement) { throw 'Git replacement fixture was not active.' }
+                }
+                try {
+                    $f = New-OrdinaryFixture $repository 'pull_request' 'refs/pull/1/merge' $channel
+                    $f.event.action = 'opened'
+                    $f.runtime.GITHUB_SHA = $case.commit; $f.runtime.GITHUB_WORKFLOW_SHA = $case.commit
+                    $f.event.pull_request.merge_commit_sha = if ($hint -ceq 'null') { $null } else { $case.commit }
+                    $f.event.pull_request.base.sha = if ($case.ContainsKey('base')) { $case.base } else { $baseSha }
+                    $f.event.pull_request.head.sha = if ($case.ContainsKey('head')) { $case.head } else { $headSha }
+                    $f.runtime.GITHUB_EVENT_PATH = Join-Path $scratch 'raw-event.json'
+                    $f.runtime.GITHUB_OUTPUT = Join-Path $scratch 'raw-output.txt'
+                    foreach ($key in $f.runtime.Keys) {
+                        if (!$saved.ContainsKey($key)) { $saved[$key] = [Environment]::GetEnvironmentVariable($key) }
+                        [Environment]::SetEnvironmentVariable($key, $f.runtime[$key])
+                    }
+                    [IO.File]::WriteAllText($env:GITHUB_EVENT_PATH, (ConvertTo-Json -InputObject $f.event -Depth 20 -Compress), [Text.UTF8Encoding]::new($false))
+                    [IO.File]::WriteAllText($env:GITHUB_OUTPUT, '', [Text.UTF8Encoding]::new($false))
+                    $errorText = ''
+                    try { $null = & "$fixtureRoot/.github/scripts/Resolve-OrdinaryCiChannel.ps1" } catch { $errorText = $_.Exception.Message }
+                    if ($errorText -cne $case.reason) { throw "Raw merge $($case.name)/$hint expected '$($case.reason)', got '$errorText'." }
+                    $expectedOutput = if ($case.reason) { '' } else { "channel=$channel`n" }
+                    if ([IO.File]::ReadAllText($env:GITHUB_OUTPUT).Replace("`r`n", "`n") -cne $expectedOutput) { throw 'Unverified raw merge emitted a channel.' }
+                    $entrypointCount++; $rawMergeCount++
+                } finally {
+                    if ($case.ContainsKey('replacement')) { $null = Invoke-OrdinaryFixtureGit $fixtureRoot @('replace', '-d', $case.commit) }
+                }
+            }
+        }
+        # Explicit nulls are exercised through real JSON event files for every
+        # registered PR action on a genuinely shallow merge checkout.
+        foreach ($action in @('opened', 'reopened', 'synchronize')) {
+            $f = New-OrdinaryFixture $repository 'pull_request' 'refs/pull/1/merge' $channel
+            $f.event.action = $action; $f.event.pull_request.merge_commit_sha = $null
+            $f.event.pull_request.base.sha = $baseSha; $f.event.pull_request.head.sha = $headSha
+            $f.runtime.GITHUB_SHA = $actualSha; $f.runtime.GITHUB_WORKFLOW_SHA = $actualSha
+            $f.runtime.GITHUB_EVENT_PATH = Join-Path $scratch 'shallow-event.json'
+            $f.runtime.GITHUB_OUTPUT = Join-Path $scratch 'shallow-output.txt'
+            foreach ($key in $f.runtime.Keys) {
+                if (!$saved.ContainsKey($key)) { $saved[$key] = [Environment]::GetEnvironmentVariable($key) }
+                [Environment]::SetEnvironmentVariable($key, $f.runtime[$key])
+            }
+            [IO.File]::WriteAllText($env:GITHUB_EVENT_PATH, (ConvertTo-Json -InputObject $f.event -Depth 20 -Compress), [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($env:GITHUB_OUTPUT, '', [Text.UTF8Encoding]::new($false))
+            $null = & $entrypointScript
+            if ([IO.File]::ReadAllText($env:GITHUB_OUTPUT).Replace("`r`n", "`n") -cne "channel=$channel`n") { throw 'Pending shallow merge did not emit its verified channel.' }
+            $entrypointCount++; $rawMergeCount++
+        }
+    }
+    "Raw Git merge entrypoint contracts passed: $rawMergeCount (included in entrypoint total)."
     # Registered scripts have no command-line channel override, including direct invocation.
     $rejected = $false
-    try { $null = & "$PSScriptRoot/../Resolve-OrdinaryCiChannel.ps1" -Channel main } catch {
+    try { $null = & $entrypointScript -Channel main } catch {
         if ($_.Exception.Message -notmatch 'parameter.*Channel') { throw }
         $rejected = $true
     }

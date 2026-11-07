@@ -55,14 +55,16 @@ function Resolve-WssOrdinaryCiChannel([Collections.IDictionary]$Runtime, [Collec
             throw 'Ordinary CI requires a complete pull request identity.'
         }
         if (!(Test-WssOrdinaryInteger $Event['number']) -or !(Test-WssOrdinaryInteger $pr['number']) -or
-            !(Test-WssOrdinaryString $pr['merge_commit_sha']) -or !(Test-WssOrdinaryString $pr['state']) -or
+            !$pr.Contains('merge_commit_sha') -or
+            ($null -ne $pr['merge_commit_sha'] -and !(Test-WssOrdinaryString $pr['merge_commit_sha'])) -or
+            !(Test-WssOrdinaryString $pr['state']) -or
             !(Test-WssOrdinaryString $Event['action']) -or !(Test-WssOrdinaryString $Runtime['GITHUB_REF_NAME'])) {
             throw 'Ordinary CI requires the current open pull request merge source.'
         }
         $number = [string]$Event['number']
         if ($pr['number'] -ne $Event['number'] -or
             $ref -cne "refs/pull/$number/merge" -or $Runtime['GITHUB_REF_NAME'] -cne "$number/merge" -or
-            $pr['merge_commit_sha'] -cne $source -or $pr['state'] -cne 'open' -or
+            ($null -ne $pr['merge_commit_sha'] -and $pr['merge_commit_sha'] -cne $source) -or $pr['state'] -cne 'open' -or
             $pr['merged'] -isnot [bool] -or $pr['merged'] -or
             $Event['action'] -cnotin @('opened', 'reopened', 'synchronize')) {
             throw 'Ordinary CI requires the current open pull request merge source.'
@@ -110,6 +112,19 @@ function Resolve-WssOrdinaryCiChannel([Collections.IDictionary]$Runtime, [Collec
     [pscustomobject]@{ channel = $channel; repository = $repository; workflow = $identity.workflow; source = $source; ref = $ref }
 }
 
+# Opened webhooks may precede GitHub's mergeability computation, leaving
+# merge_commit_sha null. The raw checked-out commit, not that nullable hint,
+# proves the exact authenticated base/head pair. Raw headers work at depth 1.
+function Assert-WssOrdinaryPullRequestMerge([string]$Root, [string]$Source, [string]$Base, [string]$Head) {
+    $raw = & git --no-replace-objects --no-optional-locks -C $Root cat-file commit $Source 2>$null
+    if ($LASTEXITCODE -ne 0) { throw 'Ordinary CI cannot read its raw pull request commit.' }
+    $header = (($raw -join "`n") -split "`n`n", 2)[0]
+    $parents = @($header -split "`n" | Where-Object { $_ -clike 'parent *' })
+    if ($parents.Count -ne 2 -or $parents[0] -cne "parent $Base" -or $parents[1] -cne "parent $Head") {
+        throw 'Ordinary CI raw merge parents differ from the event base/head sources.'
+    }
+}
+
 function Initialize-WssOrdinaryCiChannel {
     [CmdletBinding()]
     param()
@@ -132,7 +147,10 @@ function Initialize-WssOrdinaryCiChannel {
     if ($LASTEXITCODE -ne 0 -or (($remote -join '').Trim().TrimEnd('/') -creplace '\.git$', '') -cne "https://github.com/$($resolved.repository)") {
         throw 'Ordinary CI checkout repository differs from the registered source.'
     }
-    # Channel is emitted only after both hosted metadata and the actual checkout agree.
+    if ($runtime['GITHUB_EVENT_NAME'] -ceq 'pull_request') {
+        Assert-WssOrdinaryPullRequestMerge $root $resolved.source $event['pull_request']['base']['sha'] $event['pull_request']['head']['sha']
+    }
+    # Channel is emitted only after hosted metadata, checkout and raw PR parents agree.
     "channel=$($resolved.channel)" >> $env:GITHUB_OUTPUT
     "Verified ordinary $($resolved.channel) source $($resolved.source) for $($resolved.repository)."
 }
