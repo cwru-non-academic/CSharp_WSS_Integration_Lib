@@ -1,3 +1,4 @@
+import {testSelectionPolicy,validatePlanTestSelection,verifySelectedTestArtifact} from './campaign-test-selection.mjs';
 import {createHash} from 'node:crypto';
 import {channelContext} from './channels.mjs';
 
@@ -26,6 +27,7 @@ export function candidate(c) {
   requireThat(c.repository === CORE && sha(c.commit) && id(c.run_id) && id(c.artifact_id) && c.archive === 'WSS-Universal-ci.zip' && hash(c.sha256), 'Invalid canonical candidate');
 }
 export function manifest(m) {
+  testSelectionPolicy(m);
   const context=channelContext(m.channel);
   requireThat(m.schema === context.manifestSchema && m.release_kind === context.kind && m.stable_enabled === (m.channel==='main'), 'Release policy channel/schema/kind mismatch');
   requireThat(same(m.targets.map(t => t.id).sort(), [...TARGETS].sort()), 'Required target set must be exact and unique');
@@ -52,6 +54,7 @@ export function plan(p) {
     const s = p.target_snapshots[t.id];
     requireThat(sha(s.head_sha) && same(Object.keys(s.trusted).sort(), [...t.trusted_paths].sort()) && Object.values(s.trusted).every(sha), `Invalid snapshot ${t.id}`);
   }
+  validatePlanTestSelection(p);
   return p;
 }
 export function jobs(actual, required) {
@@ -95,6 +98,10 @@ export function receipt(p, t, r, e) {
   requireThat(String(n.id) === r.normal_ci.run_id && ['push','workflow_dispatch'].includes(n.event), 'Release requires post-merge normal CI, never synthetic PR checkout');
   requireThat(n.head_sha === r.merge.sha && n.head_branch === t.branch, 'Normal CI did not test actual merged target branch');
   jobs(e.normal_jobs,t.jobs);
+  if(p.test_selection) {
+    const selected=verifySelectedTestArtifact(p,t.id,n,e.selected_tests);
+    requireThat(same(r.selected_tests,selected),'Receipt test selection differs from authenticated normal CI artifact');
+  }
   requireThat(same(Object.keys(r.parents || {}).sort(),Object.keys(t.parents).sort()) && same(r.parents,e.parent_gitlinks), 'Dependency pins do not match receipt');
   requireThat(same([...(r.coverage || [])].sort(),[...t.coverage].sort()), 'Coverage declaration mismatch');
   requireThat(id(r.emitter?.run_id) && sha(r.emitter.source_sha) && r.emitter.source_sha === r.merge.sha && r.emitter.workflow === '.github/workflows/release-receipt.yml', 'Invalid receipt emitter');
@@ -113,6 +120,7 @@ export function receipt(p, t, r, e) {
     requireThat(declared.source_sha === p.target_snapshots[sourceTarget.id].head_sha, 'Preflight source differs from frozen target snapshot');
     run(actual.run,declared.repository,declared.workflow,actual.run.run_attempt);
     requireThat(String(actual.run.id) === declared.run_id && actual.run.head_sha === declared.source_sha && actual.run.head_branch===p.channel && actual.run.event === 'workflow_dispatch' && same(actual.candidate,p.candidate), 'Preflight run/candidate mismatch');
+    if(p.test_selection)verifySelectedTestArtifact(p,sourceTarget.id,actual.run,actual.selected_tests);
   }
 }
 export function allClear(p, evidence) {
@@ -124,10 +132,11 @@ export function allClear(p, evidence) {
   }
   const context=channelContext(p.channel);
   return {schema:context.acceptanceSchema,channel:p.channel,kind:context.kind,plan_id:p.plan_id,
-    manifest_sha256:p.manifest_sha256,candidate:p.candidate,targets:Object.fromEntries(p.manifest.targets.map(t => [t.id,{
+    manifest_sha256:p.manifest_sha256,candidate:p.candidate,...(p.test_selection?{test_selection_id:p.test_selection_id,test_selection:p.test_selection}:{}),targets:Object.fromEntries(p.manifest.targets.map(t => [t.id,{
       repository:t.repository,merge:evidence.targets[t.id].receipt.merge,normal_ci:evidence.targets[t.id].receipt.normal_ci,
       preflights:evidence.targets[t.id].receipt.preflights,parents:evidence.targets[t.id].receipt.parents,
       emitter:evidence.targets[t.id].receipt.emitter,receipt_artifact_id:String(evidence.targets[t.id].artifact.id),
-      receipt_sha256:evidence.targets[t.id].receipt_sha256,coverage:t.coverage
+      receipt_sha256:evidence.targets[t.id].receipt_sha256,coverage:t.coverage,
+      ...(p.test_selection?{selected_tests:evidence.targets[t.id].receipt.selected_tests}:{})
     }])),excluded:p.manifest.excluded};
 }
