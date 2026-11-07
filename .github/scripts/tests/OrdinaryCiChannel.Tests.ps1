@@ -114,7 +114,7 @@ foreach ($repository in $repositories) {
                 }
                 foreach ($change in @(
                     {param($f) $f.event.number = 2}, {param($f) $f.event.pull_request.number = 2},
-                    {param($f) $f.event.pull_request.merge_commit_sha = 'd' * 40},
+                    {param($f) $f.event.pull_request.merge_commit_sha = 'not-a-full-sha'},
                     {param($f) $f.event.pull_request.state = 'closed'}, {param($f) $f.event.pull_request.merged = $true},
                     {param($f) $f.event.pull_request.merged = 'false'}, {param($f) $f.event.action = 'closed'},
                     {param($f) $f.runtime.GITHUB_REF_NAME = '2/merge'}
@@ -171,14 +171,17 @@ $diagnosticCatch = @(
     '        }', '        throw', '    }'
 ) -join "`n"
 if (!$diagnosticSource.Contains($diagnosticCatch)) { throw 'Production diagnostic catch must preserve the original rejection.' }
-$restoredSource = [regex]::Replace($diagnosticSource, '(?ms)^# Diagnostic labels.*?(?=^# Opened webhooks)', '')
+$restoredSource = [regex]::Replace($diagnosticSource, '(?ms)^# Diagnostic labels.*?(?=^# The webhook merge_commit_sha)', '')
 $restoredSource = $restoredSource.Replace($diagnosticCatch, '    $resolved = Resolve-WssOrdinaryCiChannel $runtime $event')
 $restoredDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($restoredSource))).ToLowerInvariant()
-if ($restoredDigest -cne 'b0a34f634e96a2060a1fdec988f099b1138b1cd80cc3ebd6dfe2da7174ad1193') { throw 'Diagnostic instrumentation changed the reviewed acceptance implementation.' }
+if ($restoredDigest -cne 'f3910b62c81307d8d8a40738f145214828b75833408372c086b1079d1368963c') { throw 'Diagnostic instrumentation changed the reviewed acceptance implementation.' }
 $diagnosticCount++
 foreach ($repository in $repositories) {
     $f = New-OrdinaryFixture $repository 'pull_request' 'refs/pull/1/merge' 'main'
     if (@(Get-WssOrdinaryPrDiagnostics $f.runtime $f.event).Count -ne 0) { throw 'Valid metadata emitted rejection diagnostics.' }
+    $diagnosticCount++
+    $f.event.pull_request.merge_commit_sha = 'd' * 40
+    if ((Resolve-WssOrdinaryCiChannel $f.runtime $f.event).channel -cne 'main' -or @(Get-WssOrdinaryPrDiagnostics $f.runtime $f.event).Count -ne 0) { throw 'A valid differing hint became source authority or a diagnostic failure.' }
     $diagnosticCount++
     foreach ($field in @('number', 'merge_commit_sha', 'state', 'merged')) {
         foreach ($json in @('null', '[]', '["DO_NOT_PRINT_VALUE"]', '{}', '0', 'false', 'true', '"DO_NOT_PRINT_VALUE"')) {
@@ -516,6 +519,18 @@ try {
             elseif ($eventName -ceq 'push') { $f.event.after = $actualSha; $f.event.head_commit.id = $actualSha }
             $validJson = ConvertTo-Json -InputObject $f.event -Depth 20 -Compress
             $cases = @(@{ json = $validJson; reason = '' })
+            if ($eventName -ceq 'pull_request') {
+                # A plausible different hint is allowed only with the same raw Git
+                # proof. Missing/malformed hints still fail before any output.
+                foreach ($hint in @('', ('a' * 39), ('a' * 41), ('g' * 40), ('A' * 40), ' ', ($actualSha + "`n"), ($actualSha + "`r`n"))) {
+                    $event = ConvertFrom-Json -InputObject $validJson -AsHashtable -NoEnumerate
+                    $event.pull_request.merge_commit_sha = $hint
+                    $cases += @{ json = (ConvertTo-Json -InputObject $event -Depth 20 -Compress); reason = $prSourceReason }
+                }
+                $event = ConvertFrom-Json -InputObject $validJson -AsHashtable -NoEnumerate
+                $null = $event.pull_request.Remove('merge_commit_sha')
+                $cases += @{ json = (ConvertTo-Json -InputObject $event -Depth 20 -Compress); reason = $prSourceReason }
+            }
             foreach ($json in @('null', 'false', 'true', '123', '"object"', '[]', "[$validJson]", "[$validJson,$validJson]")) {
                 $cases += @{ json = $json; reason = 'Ordinary CI requires a JSON event object.' }
             }
@@ -619,7 +634,7 @@ try {
     )
     foreach ($channel in @('dev', 'main')) {
         foreach ($case in $rawCases) {
-            foreach ($hint in @('source', 'null')) {
+            foreach ($hint in @('source', 'null', 'different')) {
                 $null = Invoke-OrdinaryFixtureGit $fixtureRoot @('update-ref', 'HEAD', $case.commit)
                 if ($case.ContainsKey('replacement')) {
                     $null = Invoke-OrdinaryFixtureGit $fixtureRoot @('replace', $case.commit, $case.replacement)
@@ -631,7 +646,7 @@ try {
                     $f = New-OrdinaryFixture $repository 'pull_request' 'refs/pull/1/merge' $channel
                     $f.event.action = 'opened'
                     $f.runtime.GITHUB_SHA = $case.commit; $f.runtime.GITHUB_WORKFLOW_SHA = $case.commit
-                    $f.event.pull_request.merge_commit_sha = if ($hint -ceq 'null') { $null } else { $case.commit }
+                    $f.event.pull_request.merge_commit_sha = if ($hint -ceq 'null') { $null } elseif ($hint -ceq 'different') { 'd' * 40 } else { $case.commit }
                     $f.event.pull_request.base.sha = if ($case.ContainsKey('base')) { $case.base } else { $baseSha }
                     $f.event.pull_request.head.sha = if ($case.ContainsKey('head')) { $case.head } else { $headSha }
                     $f.runtime.GITHUB_EVENT_PATH = Join-Path $scratch 'raw-event.json'

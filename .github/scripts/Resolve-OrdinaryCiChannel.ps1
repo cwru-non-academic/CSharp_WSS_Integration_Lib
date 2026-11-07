@@ -54,9 +54,11 @@ function Resolve-WssOrdinaryCiChannel([Collections.IDictionary]$Runtime, [Collec
             $pr['head'] -isnot [Collections.IDictionary] -or $pr['base']['repo'] -isnot [Collections.IDictionary]) {
             throw 'Ordinary CI requires a complete pull request identity.'
         }
+        # Hosted webhooks can contain a merge hint different from the actual run.
+        # Validate its shape only; the checked-out raw parents below own source proof.
         if (!(Test-WssOrdinaryInteger $Event['number']) -or !(Test-WssOrdinaryInteger $pr['number']) -or
             !$pr.Contains('merge_commit_sha') -or
-            ($null -ne $pr['merge_commit_sha'] -and !(Test-WssOrdinaryString $pr['merge_commit_sha'])) -or
+            ($null -ne $pr['merge_commit_sha'] -and (!(Test-WssOrdinaryString $pr['merge_commit_sha']) -or $pr['merge_commit_sha'] -cnotmatch '\A[a-f0-9]{40}\z')) -or
             !(Test-WssOrdinaryString $pr['state']) -or
             !(Test-WssOrdinaryString $Event['action']) -or !(Test-WssOrdinaryString $Runtime['GITHUB_REF_NAME'])) {
             throw 'Ordinary CI requires the current open pull request merge source.'
@@ -64,7 +66,7 @@ function Resolve-WssOrdinaryCiChannel([Collections.IDictionary]$Runtime, [Collec
         $number = [string]$Event['number']
         if ($pr['number'] -ne $Event['number'] -or
             $ref -cne "refs/pull/$number/merge" -or $Runtime['GITHUB_REF_NAME'] -cne "$number/merge" -or
-            ($null -ne $pr['merge_commit_sha'] -and $pr['merge_commit_sha'] -cne $source) -or $pr['state'] -cne 'open' -or
+            $pr['state'] -cne 'open' -or
             $pr['merged'] -isnot [bool] -or $pr['merged'] -or
             $Event['action'] -cnotin @('opened', 'reopened', 'synchronize')) {
             throw 'Ordinary CI requires the current open pull request merge source.'
@@ -123,7 +125,7 @@ function Get-WssOrdinaryPrDiagnostics([Collections.IDictionary]$Runtime, [Collec
         @{ field = 'event.pull_request.number'; parent = $pr; key = 'number'; valid = ((Test-WssOrdinaryInteger $Event['number']) -and (Test-WssOrdinaryInteger $pr['number']) -and $pr['number'] -eq $Event['number']) },
         @{ field = 'runtime.GITHUB_REF'; parent = $Runtime; key = 'GITHUB_REF'; valid = ((Test-WssOrdinaryString $Runtime['GITHUB_REF']) -and $Runtime['GITHUB_REF'] -ceq "refs/pull/$number/merge") },
         @{ field = 'runtime.GITHUB_REF_NAME'; parent = $Runtime; key = 'GITHUB_REF_NAME'; valid = ((Test-WssOrdinaryString $Runtime['GITHUB_REF_NAME']) -and $Runtime['GITHUB_REF_NAME'] -ceq "$number/merge") },
-        @{ field = 'event.pull_request.merge_commit_sha'; parent = $pr; key = 'merge_commit_sha'; valid = ($pr.Contains('merge_commit_sha') -and ($null -eq $pr['merge_commit_sha'] -or ((Test-WssOrdinaryString $Runtime['GITHUB_SHA']) -and (Test-WssOrdinaryString $pr['merge_commit_sha']) -and $pr['merge_commit_sha'] -ceq $Runtime['GITHUB_SHA']))) },
+        @{ field = 'event.pull_request.merge_commit_sha'; parent = $pr; key = 'merge_commit_sha'; valid = ($pr.Contains('merge_commit_sha') -and ($null -eq $pr['merge_commit_sha'] -or ((Test-WssOrdinaryString $pr['merge_commit_sha']) -and $pr['merge_commit_sha'] -cmatch '\A[a-f0-9]{40}\z'))) },
         @{ field = 'event.pull_request.state'; parent = $pr; key = 'state'; valid = ((Test-WssOrdinaryString $pr['state']) -and $pr['state'] -ceq 'open') },
         @{ field = 'event.pull_request.merged'; parent = $pr; key = 'merged'; valid = ($pr['merged'] -is [bool] -and !$pr['merged']) },
         @{ field = 'event.action'; parent = $Event; key = 'action'; valid = ((Test-WssOrdinaryString $Event['action']) -and $Event['action'] -cin @('opened', 'reopened', 'synchronize')) }
@@ -140,9 +142,9 @@ function Get-WssOrdinaryPrDiagnostics([Collections.IDictionary]$Runtime, [Collec
     }
 }
 
-# Opened webhooks may precede GitHub's mergeability computation, leaving
-# merge_commit_sha null. The raw checked-out commit, not that nullable hint,
-# proves the exact authenticated base/head pair. Raw headers work at depth 1.
+# The webhook merge_commit_sha may be null or differ from the actual run source.
+# The raw checked-out commit, never that hint, proves the exact authenticated
+# base/head pair. Raw headers work at depth 1.
 function Assert-WssOrdinaryPullRequestMerge([string]$Root, [string]$Source, [string]$Base, [string]$Head) {
     $raw = & git --no-replace-objects --no-optional-locks -C $Root cat-file commit $Source 2>$null
     if ($LASTEXITCODE -ne 0) { throw 'Ordinary CI cannot read its raw pull request commit.' }
