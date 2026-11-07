@@ -35,3 +35,15 @@ Producer verification resolves that same fixture's provenance, not the host
 branch's installed payload. Runtime adapters remain separately selected/current.
 
 Legacy v1 extension: immutable wrapper/product seed `aafeef78536fe06094c6a694dd64d9a9e1433b21` uses authenticated Core `76803c03c7aa55b8951499053641ad9ce83504b8`, run `42230527501`, artifact `13507483694`, archive SHA256 `856566f5710a5662254373cc8c5d3ecf3527b89506f0df140824261ca50d2167`. A separate synthetic commit adds its missing v1 manifest and isolation test; that commit is not advertised as selectable from GitHub. The exact original full22 inventory and mandatory legacy10 stage must pass, with full23 only after the synthetic extra case is added. Legacy campaign preparation must fail. macOS preserves the historical explicit unsupported-BLE assertion where the payload lacks that backend; it does not claim modern native BLE support. Modern v1/v2 proofs remain unchanged. CLI command10 is unchanged by this wrapper-only correction.
+
+## Cross-payload resolution regression
+
+Modern fixtures authenticate producer run 42362522777, artifact 13570163970,
+Core bb52ac3f3507635a7d434657ed631ffe186db694, universal archive SHA256
+c3d6f8e50c8b9ca7bc13b21fa62cade8818046ce3a29aa02828a1907d083051e.
+The immutable source retains its older committed lib. Preparation requires the
+archived and candidate Core DLL hashes to differ. Generated tests must resolve
+and propagate the authenticated candidate, with the existing full universal
+inventory/projection validator unchanged. Successful compilation alone is not
+proof. All existing hosted mandatory behavioral and selected runtime checks
+remain required. These fixtures are synthetic diagnostics, not campaign evidence.
