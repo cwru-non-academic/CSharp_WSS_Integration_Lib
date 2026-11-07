@@ -11,7 +11,8 @@ $ErrorActionPreference='Stop'
 . "$PSScriptRoot/SelectedTestContext.ps1"
 . "$PSScriptRoot/TrustedBaseline.ps1"
 # Freeze authority bytes before any child; mutable Git metadata alone is not proof.
-$authoritySnapshot=New-TrustedBaselineSnapshot @((Join-Path $CoreRoot 'tools'),(Join-Path $PSScriptRoot 'wss-ci.lock.json'),$ContextPath,$RootsPath)
+$authorityRoots=@(Get-ReviewedCoreAuthorityRoots $CoreRoot)+@((Join-Path $PSScriptRoot 'wss-ci.lock.json'),$ContextPath,$RootsPath)
+$authoritySnapshot=New-TrustedBaselineSnapshot $authorityRoots
 $binding=Invoke-ReviewedSelectionCore $CoreRoot inspect $TargetId $ContextPath $RootsPath
 $roots=Get-Content -LiteralPath $RootsPath -Raw | ConvertFrom-Json
 $product=Get-SelectedProduct $roots $binding.repository
