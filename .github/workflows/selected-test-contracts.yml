@@ -26,3 +26,6 @@ jobs:
       - name: Verify reviewed profile bootstrap and fail-closed capabilities
         shell: pwsh
         run: ./.github/scripts/tests/CSharpProfiles.Tests.ps1
+      - name: Reject baseline additions, deletion, mutation and redirected paths
+        shell: pwsh
+        run: ./.github/scripts/tests/TrustedBaseline.Tests.ps1
