@@ -410,3 +410,37 @@ dotnet format Wss.CSharpImplementation.sln --verify-no-changes
 dotnet test -c Release --filter FullyQualifiedName~Wss.CSharpImplementation.Tests.SomeClassTests.SomeTest
 dotnet test -c Release --filter Name~SomeTestSubstring
 ```
+
+
+## Coordinated configuration reload
+
+`LoadParamsJson()` rereads all three files (`stimConfig.json`, `stimParams.json`,
+`modelConfig.json`) from the original startup configuration directory, including
+after a profile override. Startup paths are anchored once, so changing the
+working directory does not move these defaults.
+
+- `LoadParamsJson(directory)` selects all three standard filenames in that directory.
+- `LoadParamsJson(parameterFile)` selects that calibration file and the startup-default
+  Core and model files. It does **not** select sibling Core/model files.
+- `LoadCoreConfigFile()` and `resetRadio()` reread the active Core file and keep
+  currently applied calibration/model values and paths.
+
+Every bundle is validated before changing the working connection. Any Core
+configuration change uses the host reset path: stop ticking, dispose the old
+stack (Core zeros output and disconnects), build the validated snapshot, then
+resume initialization/ticking. Unchanged Core applies calibration/model updates
+without reconnecting. A reset does not replay previous stimulation values.
+Wait for `Started()` before sending new stimulation commands.
+
+Invalid JSON leaves the active stack unchanged. Cleanup/construction failure
+is exposed through `LastReloadError` and the host stays unavailable rather than
+publishing an unverified replacement. `RetryReload()` retries the retained
+snapshot without rereading files. `Shutdown()` cancels a pending reload.
+
+`UpdateChannelParams` writes amplitude to `stim.ch.<channel>.defaultPA`, the key
+consumed by calibrated stimulation, and saves it using the existing parameter API.
+
+The reload regressions use the packaged Core emulator and verify model and
+calibration input reaches emitted stimulation, profile/file/default paths,
+retired-stack quiescence, and invalid-bundle behavior. They do not validate
+physical hardware.
