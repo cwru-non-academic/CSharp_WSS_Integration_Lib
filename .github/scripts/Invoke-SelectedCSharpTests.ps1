@@ -1,0 +1,82 @@
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][ValidateSet('wrapper','cli')][string]$Role,
+    [Parameter(Mandatory)][string]$ProductRoot,
+    [Parameter(Mandatory)][string]$ProductSha,
+    [Parameter(Mandatory)][string]$PayloadRoot,
+    [Parameter(Mandatory)][string]$WorkRoot,
+    [Parameter(Mandatory)][string]$TestRoot,
+    [Parameter(Mandatory)][string]$TestSha,
+    [Parameter(Mandatory)][string]$TestRepository,
+    [Parameter(Mandatory)][string]$TestSelectionId,
+    [string]$IntegrationRoot='', [string]$IntegrationSha=''
+)
+$ErrorActionPreference='Stop'
+. "$PSScriptRoot/CSharpTestSource.ps1"
+$ProductRoot=[IO.Path]::GetFullPath($ProductRoot)
+$PayloadRoot=[IO.Path]::GetFullPath($PayloadRoot)
+Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config')
+if ($Role -ceq 'wrapper') { $IntegrationRoot=$ProductRoot; $IntegrationSha=$ProductSha }
+else { if (!$IntegrationRoot -or !$IntegrationSha) { throw 'CLI test selection requires its unchanged integration product root and SHA.' }; $IntegrationRoot=[IO.Path]::GetFullPath($IntegrationRoot); Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src') }
+$bundle=Resolve-CSharpTestBundle $Role $ProductRoot $TestRoot $TestSha $TestRepository $TestSelectionId
+if (Test-Path -LiteralPath $WorkRoot) { throw 'Selected test work directory must be new.' }
+$null=New-Item -ItemType Directory -Path $WorkRoot
+$WorkRoot=[IO.Path]::GetFullPath($WorkRoot)
+function Escape-Xml([string]$Text) { [Security.SecurityElement]::Escape($Text) }
+$productProject=Escape-Xml (Join-Path $IntegrationRoot 'src/Wss.CSharpImplementation.csproj')
+$payload=Escape-Xml $PayloadRoot
+$compile=($bundle.sources | ForEach-Object { '    <Compile Include="'+(Escape-Xml $_)+'" />' }) -join "`n"
+if ($Role -ceq 'cli') { $compile+="`n    <Compile Include=`"$(Escape-Xml (Join-Path $ProductRoot 'src/Program.cs'))`" Link=`"ProductionProgram.cs`" />" }
+$project=Join-Path $WorkRoot 'SelectedTests.csproj'
+# This project is bootstrap-owned. Never evaluate selected .csproj, props or targets.
+$xml=@"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <IsTestProject>true</IsTestProject><IsPackable>false</IsPackable><EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS8892</NoWarn><AssemblyName>$(if($Role -ceq 'wrapper'){'Wss.CSharpImplementation.Tests'}else{'Wss.Cli.Tests'})</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" ExcludeAssets="compile;runtime" />
+    <PackageReference Include="NUnit" Version="3.14.0" /><PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+    <ProjectReference Include="$productProject" />
+    <Reference Include="WSS_Core_Interface"><HintPath>$payload/WSS_Core_Interface.dll</HintPath></Reference>
+    <Reference Include="WSS.Transport.Serial"><HintPath>$payload/WSS.Transport.Serial.dll</HintPath></Reference>
+    <Reference Include="WSS.Transport.BLE"><HintPath>$payload/WSS.Transport.BLE.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Newtonsoft.Json"><HintPath>$payload/Newtonsoft.Json.dll</HintPath></Reference>
+$compile
+  </ItemGroup>
+</Project>
+"@
+[IO.File]::WriteAllText($project,$xml,[Text.UTF8Encoding]::new($false))
+$properties=@("-p:WSS_ARTIFACT_DIR=$PayloadRoot","-p:WSS_BLE_ARTIFACT_DIR=$PayloadRoot",'-p:TreatWarningsAsErrors=true','-p:ImportDirectoryBuildProps=false','-p:ImportDirectoryBuildTargets=false')
+& dotnet build $project -c Release @properties
+if ($LASTEXITCODE -ne 0) { throw 'Selected test build failed.' }
+$output=Join-Path $WorkRoot 'bin/Release/net9.0'
+# Product-owned propagation validator remains independent of the selected checkout.
+$validator=if ($Role -ceq 'wrapper') { Join-Path $PSScriptRoot 'Verify-WssOutput.ps1' } else { Join-Path $IntegrationRoot '.github/scripts/Verify-WssOutput.ps1' }
+& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
+if ($Role -ceq 'wrapper') {
+    & "$PSScriptRoot/Invoke-WssBehavioralConformance.ps1" -Project $project -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot
+    # The ordinary platform/reload/options suites are additive and never replace canonical 16+16.
+    & dotnet test $project -c Release --no-build --no-restore @properties --logger 'trx;LogFileName=all.trx' --results-directory (Join-Path $WorkRoot 'all')
+    if ($LASTEXITCODE -ne 0) { throw 'Selected full suite failed.' }
+} else {
+    & dotnet test $project -c Release --no-build --no-restore @properties --logger 'trx;LogFileName=commands.trx' --results-directory (Join-Path $WorkRoot 'commands')
+    if ($LASTEXITCODE -ne 0) { throw 'Selected production command tests failed.' }
+    [xml]$trx=Get-Content (Join-Path $WorkRoot 'commands/commands.trx') -Raw
+    $expected=@('analog.multichannel-isolation','analog.multidevice-isolation')
+    foreach ($model in @('p','pd')) { foreach ($mode in @('pw','pa')) { foreach ($stage in @('single','multi')) { $expected+="modeled.$model.$mode.$stage" } } }
+    $definitions=@($trx.TestRun.TestDefinitions.UnitTest | Where-Object { $_.TestMethod.className -ceq 'Wss.Cli.Tests.ModeledCommandTests' })
+    $ids=@($definitions.id)
+    $results=@($trx.TestRun.Results.UnitTestResult | Where-Object { $_.testId -cin $ids })
+    if ($results.Count -ne 10 -or @(Compare-Object $expected @($results.testName) -CaseSensitive).Count -ne 0 -or @($trx.TestRun.Results.UnitTestResult | Where-Object outcome -cne 'Passed').Count -ne 0) { throw 'Selected CLI suite lost mandatory command coverage.' }
+}
+Assert-CSharpTestBundle $bundle
+Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config')
+Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src')
+& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
+$evidence=@{schema='wss-selected-csharp-tests/v1';role=$Role;product_root=$ProductRoot;product_sha=$ProductSha;integration_root=$IntegrationRoot;integration_sha=$IntegrationSha;payload_root=$PayloadRoot;test_root=$bundle.root;test_sha=$bundle.sha;test_repository=$bundle.repository;test_selection_id=$bundle.selection_id;test_contract_sha256=$bundle.contract_sha256;passed=$true}
+$evidence | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $WorkRoot 'test-source-evidence.json')
+$evidence
