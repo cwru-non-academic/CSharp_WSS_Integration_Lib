@@ -25,6 +25,7 @@ function Get-SelectedPayloadDigest([string]$Root) {
     [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($entries -join "`n")))).ToLowerInvariant()
 }
 $payloadDigest=Get-SelectedPayloadDigest $PayloadRoot
+Assert-CSharpTestWorkRoot $WorkRoot @($ProductRoot,$IntegrationRoot,$TestRoot,$PayloadRoot)
 if (Test-Path -LiteralPath $WorkRoot) { throw 'Selected test work directory must be new.' }
 $null=New-Item -ItemType Directory -Path $WorkRoot
 $WorkRoot=[IO.Path]::GetFullPath($WorkRoot)
@@ -64,10 +65,13 @@ $output=Join-Path $WorkRoot 'bin/Release/net9.0'
 $validator=if ($Role -ceq 'wrapper') { Join-Path $PSScriptRoot 'Verify-WssOutput.ps1' } else { Join-Path $IntegrationRoot '.github/scripts/Verify-WssOutput.ps1' }
 & $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
 if ($Role -ceq 'wrapper') {
-    & "$PSScriptRoot/Invoke-WssBehavioralConformance.ps1" -Project $project -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot
+    & "$PSScriptRoot/Invoke-WssBehavioralConformance.ps1" -Project $project -IsolatedBuild -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot
     # The ordinary platform/reload/options suites are additive and never replace canonical 16+16.
     & dotnet test $project -c Release --no-build --no-restore @properties --logger 'trx;LogFileName=all.trx' --results-directory (Join-Path $WorkRoot 'all')
     if ($LASTEXITCODE -ne 0) { throw 'Selected full suite failed.' }
+    [xml]$allTrx=Get-Content (Join-Path $WorkRoot 'all/all.trx') -Raw
+    $allResults=@($allTrx.TestRun.Results.UnitTestResult)
+    if ($allResults.Count -eq 0 -or @($allResults | Where-Object outcome -cne 'Passed').Count) { throw 'Selected full suite contains missing, skipped or non-passing results.' }
 } else {
     & dotnet test $project -c Release --no-build --no-restore @properties --logger 'trx;LogFileName=commands.trx' --results-directory (Join-Path $WorkRoot 'commands')
     if ($LASTEXITCODE -ne 0) { throw 'Selected production command tests failed.' }

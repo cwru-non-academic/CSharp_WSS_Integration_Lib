@@ -13,6 +13,9 @@ function Assert-TestBundleCheckout([string]$Root,[string]$Sha,[string[]]$Paths=@
     $full=[IO.Path]::GetFullPath($Root)
     $top=[IO.Path]::GetFullPath((Invoke-TestBundleGit $full @('rev-parse','--show-toplevel') -join '').Trim())
     if ($full -cne $top -or ((Invoke-TestBundleGit $full @('rev-parse','HEAD')) -join '').Trim() -cne $Sha) { throw 'Checkout root or source SHA differs from the frozen source.' }
+    if (@(Invoke-TestBundleGit $full (@('ls-files','-v','--')+$Paths) | Where-Object { $_ -cnotmatch '^H ' }).Count) { throw 'Source index flags may hide changes.' }
+    $ignored=@(Invoke-TestBundleGit $full (@('ls-files','--others','--ignored','--exclude-standard','--')+$Paths) | Where-Object { $_ -cnotmatch '(^|/)(bin|obj)/' })
+    if ($ignored.Count) { throw 'Ignored source overrides are forbidden.' }
     if (@(Invoke-TestBundleGit $full (@('status','--porcelain','--untracked-files=all','--')+$Paths)).Count) { throw 'Selected source contains changed or untracked files.' }
 }
 function Resolve-CSharpTestBundle([string]$Role,[string]$ProductRoot,[string]$TestRoot,[string]$TestSha,[string]$TestRepository,[string]$TestSelectionId) {
@@ -43,4 +46,17 @@ function Assert-CSharpTestBundle($Bundle) {
     if ((Get-TestBundleFileHash (Join-Path $Bundle.root 'tests/test-contract.json')) -cne $Bundle.contract_sha256) { throw 'Test contract changed during execution.' }
     if (@(Invoke-TestBundleGit $Bundle.root @('status','--porcelain','--untracked-files=all','--ignored','--',$Bundle.directory,'tests/test-contract.json')).Count) { throw 'Test source changed during execution.' }
     foreach ($file in $Bundle.hashes) { if ((Get-TestBundleFileHash $file.path) -cne $file.sha256) { throw 'Selected test bytes changed during execution.' } }
+}
+function Assert-CSharpTestWorkRoot([string]$WorkRoot,[string[]]$InputRoots) {
+    $work=[IO.Path]::GetFullPath($WorkRoot)
+    $comparison=if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    foreach ($inputRoot in $InputRoots) {
+        $root=[IO.Path]::GetFullPath($inputRoot).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+        if ($work.Equals($root,$comparison) -or $work.StartsWith($root+[IO.Path]::DirectorySeparatorChar,$comparison)) { throw 'Selected test work directory must be outside immutable input roots.' }
+    }
+    $parent=[IO.DirectoryInfo]::new($work).Parent
+    while ($null -ne $parent) {
+        if ($parent.Exists -and ($parent.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Selected test work directory cannot descend through a symlink or junction.' }
+        $parent=$parent.Parent
+    }
 }
