@@ -2,14 +2,14 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "a3ce85cbecc5903d79d2e615b200f6a2cfb03741",
-  "source_ref": "refs/heads/ci/tooling/a3ce85cbecc5903d79d2e615b200f6a2cfb03741",
+  "source_commit": "aea724dd0bc7e6375a873d716447167f4248b8e0",
+  "source_ref": "refs/heads/ci/tooling/aea724dd0bc7e6375a873d716447167f4248b8e0",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "c266ff8e5bdcdde840bec87b757cd6d23e888e76",
-      "ref": "refs/heads/ci/tooling/c266ff8e5bdcdde840bec87b757cd6d23e888e76"
+      "commit": "dc3f4ec74a341fa49cadf9798a6c4b4f1f8ab36a",
+      "ref": "refs/heads/ci/tooling/dc3f4ec74a341fa49cadf9798a6c4b4f1f8ab36a"
     }
   },
   "files": {
@@ -141,7 +141,7 @@
     ".github/scripts/wss-ci/notify-family.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/notify-family.mjs",
-      "sha256": "bfbaa30fa8b51467a9e32f672476f53f08deff86118c2307b22699aa366f8e77"
+      "sha256": "5890cffe487d0bd65bdb7b28b53a0fd9fbb7cf96ba693b1f2b864d2ebb35e598"
     },
     ".github/workflows/notify-core-stage.yml": {
       "origin": "integration",
