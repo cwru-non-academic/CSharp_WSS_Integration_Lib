@@ -444,3 +444,26 @@ The reload regressions use the packaged Core emulator and verify model and
 calibration input reaches emitted stimulation, profile/file/default paths,
 retired-stack quiescence, and invalid-bundle behavior. They do not validate
 physical hardware.
+
+## Independent selected test bundle
+
+The additional selected-test runner keeps product checkout SHAs and the selected
+payload fixed. Core must authenticate the frozen test selection before invoking
+it. A syntactically valid selection ID is only a local binding, not approval.
+
+For C#, invoke the trusted `.github/scripts/Invoke-SelectedCSharpTests.ps1` with
+`Role`, `ProductRoot`, `ProductSha`, `PayloadRoot`, a new `WorkRoot`, and the complete
+`TestRoot`, `TestSha`, `TestRepository`, `TestSelectionId` tuple. The CLI also takes
+its unchanged `IntegrationRoot` and `IntegrationSha`. The selected checkout must
+contain `tests/test-contract.json` and be clean. The trusted generated project
+compiles selected C# test files against explicit product sources; selected
+projects, build overrides and release validators are never executed.
+
+This suite is additional to the existing mandatory CI gates. It does not change
+product readiness, package provenance, native-platform requirements, release
+approval or receipt verification. The wrapper retains the reviewed canonical
+assertions and both 16-case stages; the CLI retains its ten command cases.
+`test-source-evidence.json` records the selected source, contract hash and product
+identities only after source and payload postchecks pass. Workflow selection and
+campaign evidence adoption must land separately before repository variables are
+advertised as active.
