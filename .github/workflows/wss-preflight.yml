@@ -76,6 +76,33 @@ jobs:
           }
 
           ./.github/scripts/Resolve-WssRelease.ps1 -ProducerRepository $env:PRODUCER_REPOSITORY -RunId $env:RUN_ID -ReleaseTag $env:RELEASE_TAG -ExpectedCommit $env:EXPECTED_COMMIT -ArchiveName $env:ARCHIVE -ExpectedSha256 $env:SHA256 -OutputRoot "$env:RUNNER_TEMP/wss-release"
+      - name: Read reviewed package verifier identity independently of candidate provenance
+        id: package-tools
+        shell: pwsh
+        run: |
+          $lock = Get-Content .github/scripts/wss-ci.lock.json -Raw | ConvertFrom-Json
+          if ($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cne 'd965f6abda5dcad8ddda374ac00b67f5e5ddea91' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)") { throw 'Unexpected reviewed package verifier lock.' }
+          "commit=$($lock.source_commit)" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: ${{ steps.package-tools.outputs.commit }}
+          path: workflow-guard
+          token: ${{ steps.core-token.outputs.token }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Run unchanged Core package contracts on the full selected universal payload
+        shell: pwsh
+        run: |
+          & dotnet build workflow-guard/tools/ArtifactBuild/ArtifactBuild.csproj -p:RestoreLockedMode=true
+          if ($LASTEXITCODE -ne 0) { throw 'Reviewed ArtifactBuild build failed.' }
+          & python workflow-guard/tests/Packaging/verify_universal.py "$env:RUNNER_TEMP/wss-release/extracted/WSS-Universal"
+          if ($LASTEXITCODE -ne 0) { throw 'Selected universal package contracts failed.' }
       - uses: actions/upload-artifact@v4
         with:
           name: verified-wss-universal
@@ -317,6 +344,21 @@ jobs:
           . ./.github/scripts/MacOSBleEvidence.ps1
           Write-WssMacOSEvidence '${{ matrix.arch }}' 'wrapper-preflight' "$env:RUNNER_TEMP/macos-evidence" "$env:RUNNER_TEMP/macos-results/macos-platform.trx" "$env:RUNNER_TEMP/macos-platform.log" 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
 
+
+      - name: Verify selected macOS output rejects missing native payload
+        shell: pwsh
+        run: ./.github/scripts/Test-MacBleFixture.ps1 -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0' -WorkRoot "$env:RUNNER_TEMP/macos-ble-fixture" -TestPlatform '${{ matrix.test_platform }}'
+
+      - name: Retain macOS fixture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-ble-preflight-fixture-${{ matrix.arch }}-a${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/macos-ble-fixture/fixture-evidence.json
+            ${{ runner.temp }}/macos-ble-fixture/missing-native-rejection.log
+            ${{ runner.temp }}/macos-ble-fixture/results/*.trx
+          if-no-files-found: warn
 
       - name: Finalize architecture evidence including all worker steps
         if: always()

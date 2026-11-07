@@ -13,6 +13,69 @@ permissions:
   contents: read
 
 jobs:
+  package-contracts:
+    name: Committed universal package contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Create producer read token
+        id: core-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore
+          permission-contents: read
+          permission-actions: read
+      - name: Resolve the exact committed package and compare all committed payload bytes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.core-token.outputs.token }}
+        run: |
+          $record = Get-Content lib/wss-candidate.json -Raw | ConvertFrom-Json
+          $c = $record.candidate
+          ./.github/scripts/Resolve-WssRelease.ps1 -ProducerRepository $c.repository -RunId $c.run_id -ExpectedCommit $c.commit -ArchiveName $c.archive -ExpectedSha256 $c.sha256 -OutputRoot "$env:RUNNER_TEMP/wss-release"
+          $resolved = Get-Content "$env:RUNNER_TEMP/wss-release/candidate.json" -Raw | ConvertFrom-Json
+          if ($resolved.artifact_id -cne $c.artifact_id) { throw 'Committed artifact identity differs from selected artifact.' }
+          . ./.github/scripts/Universal-WssFiles.ps1
+          $files = @(Read-WssUniversalFiles 'lib' -AllowProvenance)
+          foreach ($file in $files) {
+            if ((Get-FileHash -LiteralPath "lib/$file").Hash -cne (Get-FileHash -LiteralPath "$env:RUNNER_TEMP/wss-release/extracted/WSS-Universal/$file").Hash) { throw "Committed package differs: $file" }
+          }
+      - name: Read reviewed package verifier identity independently of candidate provenance
+        id: package-tools
+        shell: pwsh
+        run: |
+          $lock = Get-Content .github/scripts/wss-ci.lock.json -Raw | ConvertFrom-Json
+          if ($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cne 'd965f6abda5dcad8ddda374ac00b67f5e5ddea91' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)") { throw 'Unexpected reviewed package verifier lock.' }
+          "commit=$($lock.source_commit)" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: ${{ steps.package-tools.outputs.commit }}
+          path: workflow-guard
+          token: ${{ steps.core-token.outputs.token }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Run unchanged Core package contracts on the full selected universal payload
+        shell: pwsh
+        run: |
+          & dotnet build workflow-guard/tools/ArtifactBuild/ArtifactBuild.csproj -p:RestoreLockedMode=true
+          if ($LASTEXITCODE -ne 0) { throw 'Reviewed ArtifactBuild build failed.' }
+          & python workflow-guard/tests/Packaging/verify_universal.py "$env:RUNNER_TEMP/wss-release/extracted/WSS-Universal"
+          if ($LASTEXITCODE -ne 0) { throw 'Selected universal package contracts failed.' }
+
   receipt-policy-boundary:
     name: Receipt policy bridge (${{ matrix.os }})
     strategy:
@@ -41,6 +104,7 @@ jobs:
         shell: pwsh
         run: |
           ./.github/scripts/tests/MacOSBleEvidence.Tests.ps1
+          ./.github/scripts/tests/MissingNativeEvidence.Tests.ps1
           ./.github/scripts/tests/WssPromotion.Tests.ps1
           ./.github/scripts/tests/WssInventory.Tests.ps1
           ./.github/scripts/tests/WssReleaseReceipt.Tests.ps1
@@ -126,31 +190,6 @@ jobs:
           --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.SerialRuntimeSelectionTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.BleBackendLoadingTests"
           -p:TreatWarningsAsErrors=true
 
-      - name: Check out reviewed Core source for declared macOS fixture
-        if: runner.os == 'macOS'
-        uses: actions/checkout@v4
-        with:
-          repository: cwru-non-academic/WSSCore
-          ref: 0bc9e2d0af507ee729d39d3a30ab005cc136eabf
-          path: .macos-ble-fixture-core
-          persist-credentials: false
-
-      - name: Verify declared macOS native fixture and fail-closed missing payload
-        if: runner.os == 'macOS'
-        shell: pwsh
-        run: ./.github/scripts/Test-MacBleFixture.ps1 -CoreSourceRoot "$env:GITHUB_WORKSPACE/.macos-ble-fixture-core" -WorkRoot "$env:RUNNER_TEMP/macos-ble-fixture"
-
-      - name: Retain macOS fixture evidence
-        if: always() && runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-ble-fixture-evidence
-          path: |
-            ${{ runner.temp }}/macos-ble-fixture/fixture-evidence.json
-            ${{ runner.temp }}/macos-ble-fixture/missing-native-rejection.log
-            ${{ runner.temp }}/macos-ble-fixture/results/*.trx
-          if-no-files-found: warn
-
   macos_architecture:
     name: macOS BLE detail (${{ matrix.cpu }})
     strategy:
@@ -221,19 +260,9 @@ jobs:
           . ./.github/scripts/MacOSBleEvidence.ps1
           Write-WssMacOSEvidence '${{ matrix.arch }}' 'wrapper-normal' "$env:RUNNER_TEMP/macos-evidence" "$env:RUNNER_TEMP/macos-results/macos-platform.trx" "$env:RUNNER_TEMP/macos-platform.log" 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
 
-      - name: Check out reviewed Core source for declared macOS fixture
-        if: runner.os == 'macOS'
-        uses: actions/checkout@v4
-        with:
-          repository: cwru-non-academic/WSSCore
-          ref: 0bc9e2d0af507ee729d39d3a30ab005cc136eabf
-          path: .macos-ble-fixture-core
-          persist-credentials: false
-
-      - name: Verify declared macOS native fixture and fail-closed missing payload
-        if: runner.os == 'macOS'
+      - name: Verify selected macOS output rejects missing native payload
         shell: pwsh
-        run: ./.github/scripts/Test-MacBleFixture.ps1 -CoreSourceRoot "$env:GITHUB_WORKSPACE/.macos-ble-fixture-core" -WorkRoot "$env:RUNNER_TEMP/macos-ble-fixture"
+        run: ./.github/scripts/Test-MacBleFixture.ps1 -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0' -WorkRoot "$env:RUNNER_TEMP/macos-ble-fixture" -TestPlatform '${{ matrix.test_platform }}'
 
       - name: Retain macOS fixture evidence
         if: always() && runner.os == 'macOS'
