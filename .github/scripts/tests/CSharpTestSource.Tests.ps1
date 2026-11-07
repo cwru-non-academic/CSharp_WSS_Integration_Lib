@@ -5,6 +5,8 @@ $null=New-Item -ItemType Directory -Path "$root/tests/Wss.Cli.Tests" -Force
 [IO.File]::WriteAllText("$root/tests/Wss.Cli.Tests/Example.cs",'class Example {}')
 [IO.File]::WriteAllText("$root/tests/test-contract.json",'{"schema":"wss-csharp-tests/v1","role":"cli","test_directory":"tests/Wss.Cli.Tests"}')
 $null=& git -C $root init --quiet
+# macOS temporary paths can enter through /var, while Git reports /private/var.
+$root=(& git -C $root rev-parse --show-toplevel).Trim()
 $null=& git -C $root -c user.name=Test -c user.email=test@example.invalid add .
 $null=& git -C $root -c user.name=Test -c user.email=test@example.invalid commit --quiet -m fixture
 $sha=(& git -C $root rev-parse HEAD).Trim()
@@ -66,4 +68,14 @@ $null=New-Item -ItemType Directory -Force "$root/src/obj"
 Add-Content "$root/.git/info/exclude" 'src/obj/'
 [IO.File]::WriteAllText("$root/src/obj/Fixture.csproj.nuget.g.targets",'<Project><Target Name="Untrusted" BeforeTargets="Build"><Error Text="stale import" /></Target></Project>')
 Expect-Rejection { Assert-TestBundleCheckout $root $injected @('src') } 'stale ignored NuGet intermediate import'
+$lf=Join-Path $root 'lf.fixture';$crlf=Join-Path $root 'crlf.fixture'
+[IO.File]::WriteAllText($lf,"canonical`nassertion",[Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText($crlf,"canonical`r`nassertion",[Text.UTF8Encoding]::new($false))
+if((Get-CanonicalCSharpFixtureHash $lf) -cne (Get-CanonicalCSharpFixtureHash $crlf)){throw 'Canonical fixture line endings differ'}
+$count++
+[IO.File]::WriteAllText($crlf,"changed`nassertion",[Text.UTF8Encoding]::new($false))
+if((Get-CanonicalCSharpFixtureHash $lf) -ceq (Get-CanonicalCSharpFixtureHash $crlf)){throw 'Canonical fixture mutation was hidden'}
+$count++
+Remove-Item -LiteralPath $lf,$crlf
+
 Write-Output "$count selected-test binding checks passed. Fixture: $root"

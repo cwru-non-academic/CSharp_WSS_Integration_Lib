@@ -8,6 +8,12 @@ function Invoke-TestBundleGit([string]$Root,[string[]]$Arguments) {
 }
 function Assert-TestBundleSha([string]$Sha) { if ($Sha -cnotmatch '^[a-f0-9]{40}$') { throw 'Expected an immutable full source SHA.' } }
 function Get-TestBundleFileHash([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
+function Get-CanonicalCSharpFixtureHash([string]$Path) {
+    $text=[IO.File]::ReadAllText($Path,[Text.UTF8Encoding]::new($false,$true))
+    $text=$text.Replace(([string][char]13+[char]10),[string][char]10)
+    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($text))).ToLowerInvariant()
+}
+
 function Assert-TestBundleCheckout([string]$Root,[string]$Sha,[string[]]$Paths=@(),[switch]$AllowBuildOutputs) {
     Assert-TestBundleSha $Sha
     $full=[IO.Path]::GetFullPath($Root)
@@ -37,7 +43,7 @@ function Resolve-CSharpTestBundle([string]$Role,[string]$ProductRoot,[string]$Te
     if ($sources.Count -eq 0) { throw 'Selected test bundle contains no C# tests.' }
     if ($Role -ceq 'wrapper') {
         $canonical=Join-Path $root "$dir/StimulationControllerConformanceTests.cs"
-        if ((Get-TestBundleFileHash $canonical) -cne '14313786be4d5c6daea28e40d2f48567cbc1356feb0f0309e0a212339137923b') { throw 'Selected bundle cannot replace the reviewed canonical assertions.' }
+        if ((Get-CanonicalCSharpFixtureHash $canonical) -cne '96812ab33be7ede8840ddb78131a50796fd3f797d9627f958251b3e58796baf8') { throw 'Selected bundle cannot replace the reviewed canonical assertions.' }
     }
     [pscustomobject]@{root=$root;sha=$TestSha;repository=$TestRepository;selection_id=$TestSelectionId;contract_sha256=(Get-TestBundleFileHash $contractPath);role=$Role;directory=$dir;sources=@($sources.FullName);hashes=@($sources | ForEach-Object { @{path=$_.FullName;sha256=(Get-TestBundleFileHash $_.FullName)} })}
 }
