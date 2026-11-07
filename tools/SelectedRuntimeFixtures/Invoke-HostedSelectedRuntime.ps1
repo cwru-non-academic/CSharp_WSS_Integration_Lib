@@ -2,7 +2,7 @@ param([Parameter(Mandatory)][ValidateSet('Prepare','Run')][string]$Stage,[Parame
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $BootstrapRoot=[IO.Path]::GetFullPath($BootstrapRoot)
-function Git([string]$Root,[string[]]$Arguments){$result=& git -C $Root @Arguments;if($LASTEXITCODE -ne 0){throw 'Fixture git operation failed'};@($result)}
+function Invoke-FixtureGit([string]$Root,[string[]]$Arguments){$result=& git -C $Root @Arguments;if($LASTEXITCODE -ne 0){throw 'Fixture git operation failed'};@($result)}
 function Require([bool]$Condition,[string]$Message){if(!$Condition){throw $Message}}
 if($Stage -ceq 'Prepare'){
  Require (!(Test-Path -LiteralPath $FixtureRoot)) 'Fixture directory must be new.'
