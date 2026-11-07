@@ -160,6 +160,71 @@ foreach ($repository in $repositories) {
     }
 }
 $identityCount = $passed - $matrixCount
+# Diagnostics are observational only: preserve the full accepted/rejected source
+# implementation and its fixed exception reasons, with no event value output.
+$diagnosticCount = 0
+$diagnosticSource = [IO.File]::ReadAllText("$PSScriptRoot/../Resolve-OrdinaryCiChannel.ps1").Replace("`r`n", "`n")
+$diagnosticCatch = @(
+    '    try { $resolved = Resolve-WssOrdinaryCiChannel $runtime $event } catch {',
+    '        if ($runtime[''GITHUB_EVENT_NAME''] -ceq ''pull_request'') {',
+    '            Get-WssOrdinaryPrDiagnostics $runtime $event | ForEach-Object { Write-Host $_ }',
+    '        }', '        throw', '    }'
+) -join "`n"
+if (!$diagnosticSource.Contains($diagnosticCatch)) { throw 'Production diagnostic catch must preserve the original rejection.' }
+$restoredSource = [regex]::Replace($diagnosticSource, '(?ms)^# Diagnostic labels.*?(?=^# Opened webhooks)', '')
+$restoredSource = $restoredSource.Replace($diagnosticCatch, '    $resolved = Resolve-WssOrdinaryCiChannel $runtime $event')
+$restoredDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($restoredSource))).ToLowerInvariant()
+if ($restoredDigest -cne 'b0a34f634e96a2060a1fdec988f099b1138b1cd80cc3ebd6dfe2da7174ad1193') { throw 'Diagnostic instrumentation changed the reviewed acceptance implementation.' }
+$diagnosticCount++
+foreach ($repository in $repositories) {
+    $f = New-OrdinaryFixture $repository 'pull_request' 'refs/pull/1/merge' 'main'
+    if (@(Get-WssOrdinaryPrDiagnostics $f.runtime $f.event).Count -ne 0) { throw 'Valid metadata emitted rejection diagnostics.' }
+    $diagnosticCount++
+    foreach ($field in @('number', 'merge_commit_sha', 'state', 'merged')) {
+        foreach ($json in @('null', '[]', '["DO_NOT_PRINT_VALUE"]', '{}', '0', 'false', 'true', '"DO_NOT_PRINT_VALUE"')) {
+            if (($field -ceq 'merge_commit_sha' -and $json -ceq 'null') -or ($field -ceq 'merged' -and $json -ceq 'false')) { continue }
+            $f = New-OrdinaryFixture $repository 'pull_request' 'refs/pull/1/merge' 'main'
+            $f.event.pull_request[$field] = ConvertFrom-Json -InputObject $json -AsHashtable -NoEnumerate
+            $before = ConvertTo-Json -InputObject $f -Depth 20 -Compress
+            $beforeReason = ''; try { $null = Resolve-WssOrdinaryCiChannel $f.runtime $f.event } catch { $beforeReason = $_.Exception.Message }
+            $diagnostic = @(Get-WssOrdinaryPrDiagnostics $f.runtime $f.event)
+            $afterReason = ''; try { $null = Resolve-WssOrdinaryCiChannel $f.runtime $f.event } catch { $afterReason = $_.Exception.Message }
+            $value = $f.event.pull_request[$field]
+            $type = if ($null -eq $value) { 'null' } elseif ($value -is [array]) { 'array' }
+                elseif ($value -is [Collections.IDictionary]) { 'object' } elseif ($value -is [string]) { 'string' }
+                elseif ($value -is [bool]) { 'boolean' } else { 'number' }
+            $expected = "Ordinary CI rejected field=event.pull_request.$field present=True type=$type."
+            if ($diagnostic -cnotcontains $expected -or $beforeReason -cne 'Ordinary CI requires the current open pull request merge source.' -or $afterReason -cne $beforeReason -or
+                (ConvertTo-Json -InputObject $f -Depth 20 -Compress) -cne $before) { throw 'Diagnostic classification changed an input or rejection outcome.' }
+            foreach ($line in $diagnostic) {
+                if ($line -cnotmatch '\AOrdinary CI rejected field=(event\.(pull_request(\.(number|merge_commit_sha|state|merged))?|number|action)|runtime\.GITHUB_REF(_NAME)?) present=(True|False) type=(missing|null|string|boolean|object|array|number|other)\.\z') {
+                    throw 'Diagnostic emitted an unreviewed label or event value.'
+                }
+            }
+            $diagnosticCount++
+        }
+        $f = New-OrdinaryFixture $repository 'pull_request' 'refs/pull/1/merge' 'main'
+        $null = $f.event.pull_request.Remove($field)
+        $lines = @(Get-WssOrdinaryPrDiagnostics $f.runtime $f.event)
+        if ($lines -cnotcontains "Ordinary CI rejected field=event.pull_request.$field present=False type=missing.") { throw 'Missing-field diagnostic was lost.' }
+        $diagnosticCount++
+    }
+    foreach ($key in @('GITHUB_REF', 'GITHUB_REF_NAME')) {
+        $f = New-OrdinaryFixture $repository 'pull_request' 'refs/pull/1/merge' 'main'
+        $f.runtime[$key] = 'DO_NOT_PRINT_VALUE'
+        if (@(Get-WssOrdinaryPrDiagnostics $f.runtime $f.event) -cnotcontains "Ordinary CI rejected field=runtime.$key present=True type=string.") { throw 'Runtime predicate diagnostic was lost.' }
+        $diagnosticCount++
+    }
+    foreach ($key in @('number', 'action')) {
+        $f = New-OrdinaryFixture $repository 'pull_request' 'refs/pull/1/merge' 'main'
+        $f.event[$key] = @{ secret = 'DO_NOT_PRINT_VALUE' }
+        $lines = @(Get-WssOrdinaryPrDiagnostics $f.runtime $f.event)
+        if ($lines -cnotcontains "Ordinary CI rejected field=event.$key present=True type=object." -or ($lines -join '') -cmatch 'DO_NOT_PRINT_VALUE') { throw 'Event diagnostic was lost or leaked a value.' }
+        $diagnosticCount++
+    }
+}
+"Diagnostic-only contracts passed: $diagnosticCount; reviewed acceptance source digest unchanged."
+
 # Every consumed payload field is mutated through actual JSON serialization/parsing.
 # Collections must stay collections: comparisons and casts are not schema validators.
 function Set-OrdinaryJsonField($Object, [string]$Path, $Value, [switch]$Missing) {
@@ -624,4 +689,4 @@ try {
     if (!$resolved.StartsWith($temp, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($resolved) -cnotmatch '^wss-channel-contract-[a-f0-9]{32}$') { throw 'Unsafe contract scratch cleanup path.' }
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }
-"Ordinary CI entrypoint contracts passed: $entrypointCount; total $($passed + $entrypointCount). No selected C# executable was run."
+"Ordinary CI entrypoint contracts passed: $entrypointCount; total $($passed + $entrypointCount + $diagnosticCount). No selected C# executable was run."
