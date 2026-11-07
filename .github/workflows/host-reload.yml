@@ -1,0 +1,21 @@
+name: Host reload regression
+on:
+  pull_request:
+    paths: ['src/**', 'tests/**', 'lib/**', '.github/workflows/host-reload.yml']
+  push:
+    branches: [dev, main]
+    paths: ['src/**', 'tests/**', 'lib/**', '.github/workflows/host-reload.yml']
+permissions:
+  contents: read
+jobs:
+  csharp-reload:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - run: dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj -c Release

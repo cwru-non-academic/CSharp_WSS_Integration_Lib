@@ -27,6 +27,13 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     private readonly StimulationOptions _options;
     private readonly object _gate = new();
 
+    private readonly string _startupPath;
+    private WssConfigurationSnapshot? _snapshot;
+    private WssConfigurationSnapshot? _pendingReload;
+    private IModelParamsCore? _retired;
+    /// <summary>Gets the last reconstruction failure; validation errors are thrown without retiring the active stack.</summary>
+    public Exception? LastReloadError { get; private set; }
+
     private IModelParamsCore? _wss;
     private WssTransport.ITransport? _transport;
     private IBasicStimulation? _basicWss;
@@ -65,7 +72,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _options.Validate();
-        Directory.CreateDirectory(_options.ConfigPath);
+        _startupPath = Path.GetFullPath(_options.ConfigPath);
+        Directory.CreateDirectory(_startupPath);
     }
 
     /// <summary>
@@ -86,7 +94,88 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
         {
             if (_wss != null) return;
 
-            WssTransport.ITransport transport = _options.Transport switch
+            if (_retired != null || _pendingReload != null)
+                throw new InvalidOperationException("RetryReload or Shutdown must complete before initialization.", LastReloadError);
+            WssTransport.ITransport transport = CreateTransport();
+
+            IStimulationCore core = new WssStimulationCore(transport, new WssStimulationCoreOptions
+            {
+                ConfigPath = _startupPath,
+                MaxSetupTries = _options.MaxSetupTries
+            });
+
+            IStimParamsCore paramsLayer = new StimParamsLayer(core, _startupPath);
+            var modelLayer = new ModelParamsLayer(paramsLayer, _startupPath);
+
+            _wss = modelLayer;
+            _transport = transport;
+            _wss.TryGetBasic(out _basicWss);
+            _basicSupported = _basicWss != null;
+
+            try
+            {
+                _wss.Initialize();
+                _snapshot = WssConfigurationSnapshot.ReadDefaults(_startupPath).CaptureCurrent(_wss);
+                LastReloadError = null;
+                EnsureTickLoop();
+            }
+            catch
+            {
+                _retired = _wss; _wss = null;
+                _basicWss = null; _basicSupported = false;
+                try { CleanupRetired(); } catch { /* Retain failed owner for explicit cleanup retry. */ }
+                throw;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Stops the background tick loop and tears down the active WSS connection.
+    /// </summary>
+    /// <remarks>
+    /// This method blocks until the current tick loop exits and then shuts down and disposes the active
+    /// WSS stack. It is safe to call multiple times; calls made before initialization return without error.
+    /// </remarks>
+    public void Shutdown()
+    {
+        lock (_gate)
+        {
+            _pendingReload = null;
+            StopTickLoop();
+            RetireActive();
+            CleanupRetired();
+            LastReloadError = null;
+        }
+    }
+
+    /// <summary>
+    /// Releases the active radio connection.
+    /// </summary>
+    /// <remarks>
+    /// This legacy compatibility method is equivalent to <see cref="Shutdown"/> and has the same
+    /// blocking and idempotent behavior.
+    /// </remarks>
+    public void releaseRadio() { lock (_gate) { Shutdown(); } }
+
+    /// <summary>
+    /// Stages edited Core configuration and reconstructs the active radio stack.
+    /// </summary>
+    /// <remarks>
+    /// This method stops the current tick loop, disposes the old stack, constructs the validated configuration, and then
+    /// starts ticking again. If the controller has not been initialized yet, this method does nothing.
+    /// </remarks>
+    public void resetRadio()
+    {
+        lock (_gate)
+        {
+            if (_wss == null) return;
+            InstallReload(CurrentSnapshot().ReloadCore(), forceRestart: true);
+        }
+    }
+
+    private WssTransport.ITransport CreateTransport()
+    {
+        return _options.Transport switch
             {
                 StimulationTransportKind.Conformance => new EmulatedWssTransport(),
                 StimulationTransportKind.Test => new WssTransport.TestModeTransport(
@@ -106,78 +195,61 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
                     }),
                 _ => throw new InvalidOperationException($"Unsupported transport '{_options.Transport}'.")
             };
+    }
 
-            IStimulationCore core = new WssStimulationCore(transport, new WssStimulationCoreOptions
-            {
-                ConfigPath = _options.ConfigPath,
-                MaxSetupTries = _options.MaxSetupTries
-            });
+    private WssConfigurationSnapshot CurrentSnapshot() =>
+        (_snapshot ?? throw new InvalidOperationException("Call Initialize first.")).CaptureCurrent(EnsureWss());
 
-            IStimParamsCore paramsLayer = new StimParamsLayer(core, _options.ConfigPath);
-            var modelLayer = new ModelParamsLayer(paramsLayer, _options.ConfigPath);
+    private void RetireActive()
+    {
+        if (_wss != null) { _retired = _wss; _wss = null; }
+        _basicWss = null; _basicSupported = false; _transport = null; started = false;
+    }
 
-            _wss = modelLayer;
-            _transport = transport;
-            _wss.TryGetBasic(out _basicWss);
+    private void CleanupRetired()
+    {
+        if (_retired == null) return;
+        try { _retired.Dispose(); _retired = null; }
+        catch (Exception error) { LastReloadError = error; throw; }
+    }
+
+    private void InstallReload(WssConfigurationSnapshot snapshot, bool forceRestart = false)
+    {
+        if (!forceRestart && snapshot.HasSameCore(CurrentSnapshot()))
+        {
+            snapshot.ApplyWithoutRestart(EnsureWss());
+            _snapshot = snapshot;
+            return;
+        }
+        _pendingReload = snapshot;
+        CompleteReload();
+    }
+
+    private void CompleteReload()
+    {
+        var snapshot = _pendingReload ?? throw new InvalidOperationException("There is no pending reload.");
+        StopTickLoop();
+        RetireActive();
+        try
+        {
+            CleanupRetired();
+            var transport = CreateTransport();
+            var stack = (IModelParamsCore)snapshot.BuildAndInitialize(transport,
+                new WssStimulationCoreOptions { ConfigPath = _startupPath, MaxSetupTries = _options.MaxSetupTries },
+                WssConfigurationLayer.Model);
+            stack.TryGetBasic(out _basicWss);
             _basicSupported = _basicWss != null;
-
-            _wss.Initialize();
+            _transport = transport; _wss = stack;
+            _snapshot = snapshot; _pendingReload = null; LastReloadError = null;
             EnsureTickLoop();
         }
+        catch (Exception error) { LastReloadError = error; throw; }
     }
 
-    /// <summary>
-    /// Stops the background tick loop and tears down the active WSS connection.
-    /// </summary>
-    /// <remarks>
-    /// This method blocks until the current tick loop exits and then shuts down and disposes the active
-    /// WSS stack. It is safe to call multiple times; calls made before initialization return without error.
-    /// </remarks>
-    public void Shutdown()
+    /// <summary>Retries cleanup and construction using the retained validated snapshot, without rereading files.</summary>
+    public void RetryReload()
     {
-        lock (_gate)
-        {
-            StopTickLoop();
-            if (_wss != null)
-            {
-                try { _wss.Shutdown(); } catch (Exception ex) { Log.Error(ex, "Error during Shutdown"); }
-                try { _wss.Dispose(); } catch (Exception ex) { Log.Error(ex, "Error disposing stimulation core"); }
-            }
-
-            _wss = null;
-            _transport = null;
-            _basicWss = null;
-            _basicSupported = false;
-            started = false;
-        }
-    }
-
-    /// <summary>
-    /// Releases the active radio connection.
-    /// </summary>
-    /// <remarks>
-    /// This legacy compatibility method is equivalent to <see cref="Shutdown"/> and has the same
-    /// blocking and idempotent behavior.
-    /// </remarks>
-    public void releaseRadio() => Shutdown();
-
-    /// <summary>
-    /// Resets the active radio connection in place.
-    /// </summary>
-    /// <remarks>
-    /// This method stops the current tick loop, reinitializes the underlying WSS stack in place, and then
-    /// starts ticking again. If the controller has not been initialized yet, this method does nothing.
-    /// </remarks>
-    public void resetRadio()
-    {
-        lock (_gate)
-        {
-            if (_wss == null) return;
-            StopTickLoop();
-            _wss.Shutdown();
-            _wss.Initialize();
-            EnsureTickLoop();
-        }
+        lock (_gate) CompleteReload();
     }
 
     #region ==== Background ticking ====
@@ -242,9 +314,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void StimulateAnalog(string finger, int PW, int amp = 3, int IPI = 10)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int channel = FingerToChannel(finger);
         wss.StimulateAnalog(channel, PW, amp, IPI);
+            }
     }
 
     /// <summary>
@@ -253,9 +328,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void StartStimulation()
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         wss.StartStim(WssTarget.Broadcast);
         started = true;
+            }
     }
 
     /// <summary>
@@ -264,9 +342,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void StopStimulation()
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         wss.StopStim(WssTarget.Broadcast);
         started = false;
+            }
     }
 
     /// <summary>
@@ -276,9 +357,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void StopStimulation(int targetWSS)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         wss.StopStim(IntToWssTarget(targetWSS));
         started = false;
+            }
     }
 
     /// <summary>
@@ -291,8 +375,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void Save(int targetWSS)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.Save(IntToWssTarget(targetWSS));
+            }
     }
 
     /// <summary>
@@ -304,8 +391,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void Save()
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.Save(WssTarget.Broadcast);
+            }
     }
 
     /// <summary>
@@ -318,8 +408,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void load(int targetWSS)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.Load(IntToWssTarget(targetWSS));
+            }
     }
 
     /// <summary>
@@ -331,8 +424,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void load()
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.Load(WssTarget.Broadcast);
+            }
     }
 
     /// <summary>
@@ -347,8 +443,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void request_Configs(int targetWSS, int command, int id)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.Request_Configs(command, id, IntToWssTarget(targetWSS));
+            }
     }
 
     /// <summary>
@@ -362,8 +461,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void updateWaveform(int[] waveform, int eventID)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.UpdateWaveform(waveform, eventID, WssTarget.Broadcast);
+            }
     }
 
     /// <summary>
@@ -378,8 +480,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void updateWaveform(int targetWSS, int[] waveform, int eventID)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.UpdateWaveform(waveform, eventID, IntToWssTarget(targetWSS));
+            }
     }
 
     /// <summary>
@@ -394,8 +499,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void updateWaveform(int cathodicWaveform, int anodicWaveform, int eventID)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.UpdateEventShape(cathodicWaveform, anodicWaveform, eventID, WssTarget.Broadcast);
+            }
     }
 
     /// <summary>
@@ -411,8 +519,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void updateWaveform(int targetWSS, int cathodicWaveform, int anodicWaveform, int eventID)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.UpdateEventShape(cathodicWaveform, anodicWaveform, eventID, IntToWssTarget(targetWSS));
+            }
     }
 
     /// <summary>
@@ -426,8 +537,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void updateWaveform(WaveformBuilder waveform, int eventID)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.UpdateWaveform(waveform, eventID, WssTarget.Broadcast);
+            }
     }
 
     /// <summary>
@@ -442,8 +556,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void updateWaveform(int targetWSS, WaveformBuilder waveform, int eventID)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.UpdateWaveform(waveform, eventID, IntToWssTarget(targetWSS));
+            }
     }
 
     /// <summary>
@@ -457,8 +574,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void loadWaveform(string fileName, int eventID)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.LoadWaveform(fileName, eventID);
+            }
     }
 
     /// <summary>
@@ -472,8 +592,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void WaveformSetup(WaveformBuilder wave, int eventID)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.WaveformSetup(wave, eventID, WssTarget.Broadcast);
+            }
     }
 
     /// <summary>
@@ -488,8 +611,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void WaveformSetup(int targetWSS, WaveformBuilder wave, int eventID)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.WaveformSetup(wave, eventID, IntToWssTarget(targetWSS));
+            }
     }
 
     /// <summary>
@@ -503,8 +629,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void UpdateIPD(int ipd, int eventID)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.UpdateIPD(ipd, eventID, WssTarget.Broadcast);
+            }
     }
 
     /// <summary>
@@ -519,8 +648,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void UpdateIPD(int targetWSS, int ipd, int eventID)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.UpdateIPD(ipd, eventID, IntToWssTarget(targetWSS));
+            }
     }
 
     /// <summary>
@@ -535,8 +667,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void UpdateEventRatio(int targetWSS, int ratio, int eventID)
     {
+        lock (_gate)
+        {
         if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
         basic.UpdateEventRatio(ratio, eventID, IntToWssTarget(targetWSS));
+            }
     }
 
     #endregion
@@ -554,9 +689,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void StimulateNormalized(string finger, float magnitude)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int ch = FingerToChannel(finger);
         wss.StimulateNormalized(ch, magnitude);
+            }
     }
 
     /// <summary>
@@ -570,37 +708,40 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public int GetStimIntensity(string finger)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int ch = FingerToChannel(finger);
         return (int)wss.GetStimIntensity(ch);
+            }
     }
 
     /// <summary>
     /// Persists stimulation parameters to the default JSON path.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
-    public void SaveParamsJson() => EnsureWss().SaveParamsJson();
+    public void SaveParamsJson() { lock (_gate) { EnsureWss().SaveParamsJson(); } }
 
     /// <summary>
-    /// Loads stimulation parameters from the default JSON path.
+    /// Reloads all three JSON files from the anchored startup defaults.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
-    public void LoadParamsJson() => EnsureWss().LoadParamsJson();
+    public void LoadParamsJson() { lock (_gate) InstallReload(CurrentSnapshot().ReloadDefaults()); }
 
     /// <summary>
-    /// Loads stimulation parameters from a JSON file or directory.
+    /// Reloads all JSON files from a directory, or one calibration file with startup-default Core and model files.
     /// </summary>
     /// <param name="pathOrDir">JSON file path or directory path. Directory inputs use the library default filename.</param>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
-    public void LoadParamsJson(string pathOrDir) => EnsureWss().LoadParamsJson(pathOrDir);
+    public void LoadParamsJson(string pathOrDir) { lock (_gate) InstallReload(CurrentSnapshot().Reload(pathOrDir)); }
 
     /// <summary>
     /// Adds or updates a stimulation parameter value.
     /// </summary>
-    /// <param name="key">Parameter key (e.g., "stim.ch.1.amp").</param>
+    /// <param name="key">Parameter key (e.g., "stim.ch.1.defaultPA").</param>
     /// <param name="value">Parameter value (units depend on the key).</param>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
-    public void AddOrUpdateStimParam(string key, float value) => EnsureWss().AddOrUpdateStimParam(key, value);
+    public void AddOrUpdateStimParam(string key, float value) { lock (_gate) { EnsureWss().AddOrUpdateStimParam(key, value); } }
 
     /// <summary>
     /// Gets a stimulation parameter value.
@@ -608,7 +749,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <param name="key">Parameter key.</param>
     /// <returns>The parameter value.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
-    public float GetStimParam(string key) => EnsureWss().GetStimParam(key);
+    public float GetStimParam(string key) { lock (_gate) { return EnsureWss().GetStimParam(key); } }
 
     /// <summary>
     /// Attempts to get a stimulation parameter value.
@@ -617,14 +758,14 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <param name="v">Receives the parameter value when the key exists; otherwise receives the underlying default output value.</param>
     /// <returns><c>true</c> when the parameter exists; otherwise <c>false</c>.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
-    public bool TryGetStimParam(string key, out float v) => EnsureWss().TryGetStimParam(key, out v);
+    public bool TryGetStimParam(string key, out float v) { lock (_gate) { return EnsureWss().TryGetStimParam(key, out v); } }
 
     /// <summary>
     /// Gets a copy of all known stimulation parameters.
     /// </summary>
     /// <returns>A dictionary mapping parameter keys to their values.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
-    public Dictionary<string, float> GetAllStimParams() => EnsureWss().GetAllStimParams();
+    public Dictionary<string, float> GetAllStimParams() { lock (_gate) { return EnsureWss().GetAllStimParams(); } }
 
     /// <summary>
     /// Sets the channel amplitude.
@@ -637,9 +778,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void SetChannelAmp(string finger, float mA)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int ch = FingerToChannel(finger);
         wss.SetChannelAmp(ch, mA);
+            }
     }
 
     /// <summary>
@@ -653,9 +797,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void SetChannelPWMin(string finger, int us)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int ch = FingerToChannel(finger);
         wss.SetChannelPWMin(ch, us);
+            }
     }
 
     /// <summary>
@@ -669,9 +816,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void SetChannelPWMax(string finger, int us)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int ch = FingerToChannel(finger);
         wss.SetChannelPWMax(ch, us);
+            }
     }
 
     /// <summary>
@@ -685,9 +835,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void SetChannelIPI(string finger, int ms)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int ch = FingerToChannel(finger);
         wss.SetChannelIPI(ch, ms);
+            }
     }
 
     /// <summary>
@@ -701,9 +854,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public float GetChannelAmp(string finger)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int ch = FingerToChannel(finger);
         return wss.GetChannelAmp(ch);
+            }
     }
 
     /// <summary>
@@ -717,9 +873,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public int GetChannelPWMin(string finger)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int ch = FingerToChannel(finger);
         return wss.GetChannelPWMin(ch);
+            }
     }
 
     /// <summary>
@@ -733,9 +892,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public int GetChannelPWMax(string finger)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int ch = FingerToChannel(finger);
         return wss.GetChannelPWMax(ch);
+            }
     }
 
     /// <summary>
@@ -749,9 +911,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public int GetChannelIPI(string finger)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int ch = FingerToChannel(finger);
         return wss.GetChannelIPI(ch);
+            }
     }
 
     /// <summary>
@@ -764,9 +929,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public bool IsFingerValid(string finger)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int ch = FingerToChannel(finger);
         return wss.IsChannelInRange(ch);
+            }
     }
 
     /// <summary>
@@ -780,9 +948,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
     public void StimWithMode(string finger, float magnitude)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int ch = FingerToChannel(finger);
         wss.StimWithMode(ch, magnitude);
+            }
     }
 
     /// <summary>
@@ -798,6 +969,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="finger"/> resolves to an out-of-range channel.</exception>
     public void UpdateChannelParams(string finger, int max, int min, int amp)
     {
+        lock (_gate)
+        {
         var wss = EnsureWss();
         int ch = FingerToChannel(finger);
         if (!wss.IsChannelInRange(ch))
@@ -806,7 +979,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
         string baseKey = $"stim.ch.{ch}";
         wss.AddOrUpdateStimParam($"{baseKey}.maxPW", max);
         wss.AddOrUpdateStimParam($"{baseKey}.minPW", min);
-        wss.AddOrUpdateStimParam($"{baseKey}.amp", amp);
+        wss.AddOrUpdateStimParam($"{baseKey}.defaultPA", amp);
+            }
     }
 
     #endregion
@@ -818,19 +992,19 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </summary>
     /// <returns><c>true</c> when the mode is valid; otherwise <c>false</c>.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
-    public bool isModeValid() => EnsureWss().IsModeValid();
+    public bool isModeValid() { lock (_gate) { return EnsureWss().IsModeValid(); } }
 
     /// <summary>
     /// Gets whether the underlying stack currently reports a ready state.
     /// </summary>
     /// <returns><c>true</c> when ready; otherwise <c>false</c>. Returns <c>false</c> before initialization.</returns>
-    public bool Ready() => _wss?.Ready() ?? false;
+    public bool Ready() { lock (_gate) { return _wss?.Ready() ?? false; } }
 
     /// <summary>
     /// Gets whether the underlying stack currently reports active stimulation.
     /// </summary>
     /// <returns><c>true</c> when started; otherwise <c>false</c>. Returns <c>false</c> before initialization.</returns>
-    public bool Started() => _wss?.Started() ?? false;
+    public bool Started() { lock (_gate) { return _wss?.Started() ?? false; } }
 
     /// <summary>
     /// Tries to obtain the WSS Core conformance capability from the active transport.
@@ -846,6 +1020,8 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
+        lock (_gate)
+        {
             if (_transport is IConformanceProvider provider)
             {
                 conformance = provider.Conformance;
@@ -855,6 +1031,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
             conformance = null!;
             return false;
         }
+            }
     }
 
     /// <summary>
@@ -862,20 +1039,20 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </summary>
     /// <returns>The model configuration controller instance.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
-    public ModelConfigController GetModelConfigCTRL() => EnsureWss().GetModelConfigController();
+    public ModelConfigController GetModelConfigCTRL() { lock (_gate) { return EnsureWss().GetModelConfigController(); } }
 
     /// <summary>
     /// Gets the core configuration controller.
     /// </summary>
     /// <returns>The core configuration controller instance.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
-    public CoreConfigController GetCoreConfigCTRL() => EnsureWss().GetCoreConfigController();
+    public CoreConfigController GetCoreConfigCTRL() { lock (_gate) { return EnsureWss().GetCoreConfigController(); } }
 
     /// <summary>
     /// Reloads the core configuration JSON from the configured config directory.
     /// </summary>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="Initialize"/> has not been called.</exception>
-    public void LoadCoreConfigFile() => EnsureWss().LoadConfigFile();
+    public void LoadCoreConfigFile() { lock (_gate) { resetRadio(); } }
 
     #endregion
 
@@ -934,8 +1111,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public void Dispose()
     {
+        lock (_gate)
+        {
         Shutdown();
         GC.SuppressFinalize(this);
+            }
     }
 
     /// <summary>
@@ -947,8 +1127,11 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     /// </remarks>
     public ValueTask DisposeAsync()
     {
+        lock (_gate)
+        {
         Shutdown();
         return ValueTask.CompletedTask;
+            }
     }
 }
 
