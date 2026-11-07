@@ -34,3 +34,17 @@ Reject {Assert-TrustedBaselineSnapshot $snapshot}
 Remove-Item -LiteralPath $tree;Move-Item -LiteralPath $moved -Destination $tree
 Assert-TrustedBaselineSnapshot $snapshot
 Write-Output 'Baseline unchanged positive and content/deletion/addition/empty-directory/nested-redirect/root-redirect negatives passed.'
+
+# Authentication inputs and Core executable bytes are frozen independently of Git metadata.
+$authority=Join-Path $root 'authority';$tools=Join-Path $authority 'tools'
+$null=New-Item -ItemType Directory -Path $tools -Force
+$files=@((Join-Path $tools 'core.mjs'),(Join-Path $authority 'lock.json'),(Join-Path $authority 'context.json'),(Join-Path $authority 'roots.json'))
+foreach($path in $files){[IO.File]::WriteAllText($path,'original-authority')}
+$authoritySnapshot=New-TrustedBaselineSnapshot (@($tools)+@($files | Select-Object -Skip 1))
+foreach($path in $files){
+    [IO.File]::WriteAllText($path,'shifted-authority')
+    Reject {Assert-TrustedBaselineSnapshot $authoritySnapshot}
+    [IO.File]::WriteAllText($path,'original-authority')
+    Assert-TrustedBaselineSnapshot $authoritySnapshot
+}
+Write-Output 'Core code, lock, context and roots byte-mutation negatives passed.'

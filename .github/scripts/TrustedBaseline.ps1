@@ -13,7 +13,11 @@ function Get-TrustedBaselineInventory([string[]]$Roots) {
     foreach($root in $Roots){
         $root=[IO.Path]::GetFullPath($root)
         Assert-BaselineRegularPath $root
-        if(!(Get-Item -LiteralPath $root -Force).PSIsContainer){throw 'Trusted baseline root must be a directory.'}
+        if(!(Get-Item -LiteralPath $root -Force).PSIsContainer){
+            $hash=(Get-FileHash -LiteralPath $root -Algorithm SHA256 -ErrorAction Stop).Hash
+            $entries.Add("$root|ROOT-F|$hash");continue
+        }
+        $entries.Add("$root|ROOT-D")
         $queue=[Collections.Generic.Queue[string]]::new();$queue.Enqueue($root)
         while($queue.Count){
             $directory=$queue.Dequeue()
