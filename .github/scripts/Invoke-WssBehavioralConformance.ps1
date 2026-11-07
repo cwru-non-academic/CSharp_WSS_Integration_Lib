@@ -3,7 +3,8 @@ param(
     [string]$Project = (Join-Path $PSScriptRoot '../../tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj'),
     [string]$ResultsDirectory = (Join-Path ([IO.Path]::GetTempPath()) ('wss-behavior-' + [Guid]::NewGuid().ToString('N'))),
     [string]$ArtifactDirectory = $env:WSS_ARTIFACT_DIR,
-    [string]$BleArtifactDirectory = $env:WSS_BLE_ARTIFACT_DIR
+    [string]$BleArtifactDirectory = $env:WSS_BLE_ARTIFACT_DIR,
+    [switch]$IsolatedBuild
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -28,6 +29,7 @@ try {
         $arguments = @('test', $Project, '-c', 'Release', '--no-build', '--no-restore',
             '--filter', $filter, '-p:TreatWarningsAsErrors=true',
             '--logger', 'trx;LogFileName=behavior.trx', '--results-directory', $directory)
+        if ($IsolatedBuild) { $arguments += @('-p:ImportDirectoryBuildProps=false','-p:ImportDirectoryBuildTargets=false') }
         if ($ArtifactDirectory) { $arguments += "-p:WSS_ARTIFACT_DIR=$ArtifactDirectory" }
         if ($BleArtifactDirectory) { $arguments += "-p:WSS_BLE_ARTIFACT_DIR=$BleArtifactDirectory" }
         & dotnet @arguments
