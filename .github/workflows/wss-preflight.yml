@@ -149,17 +149,43 @@ jobs:
             Where-Object Name -in @('bin', 'obj') |
             Remove-Item -Recurse -Force
 
+      - name: Create profile producer read token
+        id: profile-core-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore
+          permission-contents: read
+          permission-actions: read
+      - name: Download verified profile provenance
+        uses: actions/download-artifact@v4
+        with:
+          name: wss-candidate-provenance
+          path: ${{ runner.temp }}/wss-profile-provenance
+      - name: Prepare immutable profile test project
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.profile-core-token.outputs.token }}
+        run: >-
+          ./.github/scripts/Prepare-CSharpProfile.ps1
+          -IntegrationRoot .
+          -WorkRoot "${{ runner.temp }}/wss-profile"
+          -PayloadRoot "${{ env.WSS_ARTIFACT_DIR }}"
+          -ProducerRecordPath "${{ runner.temp }}/wss-profile-provenance/candidate.json"
+
       - name: Restore with downloaded WSS assemblies
         shell: pwsh
         run: >-
-          dotnet restore tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          dotnet restore "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
           "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
           "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
 
       - name: Build with downloaded WSS assemblies
         shell: pwsh
         run: >-
-          dotnet build tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          dotnet build "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
           -c Release
           --no-restore
           -p:TreatWarningsAsErrors=true
@@ -168,15 +194,7 @@ jobs:
 
       - name: Run behavioral tests
         shell: pwsh
-        run: >-
-          dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
-          -c Release
-          --no-build
-          --no-restore
-          --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationOptionsTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationControllerTestModeTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationControllerConformanceTests"
-          -p:TreatWarningsAsErrors=true
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+        run: ./.github/scripts/Invoke-WssBehavioralConformance.ps1
 
   compatibility:
     name: Preflight compatibility (${{ matrix.name }})
@@ -220,17 +238,43 @@ jobs:
             Where-Object Name -in @('bin', 'obj') |
             Remove-Item -Recurse -Force
 
+      - name: Create profile producer read token
+        id: profile-core-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore
+          permission-contents: read
+          permission-actions: read
+      - name: Download verified profile provenance
+        uses: actions/download-artifact@v4
+        with:
+          name: wss-candidate-provenance
+          path: ${{ runner.temp }}/wss-profile-provenance
+      - name: Prepare immutable profile test project
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.profile-core-token.outputs.token }}
+        run: >-
+          ./.github/scripts/Prepare-CSharpProfile.ps1
+          -IntegrationRoot .
+          -WorkRoot "${{ runner.temp }}/wss-profile"
+          -PayloadRoot "${{ env.WSS_ARTIFACT_DIR }}"
+          -ProducerRecordPath "${{ runner.temp }}/wss-profile-provenance/candidate.json"
+
       - name: Restore with downloaded WSS assemblies
         shell: pwsh
         run: >-
-          dotnet restore tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          dotnet restore "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
           "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
           "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
 
       - name: Build with downloaded WSS assemblies
         shell: pwsh
         run: >-
-          dotnet build tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          dotnet build "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
           -c Release
           --no-restore
           -p:TreatWarningsAsErrors=true
@@ -248,7 +292,7 @@ jobs:
       - name: Run platform compatibility tests
         shell: pwsh
         run: >-
-          dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          dotnet test "$env:WSS_PROFILE_PROJECT"
           -c Release
           --no-build
           --no-restore
@@ -314,17 +358,43 @@ jobs:
             Where-Object Name -in @('bin', 'obj') |
             Remove-Item -Recurse -Force
 
+      - name: Create profile producer read token
+        id: profile-core-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore
+          permission-contents: read
+          permission-actions: read
+      - name: Download verified profile provenance
+        uses: actions/download-artifact@v4
+        with:
+          name: wss-candidate-provenance
+          path: ${{ runner.temp }}/wss-profile-provenance
+      - name: Prepare immutable profile test project
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.profile-core-token.outputs.token }}
+        run: >-
+          ./.github/scripts/Prepare-CSharpProfile.ps1
+          -IntegrationRoot .
+          -WorkRoot "${{ runner.temp }}/wss-profile"
+          -PayloadRoot "${{ env.WSS_ARTIFACT_DIR }}"
+          -ProducerRecordPath "${{ runner.temp }}/wss-profile-provenance/candidate.json"
+
       - name: Restore with downloaded WSS assemblies
         shell: pwsh
         run: >-
-          dotnet restore tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          dotnet restore "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
           "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
           "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
 
       - name: Build with downloaded WSS assemblies
         shell: pwsh
         run: >-
-          dotnet build tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
+          dotnet build "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
           -c Release
           --no-restore
           -p:TreatWarningsAsErrors=true
@@ -342,7 +412,7 @@ jobs:
       - name: Run platform compatibility tests
         shell: pwsh
         run: |
-          & dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.SerialRuntimeSelectionTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.BleBackendLoadingTests" -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" --logger 'console;verbosity=detailed' --logger 'trx;LogFileName=macos-platform.trx' --results-directory "$env:RUNNER_TEMP/macos-results" -- RunConfiguration.TargetPlatform=${{ matrix.test_platform }} | Tee-Object -FilePath "$env:RUNNER_TEMP/macos-platform.log"
+          & dotnet test "$env:WSS_PROFILE_PROJECT" -c Release --no-build --no-restore --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.SerialRuntimeSelectionTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.BleBackendLoadingTests" -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" --logger 'console;verbosity=detailed' --logger 'trx;LogFileName=macos-platform.trx' --results-directory "$env:RUNNER_TEMP/macos-results" -- RunConfiguration.TargetPlatform=${{ matrix.test_platform }} | Tee-Object -FilePath "$env:RUNNER_TEMP/macos-platform.log"
           if ($LASTEXITCODE -ne 0) { throw 'Canonical platform tests failed.' }
 
       - name: Record canonical packaged BLE result before any synthetic fixture

@@ -1,0 +1,41 @@
+name: Host reload regression
+on:
+  pull_request:
+    paths: ['src/**', 'tests/**', 'lib/**', '.github/workflows/host-reload.yml']
+  push:
+    branches: [dev, main]
+    paths: ['src/**', 'tests/**', 'lib/**', '.github/workflows/host-reload.yml']
+permissions:
+  contents: read
+jobs:
+  csharp-reload:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Create profile producer read token
+        id: profile-core-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: WSSCore
+          permission-contents: read
+          permission-actions: read
+      - name: Prepare immutable profile test project
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.profile-core-token.outputs.token }}
+        run: >-
+          ./.github/scripts/Prepare-CSharpProfile.ps1
+          -IntegrationRoot .
+          -WorkRoot "${{ runner.temp }}/wss-profile"
+
+      - shell: pwsh
+        run: ./.github/scripts/Invoke-ProfileFullTests.ps1
