@@ -101,6 +101,41 @@ public sealed class ConfigurationReloadTests
         ObserveOutput(() => controller.StimWithMode("ch2", .5f), 100, 2);
     }
 
+    [Test]
+    public void UnpublishedTransportMustCleanUpBeforeSnapshotRetry()
+    {
+        controller.Shutdown();
+        var snapshot = WssConfigurationSnapshot.ReadDefaults(root);
+        var transport = new FailedConstructionTransport();
+        // Fault injection at the host ownership boundary, without opening a device.
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        typeof(StimulationController).GetField("_pendingReload", flags)!.SetValue(controller, snapshot);
+        typeof(StimulationController).GetField("_retiredTransport", flags)!.SetValue(controller, transport);
+        File.WriteAllText(Path.Combine(root, "stimConfig.json"), "changed after staging");
+        Assert.Throws<IOException>(() => controller.RetryReload());
+        Assert.That(controller.Started(), Is.False);
+        Assert.That(transport.Disposals, Is.EqualTo(1));
+        controller.RetryReload();
+        Await(() => controller.Started());
+        Assert.That(transport.Disposals, Is.EqualTo(2));
+        Assert.That(controller.LastReloadError, Is.Null);
+        ObserveOutput(() => controller.StimWithMode("ch2", .5f), 100, 2);
+    }
+
+    private sealed class FailedConstructionTransport : Wss.Transports.ITransport
+    {
+        internal int Disposals;
+        public bool IsConnected => false;
+        public event Action<byte[]>? BytesReceived { add { } remove { } }
+        public Task ConnectAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task DisconnectAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task SendAsync(byte[] bytes, CancellationToken ct = default) => throw new NotSupportedException();
+        public void Dispose()
+        {
+            if (++Disposals == 1) throw new IOException("Injected unpublished transport cleanup failure.");
+        }
+    }
+
     private IWssConformance Conformance()
     {
         Assert.That(controller.TryGetConformance(out var result), Is.True);

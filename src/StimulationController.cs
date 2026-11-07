@@ -31,6 +31,7 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     private WssConfigurationSnapshot? _snapshot;
     private WssConfigurationSnapshot? _pendingReload;
     private IModelParamsCore? _retired;
+    private WssTransport.ITransport? _retiredTransport;
     /// <summary>Gets the last reconstruction failure; validation errors are thrown without retiring the active stack.</summary>
     public Exception? LastReloadError { get; private set; }
 
@@ -94,9 +95,12 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
         {
             if (_wss != null) return;
 
-            if (_retired != null || _pendingReload != null)
+            if (_retired != null || _retiredTransport != null || _pendingReload != null)
                 throw new InvalidOperationException("RetryReload or Shutdown must complete before initialization.", LastReloadError);
             WssTransport.ITransport transport = CreateTransport();
+            _retiredTransport = transport;
+            try
+            {
 
             IStimulationCore core = new WssStimulationCore(transport, new WssStimulationCoreOptions
             {
@@ -112,17 +116,15 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
             _wss.TryGetBasic(out _basicWss);
             _basicSupported = _basicWss != null;
 
-            try
-            {
                 _wss.Initialize();
                 _snapshot = WssConfigurationSnapshot.ReadDefaults(_startupPath).CaptureCurrent(_wss);
+                _retiredTransport = null;
                 LastReloadError = null;
                 EnsureTickLoop();
             }
             catch
             {
-                _retired = _wss; _wss = null;
-                _basicWss = null; _basicSupported = false;
+                RetireActive();
                 try { CleanupRetired(); } catch { /* Retain failed owner for explicit cleanup retry. */ }
                 throw;
             }
@@ -203,13 +205,18 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     private void RetireActive()
     {
         if (_wss != null) { _retired = _wss; _wss = null; }
+        if (_transport != null) _retiredTransport = _transport;
         _basicWss = null; _basicSupported = false; _transport = null; started = false;
     }
 
     private void CleanupRetired()
     {
-        if (_retired == null) return;
-        try { _retired.Dispose(); _retired = null; }
+        if (_retired == null && _retiredTransport == null) return;
+        try
+        {
+            if (_retired != null) _retired.Dispose(); else _retiredTransport?.Dispose();
+            _retired = null; _retiredTransport = null;
+        }
         catch (Exception error) { LastReloadError = error; throw; }
     }
 
@@ -234,12 +241,15 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
         {
             CleanupRetired();
             var transport = CreateTransport();
+            // Core may throw before returning its partial owner; retain the transport
+            // until publication or explicit successful cleanup.
+            _retiredTransport = transport;
             var stack = (IModelParamsCore)snapshot.BuildAndInitialize(transport,
                 new WssStimulationCoreOptions { ConfigPath = _startupPath, MaxSetupTries = _options.MaxSetupTries },
                 WssConfigurationLayer.Model);
             stack.TryGetBasic(out _basicWss);
             _basicSupported = _basicWss != null;
-            _transport = transport; _wss = stack;
+            _transport = transport; _wss = stack; _retiredTransport = null;
             _snapshot = snapshot; _pendingReload = null; LastReloadError = null;
             EnsureTickLoop();
         }
