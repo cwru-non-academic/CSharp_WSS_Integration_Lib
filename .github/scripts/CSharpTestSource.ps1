@@ -60,3 +60,8 @@ function Assert-CSharpTestWorkRoot([string]$WorkRoot,[string[]]$InputRoots) {
         $parent=$parent.Parent
     }
 }
+function Assert-CSharpFullTestResults([string]$TrxPath) {
+    [xml]$trx=Get-Content -LiteralPath $TrxPath -Raw
+    $results=@($trx.TestRun.Results.UnitTestResult)
+    if ($results.Count -eq 0 -or @($results | Where-Object outcome -cne 'Passed').Count) { throw 'Selected full suite contains missing, skipped or non-passing results.' }
+}

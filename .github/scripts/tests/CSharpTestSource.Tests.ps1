@@ -47,10 +47,19 @@ $null=& git -C $root -c user.name=Test -c user.email=test@example.invalid commit
 $injected=(& git -C $root rev-parse HEAD).Trim()
 Expect-Rejection { Resolve-CSharpTestBundle cli $product $root $injected $repo $id } 'product setting in test contract'
 Expect-Rejection { Assert-CSharpTestWorkRoot (Join-Path $root 'new-work') @($root) } 'work root beneath selected source'
+[IO.File]::WriteAllText("$root/tests/test-contract.json",'{"schema":"wss-csharp-tests/v1","role":"cli","test_directory":"tests/Wss.Cli.Tests"}')
+$null=& git -C $root add tests/test-contract.json
+$null=& git -C $root -c user.name=Test -c user.email=test@example.invalid commit --quiet -m valid-contract
+$injected=(& git -C $root rev-parse HEAD).Trim()
 $null=& git -C $root update-index --assume-unchanged tests/Wss.Cli.Tests/Example.cs
 Expect-Rejection { Resolve-CSharpTestBundle cli $product $root $injected $repo $id } 'assume-unchanged index'
 $null=& git -C $root update-index --no-assume-unchanged tests/Wss.Cli.Tests/Example.cs
 $null=& git -C $root update-index --skip-worktree tests/Wss.Cli.Tests/Example.cs
 Expect-Rejection { Resolve-CSharpTestBundle cli $product $root $injected $repo $id } 'skip-worktree index'
 $null=& git -C $root update-index --no-skip-worktree tests/Wss.Cli.Tests/Example.cs
+[IO.File]::WriteAllText("$root/passed.trx",'<TestRun><Results><UnitTestResult outcome="Passed" /></Results></TestRun>')
+Assert-CSharpFullTestResults "$root/passed.trx"
+$count++
+[IO.File]::WriteAllText("$root/skipped.trx",'<TestRun><Results><UnitTestResult outcome="NotExecuted" /></Results></TestRun>')
+Expect-Rejection { Assert-CSharpFullTestResults "$root/skipped.trx" } 'skipped added selected test'
 Write-Output "$count selected-test binding checks passed. Fixture: $root"

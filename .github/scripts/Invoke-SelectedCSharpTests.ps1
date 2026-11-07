@@ -69,9 +69,7 @@ if ($Role -ceq 'wrapper') {
     # The ordinary platform/reload/options suites are additive and never replace canonical 16+16.
     & dotnet test $project -c Release --no-build --no-restore @properties --logger 'trx;LogFileName=all.trx' --results-directory (Join-Path $WorkRoot 'all')
     if ($LASTEXITCODE -ne 0) { throw 'Selected full suite failed.' }
-    [xml]$allTrx=Get-Content (Join-Path $WorkRoot 'all/all.trx') -Raw
-    $allResults=@($allTrx.TestRun.Results.UnitTestResult)
-    if ($allResults.Count -eq 0 -or @($allResults | Where-Object outcome -cne 'Passed').Count) { throw 'Selected full suite contains missing, skipped or non-passing results.' }
+    Assert-CSharpFullTestResults (Join-Path $WorkRoot 'all/all.trx')
 } else {
     & dotnet test $project -c Release --no-build --no-restore @properties --logger 'trx;LogFileName=commands.trx' --results-directory (Join-Path $WorkRoot 'commands')
     if ($LASTEXITCODE -ne 0) { throw 'Selected production command tests failed.' }
