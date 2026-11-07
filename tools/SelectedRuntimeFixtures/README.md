@@ -28,3 +28,8 @@ Producer authentication runs in a separate trusted job. The selected executor
 receives only that job's immutable verified artifact, with no App secrets/token
 injected into its job. It rechecks all payload projections before profile use.
 The selected child also strips all dummy inherited credential/command handles.
+
+The product is the explicit immutable modern2d58507 fixture on either branch.
+The identical main workflow therefore leaves its installed legacy product intact.
+Producer verification resolves that same fixture's provenance, not the host
+branch's installed payload. Runtime adapters remain separately selected/current.

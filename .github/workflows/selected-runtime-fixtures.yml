@@ -14,6 +14,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Check out immutable modern product fixture
+        uses: actions/checkout@v4
+        with:
+          ref: 2d58507e812a097a26d59b3199c1533ab083da78
+          path: .fixture-product
+          persist-credentials: false
       - name: Create existing-scope producer read token
         id: producer-token
         uses: actions/create-github-app-token@v2
@@ -29,7 +35,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.producer-token.outputs.token }}
         run: |
-          $c = (Get-Content lib/wss-candidate.json -Raw | ConvertFrom-Json).candidate
+          $c = (Get-Content .fixture-product/lib/wss-candidate.json -Raw | ConvertFrom-Json).candidate
           ./.github/scripts/Resolve-WssRelease.ps1 -ProducerRepository $c.repository -RunId $c.run_id -ExpectedCommit $c.commit -ArchiveName $c.archive -ExpectedSha256 $c.sha256 -OutputRoot "$env:RUNNER_TEMP/synthetic-verified-input"
       - name: Publish verified input only, without running selected code
         uses: actions/upload-artifact@v4
@@ -81,6 +87,7 @@ jobs:
         run: >-
           ./tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1
           -Stage Prepare -FixtureRoot "${{ runner.temp }}/synthetic-selected-runtime"
+          -ProductSeedRoot "${{ github.workspace }}/.fixture-v1-bundle"
           -TestSeedRoot "${{ github.workspace }}/${{ matrix.bundle == 'main-v2' && '.fixture-main-bundle' || '.fixture-v1-bundle' }}"
       - name: Download authenticated synthetic payload input
         uses: actions/download-artifact@v4

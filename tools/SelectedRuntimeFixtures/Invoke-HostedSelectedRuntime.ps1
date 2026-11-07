@@ -1,9 +1,11 @@
-param([Parameter(Mandatory)][ValidateSet('Prepare','Run')][string]$Stage,[Parameter(Mandatory)][string]$FixtureRoot,[string]$BootstrapRoot=(Join-Path $PSScriptRoot '../..'),[string]$AdapterRoot='',[string]$TestSeedRoot='')
+param([Parameter(Mandatory)][ValidateSet('Prepare','Run')][string]$Stage,[Parameter(Mandatory)][string]$FixtureRoot,[string]$BootstrapRoot=(Join-Path $PSScriptRoot '../..'),[string]$AdapterRoot='',[string]$TestSeedRoot='',[string]$ProductSeedRoot='')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $BootstrapRoot=[IO.Path]::GetFullPath($BootstrapRoot)
 if(!$AdapterRoot){$AdapterRoot=$BootstrapRoot}
 if(!$TestSeedRoot){$TestSeedRoot=$BootstrapRoot}
+if(!$ProductSeedRoot){$ProductSeedRoot=$BootstrapRoot}
+$ProductSeedRoot=[IO.Path]::GetFullPath($ProductSeedRoot)
 $AdapterRoot=[IO.Path]::GetFullPath($AdapterRoot)
 $TestSeedRoot=[IO.Path]::GetFullPath($TestSeedRoot)
 function Invoke-FixtureGit([string]$Root,[string[]]$Arguments){$result=& git -C $Root @Arguments;if($LASTEXITCODE -ne 0){throw 'Fixture git operation failed'};@($result)}
@@ -14,9 +16,9 @@ if($Stage -ceq 'Prepare'){
  if(!$IsWindows){Push-Location $FixtureRoot;try{$FixtureRoot=(& /bin/pwd -P).Trim()}finally{Pop-Location}}
  $FixtureRoot=[IO.Path]::GetFullPath($FixtureRoot)
  $product=Join-Path $FixtureRoot 'product';$tests=Join-Path $FixtureRoot 'selected-tests'
- $sha=(Invoke-FixtureGit $BootstrapRoot @('rev-parse','HEAD') -join '').Trim()
+ $sha=(Invoke-FixtureGit $ProductSeedRoot @('rev-parse','HEAD') -join '').Trim()
  $seedSha=(Invoke-FixtureGit $TestSeedRoot @('rev-parse','HEAD') -join '').Trim()
- foreach($clone in @(@{source=$BootstrapRoot;target=$product;sha=$sha},@{source=$TestSeedRoot;target=$tests;sha=$seedSha})){
+ foreach($clone in @(@{source=$ProductSeedRoot;target=$product;sha=$sha},@{source=$TestSeedRoot;target=$tests;sha=$seedSha})){
   $null=Invoke-FixtureGit $BootstrapRoot @('clone','--quiet','--no-hardlinks','--no-checkout',$clone.source,$clone.target)
   $null=Invoke-FixtureGit $clone.target @('checkout','--quiet','--detach',$clone.sha)
  }
