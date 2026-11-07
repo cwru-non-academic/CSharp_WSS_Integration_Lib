@@ -29,7 +29,7 @@ function Get-TrustedBaselineInventory([string[]]$Roots) {
             }
         }
     }
-    @($entries | Sort-Object -CaseSensitive)
+    $result=$entries.ToArray();[Array]::Sort($result,[StringComparer]::Ordinal);@($result)
 }
 function New-TrustedBaselineSnapshot([string[]]$Roots) {
     @{roots=@($Roots | ForEach-Object {[IO.Path]::GetFullPath($_)});inventory=@(Get-TrustedBaselineInventory $Roots)}
@@ -37,7 +37,7 @@ function New-TrustedBaselineSnapshot([string[]]$Roots) {
 function Assert-TrustedBaselineSnapshot($Snapshot) {
     $current=@(Get-TrustedBaselineInventory $Snapshot.roots)
     if($current.Count -ne $Snapshot.inventory.Count){throw 'Selected suite changed trusted baseline inventory/content.'}
-    for($i=0;$i -lt $current.Count;$i++){if($current[$i] -cne $Snapshot.inventory[$i]){throw 'Selected suite changed trusted baseline inventory/content.'}}
+    for($i=0;$i -lt $current.Count;$i++){if(![StringComparer]::Ordinal.Equals($current[$i],$Snapshot.inventory[$i])){throw 'Selected suite changed trusted baseline inventory/content.'}}
 }
 function Invoke-TrustedCliBaseline([hashtable]$Options,[string]$BaselineRoot) {
     $tests=$BaselineRoot+'-sources'
