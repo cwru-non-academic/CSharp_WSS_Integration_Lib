@@ -12,6 +12,13 @@ Assert-TrustedBaselineSnapshot $snapshot
 Remove-Item -LiteralPath $file;Reject {Assert-TrustedBaselineSnapshot $snapshot};[IO.File]::WriteAllText($file,'baseline')
 $extra=Join-Path $tree '.hidden-evidence';[IO.File]::WriteAllText($extra,'added');Reject {Assert-TrustedBaselineSnapshot $snapshot};Remove-Item -LiteralPath $extra -Force
 $empty=Join-Path $tree 'empty';$null=New-Item -ItemType Directory -Path $empty;Reject {Assert-TrustedBaselineSnapshot $snapshot};Remove-Item -LiteralPath $empty
+# Case-distinct names remain distinct inventory entries on case-sensitive filesystems.
+$caseFile=Join-Path $tree 'ORIGINAL.txt'
+if(!(Test-Path -LiteralPath $caseFile)){
+    [IO.File]::WriteAllText($caseFile,'baseline')
+    Reject {Assert-TrustedBaselineSnapshot $snapshot}
+    Remove-Item -LiteralPath $caseFile
+}
 # Windows junctions need no symlink privilege; Unix symlinks exercise the same reparse guard.
 $outside=Join-Path $root 'outside';$null=New-Item -ItemType Directory -Path $outside
 $link=Join-Path $tree 'redirect'
