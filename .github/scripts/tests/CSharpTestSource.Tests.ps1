@@ -62,4 +62,8 @@ Assert-CSharpFullTestResults "$root/passed.trx"
 $count++
 [IO.File]::WriteAllText("$root/skipped.trx",'<TestRun><Results><UnitTestResult outcome="NotExecuted" /></Results></TestRun>')
 Expect-Rejection { Assert-CSharpFullTestResults "$root/skipped.trx" } 'skipped added selected test'
+$null=New-Item -ItemType Directory -Force "$root/src/obj"
+Add-Content "$root/.git/info/exclude" 'src/obj/'
+[IO.File]::WriteAllText("$root/src/obj/Fixture.csproj.nuget.g.targets",'<Project><Target Name="Untrusted" BeforeTargets="Build"><Error Text="stale import" /></Target></Project>')
+Expect-Rejection { Assert-TestBundleCheckout $root $injected @('src') } 'stale ignored NuGet intermediate import'
 Write-Output "$count selected-test binding checks passed. Fixture: $root"

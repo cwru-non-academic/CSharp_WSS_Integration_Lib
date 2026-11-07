@@ -8,13 +8,13 @@ function Invoke-TestBundleGit([string]$Root,[string[]]$Arguments) {
 }
 function Assert-TestBundleSha([string]$Sha) { if ($Sha -cnotmatch '^[a-f0-9]{40}$') { throw 'Expected an immutable full source SHA.' } }
 function Get-TestBundleFileHash([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
-function Assert-TestBundleCheckout([string]$Root,[string]$Sha,[string[]]$Paths=@()) {
+function Assert-TestBundleCheckout([string]$Root,[string]$Sha,[string[]]$Paths=@(),[switch]$AllowBuildOutputs) {
     Assert-TestBundleSha $Sha
     $full=[IO.Path]::GetFullPath($Root)
     $top=[IO.Path]::GetFullPath((Invoke-TestBundleGit $full @('rev-parse','--show-toplevel') -join '').Trim())
     if ($full -cne $top -or ((Invoke-TestBundleGit $full @('rev-parse','HEAD')) -join '').Trim() -cne $Sha) { throw 'Checkout root or source SHA differs from the frozen source.' }
     if (@(Invoke-TestBundleGit $full (@('ls-files','-v','--')+$Paths) | Where-Object { $_ -cnotmatch '^H ' }).Count) { throw 'Source index flags may hide changes.' }
-    $ignored=@(Invoke-TestBundleGit $full (@('ls-files','--others','--ignored','--exclude-standard','--')+$Paths) | Where-Object { $_ -cnotmatch '(^|/)(bin|obj)/' })
+    $ignored=@(Invoke-TestBundleGit $full (@('ls-files','--others','--ignored','--exclude-standard','--')+$Paths) | Where-Object { !$AllowBuildOutputs -or $_ -cnotmatch '(^|/)(bin|obj)/' })
     if ($ignored.Count) { throw 'Ignored source overrides are forbidden.' }
     if (@(Invoke-TestBundleGit $full (@('status','--porcelain','--untracked-files=all','--')+$Paths)).Count) { throw 'Selected source contains changed or untracked files.' }
 }

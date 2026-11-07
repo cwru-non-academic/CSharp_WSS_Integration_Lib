@@ -82,8 +82,8 @@ if ($Role -ceq 'wrapper') {
     if ($results.Count -ne 10 -or @(Compare-Object $expected @($results.testName) -CaseSensitive).Count -ne 0 -or @($trx.TestRun.Results.UnitTestResult | Where-Object outcome -cne 'Passed').Count -ne 0) { throw 'Selected CLI suite lost mandatory command coverage.' }
 }
 Assert-CSharpTestBundle $bundle
-Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config','.github')
-Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src','.github')
+Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config','.github') -AllowBuildOutputs
+Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src','.github') -AllowBuildOutputs
 & $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
 if ((Get-SelectedPayloadDigest $PayloadRoot) -cne $payloadDigest) { throw 'Selected payload changed during execution.' }
 $evidence=@{payload_sha256=$payloadDigest;schema='wss-selected-csharp-tests/v1';role=$Role;product_root=$ProductRoot;product_sha=$ProductSha;integration_root=$IntegrationRoot;integration_sha=$IntegrationSha;payload_root=$PayloadRoot;test_root=$bundle.root;test_sha=$bundle.sha;test_repository=$bundle.repository;test_selection_id=$bundle.selection_id;test_contract_sha256=$bundle.contract_sha256;passed=$true}

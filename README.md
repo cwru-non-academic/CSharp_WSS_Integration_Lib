@@ -467,3 +467,4 @@ assertions and both 16-case stages; the CLI retains its ten command cases.
 identities only after source and payload postchecks pass. Workflow selection and
 campaign evidence adoption must land separately before repository variables are
 advertised as active.
+Selected C# runs require fresh product checkouts without prior bin/obj outputs. This prevents stale NuGet intermediate imports from affecting the build; generated outputs from this run are allowed only during postchecks.
