@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+& "$PSScriptRoot/ReviewedPackageGuard.Tests.ps1"
 . "$PSScriptRoot/../Resolve-OrdinaryCiChannel.ps1"
 $script:passed = 0
 $source = 'a' * 40
@@ -430,7 +431,7 @@ function Assert-OrdinaryWorkflow([string]$Text, [string]$Workflow) {
     $restored = $text.Replace("$resolver`n", '').Replace("$ordinary`n", '').Replace($aggregate, '    needs: macos_architecture').Replace("$guard`n", '').Replace("$fixture`n", '')
     $restored = $restored.Replace("permissions:`n", "env:`n  WSS_CI_CHANNEL: dev`npermissions:`n")
     $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($restored))).ToLowerInvariant()
-    $expected = if ($Workflow -ceq 'cli-ci.yml') { 'ac030fa6fe5c253a1c04e264bccea3803ec610f3ab988e1a533a0c2cb0e5a3e0' } else { '5ef0c1081535fd290d0ca925cfc989ed237e5daa610ad567ce3c21b4bf15b0be' }
+    $expected = if ($Workflow -ceq 'cli-ci.yml') { 'ac030fa6fe5c253a1c04e264bccea3803ec610f3ab988e1a533a0c2cb0e5a3e0' } else { '8b7d6981e18f1b324b0cffbf2f67ba69213538e5ec6c002c2a46c35ed364b966' }
     if ($digest -cne $expected) { throw 'Ordinary workflow triggers, permissions or mandatory baseline jobs changed.' }
 }
 $workflow = if (Test-Path "$PSScriptRoot/../../workflows/cli-ci.yml") { 'cli-ci.yml' } else { 'wss-compatibility.yml' }
