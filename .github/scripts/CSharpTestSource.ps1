@@ -24,7 +24,7 @@ function Assert-TestBundleCheckout([string]$Root,[string]$Sha,[string[]]$Paths=@
     if ($ignored.Count) { throw 'Ignored source overrides are forbidden.' }
     if (@(Invoke-TestBundleGit $full (@('status','--porcelain','--untracked-files=all','--')+$Paths)).Count) { throw 'Selected source contains changed or untracked files.' }
 }
-function Resolve-CSharpTestBundle([string]$Role,[string]$ProductRoot,[string]$TestRoot,[string]$TestSha,[string]$TestRepository,[string]$TestSelectionId) {
+function Resolve-CSharpTestBundle([string]$Role,[string]$ProductRoot,[string]$TestRoot,[string]$TestSha,[string]$TestRepository,[string]$TestSelectionId,[string]$Profile='layered-v1') {
     if (!$TestRoot -or !$TestSha -or !$TestRepository -or !$TestSelectionId) { throw 'TestRoot, TestSha, TestRepository and TestSelectionId must be supplied together.' }
     if ($Role -cnotin @('wrapper','cli') -or $TestSelectionId -cnotmatch '^[a-f0-9]{64}$') { throw 'Invalid test role or frozen selection ID.' }
     $expectedRepo=if ($Role -ceq 'wrapper') { 'cwru-non-academic/CSharp_WSS_Integration_Lib' } else { 'cwru-non-academic/CLI_CSharp_WSS_Application' }

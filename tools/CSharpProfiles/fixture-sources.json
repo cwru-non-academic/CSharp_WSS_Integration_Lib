@@ -1,0 +1,16 @@
+[
+  {
+    "profile": "legacy-v1",
+    "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
+    "commit": "aafeef78536fe06094c6a694dd64d9a9e1433b21",
+    "path": "tests/Wss.CSharpImplementation.Tests/StimulationControllerConformanceTests.cs",
+    "sha256": "f6aeced83d35255532b6685d9c870307f856aad140da133695a77e9de6104ee2"
+  },
+  {
+    "profile": "layered-v1",
+    "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
+    "commit": "1a710fc02059bede61c91aff8b09e330549e5763",
+    "path": "tests/Wss.CSharpImplementation.Tests/StimulationControllerConformanceTests.cs",
+    "sha256": "96812ab33be7ede8840ddb78131a50796fd3f797d9627f958251b3e58796baf8"
+  }
+]
