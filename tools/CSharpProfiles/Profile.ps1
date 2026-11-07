@@ -45,6 +45,7 @@ function Get-WssCapabilityProfile($Api) {
 function Resolve-WssReviewedProfile([string]$PayloadRoot,$Producer,[switch]$SelectionEnabledCampaign) {
  # Bounded initial registry: adding a producer requires review of its immutable DLL identity.
  $registry=@{
+  '50afc280a6c591bc0adec8dda5fe5ce72ba8708d'=@{profile='legacy-v1';dll='92545eaa872a3e3d1b4b453acd4ead98f06af6e2bc5f0a016943a5512eab806f';archive='3a6d399c0f4c6c63228133e7d818e997c8c05d584924e4632cd5ccca96e257df';run='42258265327';artifact='13524450471'}
   '76803c03c7aa55b8951499053641ad9ce83504b8'=@{profile='legacy-v1';dll='738691490a76ceb56b38aa580148116db1a46601117246890a129eb0e6bfed20';archive='856566f5710a5662254373cc8c5d3ecf3527b89506f0df140824261ca50d2167';run='42230527501';artifact='13507483694'}
 
  }

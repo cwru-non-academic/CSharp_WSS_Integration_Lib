@@ -1,7 +1,8 @@
-# Inactive dual-profile bootstrap prototype
+# Reviewed dual-profile bootstrap
 
-This source-only prototype is not wired into workflows or selected-suite bridges.
-It does not change shared CI source identity guards or activate a campaign.
+Ordinary workflows prepare a provenance-bound test project before compiling.
+Selected-suite bridges remain inactive until the coordinated Core lock and workflow
+activation. This does not change shared CI source identity guards or activate a campaign.
 
 `Profile.ps1` reads PE metadata without loading or executing the candidate assembly.
 The six baseline catalog getters and baseline conformance API must exist. A legacy
@@ -10,10 +11,12 @@ requires complete sequence, layered catalog, reload, window/result and configura
 snapshot APIs. Any partial profile fails. Test counts, test roots, mutable test
 contracts and environment profile selectors are never authority.
 
-The only legacy producer allowlist entry is Core
+The historical main legacy producer allowlist entry is Core
 76803c03c7aa55b8951499053641ad9ce83504b8, run 42230527501, artifact 13507483694,
 archive SHA256 856566f5710a5662254373cc8c5d3ecf3527b89506f0df140824261ca50d2167,
 and Core DLL SHA256 738691490a76ceb56b38aa580148116db1a46601117246890a129eb0e6bfed20.
+The historical CLI dev producer Core 50afc280a6c591bc0adec8dda5fe5ce72ba8708d
+is also explicitly pinned by producer, archive and DLL identity in Profile.ps1.
 Any future already-authenticated producer must supply the complete layered API.
 A selection-enabled campaign requires layered; merely supplying a run-level
 selection context does not opt an old producer policy into a new campaign.
@@ -62,3 +65,14 @@ Legacy runtime: canonical 10 plus 10 options/testmode passed; full suite 21 pass
 passed; full suite 33 passed without skips. Both actual wrong-profile runtime
 attempts failed as expected. Bridge activation, ordinary workflow replacement,
 CLI adapter adoption and hosted cross-platform CI remain pending coordinated review.
+
+## Prepared workflow and selected bridge
+
+Prepare-CSharpProfile authenticates the producer and all payload bytes before
+classification, exports exact product sources, and substitutes only the reviewed
+canonical fixture. Protected .github entrypoints hash-bind executable helpers.
+For selected execution, pass an external OutputRoot: original product roots must
+remain pristine. The parent captures proof before credential-free child execution
+and checks source, payload, baseline results and output hashes afterward.
+Selection-enabled campaigns reject legacy payloads. Selected suites are additive;
+Core alone freezes pinned or latest test identities and authenticates acceptance.

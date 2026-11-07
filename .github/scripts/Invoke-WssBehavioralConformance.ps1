@@ -4,10 +4,17 @@ param(
     [string]$ResultsDirectory = (Join-Path ([IO.Path]::GetTempPath()) ('wss-behavior-' + [Guid]::NewGuid().ToString('N'))),
     [string]$ArtifactDirectory = $env:WSS_ARTIFACT_DIR,
     [string]$BleArtifactDirectory = $env:WSS_BLE_ARTIFACT_DIR,
-    [switch]$IsolatedBuild
+    [switch]$IsolatedBuild,
+    [string]$EvidencePath=$env:WSS_PROFILE_EVIDENCE
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if($EvidencePath) {
+    . "$PSScriptRoot/CSharpProfilesBootstrap.ps1"
+    Assert-CSharpProfileBootstrap
+    & "$PSScriptRoot/../../tools/CSharpProfiles/Invoke-PreparedBehavior.ps1" -EvidencePath $EvidencePath -ResultsDirectory $ResultsDirectory
+    return
+}
 
 # This inventory is independent of the Core catalog: removing a scenario must fail CI.
 $baseCases = @(

@@ -40,3 +40,7 @@ csharp-cli. Python CLI bridge: Invoke-SelectedPythonCliTestsWithContext.ps1.
 All take CoreRoot, ContextPath, RootsPath, PayloadRoot, WorkRoot. The Core checkout
 must match the checked-in reviewed lock, so the current old lock intentionally
 prevents premature activation. Default CI and release authorization are unchanged.
+Before the C# WithContext bridge, run trusted Prepare-CSharpProfile with an external
+OutputRoot and WorkRoot against the same immutable integration root and payload.
+Pass ProfileEvidencePath to the bridge. Keep preparation credentials in that step
+only. Campaign selection requires layered-v1; ordinary legacy remains supported.

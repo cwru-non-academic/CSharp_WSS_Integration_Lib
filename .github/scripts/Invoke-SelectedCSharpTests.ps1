@@ -9,7 +9,7 @@ param(
     [Parameter(Mandatory)][string]$TestSha,
     [Parameter(Mandatory)][string]$TestRepository,
     [Parameter(Mandatory)][string]$TestSelectionId,
-    [string]$IntegrationRoot='', [string]$IntegrationSha=''
+    [string]$IntegrationRoot='', [string]$IntegrationSha='', [string]$ProfileEvidencePath=''
 )
 $ErrorActionPreference='Stop'
 . "$PSScriptRoot/CSharpTestSource.ps1"
@@ -18,7 +18,16 @@ $PayloadRoot=[IO.Path]::GetFullPath($PayloadRoot)
 Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config','.github')
 if ($Role -ceq 'wrapper') { $IntegrationRoot=$ProductRoot; $IntegrationSha=$ProductSha }
 else { if (!$IntegrationRoot -or !$IntegrationSha) { throw 'CLI test selection requires its unchanged integration product root and SHA.' }; $IntegrationRoot=[IO.Path]::GetFullPath($IntegrationRoot); Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src','.github') }
-$bundle=Resolve-CSharpTestBundle $Role $ProductRoot $TestRoot $TestSha $TestRepository $TestSelectionId
+$profile=$null
+$profileName='layered-v1'
+if($ProfileEvidencePath){
+ . "$PSScriptRoot/CSharpProfilesBootstrap.ps1"
+ . "$PSScriptRoot/PreparedProfileProof.ps1"
+ $proof=New-PreparedProfileProof $ProfileEvidencePath $PayloadRoot $IntegrationRoot $IntegrationSha $false
+ $profile=$proof.state.profile
+ $profileName=$profile.profile
+}
+$bundle=Resolve-CSharpTestBundle $Role $ProductRoot $TestRoot $TestSha $TestRepository $TestSelectionId $profileName
 function Get-SelectedPayloadDigest([string]$Root) {
     $entries=@(Get-ChildItem -LiteralPath $Root -Recurse -File | Sort-Object FullName | ForEach-Object { [IO.Path]::GetRelativePath($Root,$_.FullName).Replace('\','/')+':'+(Get-TestBundleFileHash $_.FullName) })
     if ($entries.Count -eq 0) { throw 'Selected payload is empty.' }
@@ -78,7 +87,11 @@ $output=Join-Path $WorkRoot 'bin/Release/net9.0'
 $validator=if ($Role -ceq 'wrapper') { Join-Path $PSScriptRoot 'Verify-WssOutput.ps1' } else { Join-Path $IntegrationRoot '.github/scripts/Verify-WssOutput.ps1' }
 & $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
 if ($Role -ceq 'wrapper') {
+    if($ProfileEvidencePath){
+        & "$PSScriptRoot/../../tools/CSharpProfiles/Invoke-Behavior.ps1" -Profile $profileName -Project $project -IsolatedBuild -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot
+    }else{
     & "$PSScriptRoot/Invoke-WssBehavioralConformance.ps1" -Project $project -IsolatedBuild -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot
+    }
     # The ordinary platform/reload/options suites are additive and never replace canonical 16+16.
     & dotnet test $project -c Release --no-build --no-restore @properties --logger 'trx;LogFileName=all.trx' --results-directory (Join-Path $WorkRoot 'all')
     if ($LASTEXITCODE -ne 0) { throw 'Selected full suite failed.' }
@@ -94,12 +107,13 @@ if ($Role -ceq 'wrapper') {
     $results=@($trx.TestRun.Results.UnitTestResult | Where-Object { $_.testId -cin $ids })
     if ($results.Count -ne 10 -or @(Compare-Object $expected @($results.testName) -CaseSensitive).Count -ne 0 -or @($trx.TestRun.Results.UnitTestResult | Where-Object outcome -cne 'Passed').Count -ne 0) { throw 'Selected CLI suite lost mandatory command coverage.' }
 }
+if($ProfileEvidencePath){Assert-PreparedProfileProof $proof}
 Assert-StagedCSharpProduct
 Assert-CSharpTestBundle $bundle
 Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config','.github')
 Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src','.github')
 & $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
 if ((Get-SelectedPayloadDigest $PayloadRoot) -cne $payloadDigest) { throw 'Selected payload changed during execution.' }
-$evidence=@{build_product_sha=$IntegrationSha;build_product_root=$buildProduct;payload_sha256=$payloadDigest;schema='wss-selected-csharp-tests/v1';role=$Role;product_root=$ProductRoot;product_sha=$ProductSha;integration_root=$IntegrationRoot;integration_sha=$IntegrationSha;payload_root=$PayloadRoot;test_root=$bundle.root;test_sha=$bundle.sha;test_repository=$bundle.repository;test_selection_id=$bundle.selection_id;test_contract_sha256=$bundle.contract_sha256;passed=$true}
+$evidence=@{profile=$profile;build_product_sha=$IntegrationSha;build_product_root=$buildProduct;payload_sha256=$payloadDigest;schema='wss-selected-csharp-tests/v1';role=$Role;product_root=$ProductRoot;product_sha=$ProductSha;integration_root=$IntegrationRoot;integration_sha=$IntegrationSha;payload_root=$PayloadRoot;test_root=$bundle.root;test_sha=$bundle.sha;test_repository=$bundle.repository;test_selection_id=$bundle.selection_id;test_contract_sha256=$bundle.contract_sha256;passed=$true}
 $evidence | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $WorkRoot 'test-source-evidence.json')
 $evidence

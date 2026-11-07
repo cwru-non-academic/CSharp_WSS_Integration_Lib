@@ -23,3 +23,6 @@ jobs:
       - name: Verify selected suite credential isolation
         shell: pwsh
         run: ./.github/scripts/tests/SelectedProcessIsolation.Tests.ps1
+      - name: Verify reviewed profile bootstrap and fail-closed capabilities
+        shell: pwsh
+        run: ./.github/scripts/tests/CSharpProfiles.Tests.ps1
