@@ -136,13 +136,7 @@ jobs:
 
       - name: Run shared C# implementation behavioral tests
         shell: pwsh
-        run: >-
-          dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
-          -c Release
-          --no-build
-          --no-restore
-          --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationOptionsTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationControllerTestModeTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationControllerConformanceTests"
-          -p:TreatWarningsAsErrors=true
+        run: ./.github/scripts/Invoke-WssBehavioralConformance.ps1
 
   compatibility:
     name: Integration compatibility (${{ matrix.name }})

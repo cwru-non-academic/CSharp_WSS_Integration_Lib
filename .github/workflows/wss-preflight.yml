@@ -168,15 +168,7 @@ jobs:
 
       - name: Run behavioral tests
         shell: pwsh
-        run: >-
-          dotnet test tests/Wss.CSharpImplementation.Tests/Wss.CSharpImplementation.Tests.csproj
-          -c Release
-          --no-build
-          --no-restore
-          --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationOptionsTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationControllerTestModeTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.StimulationControllerConformanceTests"
-          -p:TreatWarningsAsErrors=true
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+        run: ./.github/scripts/Invoke-WssBehavioralConformance.ps1
 
   compatibility:
     name: Preflight compatibility (${{ matrix.name }})

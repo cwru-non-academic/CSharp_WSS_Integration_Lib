@@ -17,6 +17,65 @@ public sealed class StimulationControllerConformanceTests
         WssBehaviorScenarios.NormalizedStimulation.Select(scenario =>
             new TestCaseData(scenario).SetName(scenario.Id));
 
+    private static IEnumerable<TestCaseData> SequenceScenarios
+    {
+        get
+        {
+            string stage = Environment.GetEnvironmentVariable("WSS_CONFORMANCE_STAGE") ?? "single";
+            var scenarios = stage switch
+            {
+                "single" => WssStimulationSequences.SingleDevice.Concat(WssStimulationSequences.LayeredSingleDevice),
+                "multi" => WssStimulationSequences.MultipleDevices.Concat(WssStimulationSequences.LayeredMultipleDevices),
+                _ => throw new InvalidOperationException("WSS_CONFORMANCE_STAGE must be single or multi.")
+            };
+            return scenarios.Select(scenario => new TestCaseData(scenario).SetName(scenario.Id));
+        }
+    }
+
+    [TestCaseSource(nameof(SequenceScenarios))]
+    public Task StimulationSequence(WssStimulationSequence scenario) => RunSequence(scenario);
+
+    private static async Task RunSequence(WssStimulationSequence scenario)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), $"wss-public-sequence-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            scenario.WriteFixture(directory);
+            using var controller = CreateController(directory);
+            IWssConformance conformance = await InitializeAsync(controller, WssBehaviorScenarios.Initialization);
+            bool allTargetsStreaming = false;
+            for (int poll = 0; poll < InitializationPollLimit; poll++)
+            {
+                allTargetsStreaming = Enumerable.Range(0, scenario.DeviceCount).All(unit =>
+                    conformance.StimulationHistory.Any(item => item.Target == 0x81 + unit));
+                if (allTargetsStreaming) break;
+                await Task.Delay(1);
+            }
+            Assert.That(allTargetsStreaming, Is.True, scenario.Id + ": not all configured targets streamed.");
+            foreach (WssStimulationStep step in scenario.Steps)
+            {
+                WssStimulationBaseline baseline = conformance.CaptureStimulationBaseline();
+                step.PrepareReload(directory);
+                if (step.ReloadParameters) controller.LoadParamsJson();
+                if (step.ReloadModel) controller.GetModelConfigCTRL().LoadModelJson();
+                if (step.Modeled) controller.StimWithMode(MapChannel(step.GlobalChannel), step.Input);
+                else if (step.Normalized) controller.StimulateNormalized(MapChannel(step.GlobalChannel), step.Input);
+                else controller.StimulateAnalog(MapChannel(step.GlobalChannel), step.Expectation.PulseWidth,
+                    step.Expectation.PulseAmplitude, step.Expectation.InterPulseInterval);
+                WssStimulationWindowResult result = WssStimulationWindow.Evaluate(
+                    conformance, baseline, step.Expectation, scenario.DeviceCount);
+                for (int poll = 0; poll < OperationPollLimit && !result.Settled && result.Failures.Count == 0; poll++)
+                {
+                    await Task.Delay(1);
+                    result = WssStimulationWindow.Evaluate(conformance, baseline, step.Expectation, scenario.DeviceCount);
+                }
+                Assert.That(result.Passed, Is.True, scenario.Id + "/" + step.Id + ": " + result.Diagnostics);
+            }
+        }
+        finally { DeleteFixtureDirectory(directory); }
+    }
+
     [Test]
     public async Task InitializationThroughCSharpImplementationPassesCoreConformance()
     {
@@ -321,6 +380,7 @@ public sealed class StimulationControllerConformanceTests
             3 => "middle",
             4 => "ring",
             5 => "pinky",
+            6 => "ch6",
             _ => throw new ArgumentOutOfRangeException(nameof(channel), channel, "Unsupported wrapper channel.")
         };
 
