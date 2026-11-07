@@ -102,19 +102,19 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
             try
             {
 
-            IStimulationCore core = new WssStimulationCore(transport, new WssStimulationCoreOptions
-            {
-                ConfigPath = _startupPath,
-                MaxSetupTries = _options.MaxSetupTries
-            });
+                IStimulationCore core = new WssStimulationCore(transport, new WssStimulationCoreOptions
+                {
+                    ConfigPath = _startupPath,
+                    MaxSetupTries = _options.MaxSetupTries
+                });
 
-            IStimParamsCore paramsLayer = new StimParamsLayer(core, _startupPath);
-            var modelLayer = new ModelParamsLayer(paramsLayer, _startupPath);
+                IStimParamsCore paramsLayer = new StimParamsLayer(core, _startupPath);
+                var modelLayer = new ModelParamsLayer(paramsLayer, _startupPath);
 
-            _wss = modelLayer;
-            _transport = transport;
-            _wss.TryGetBasic(out _basicWss);
-            _basicSupported = _basicWss != null;
+                _wss = modelLayer;
+                _transport = transport;
+                _wss.TryGetBasic(out _basicWss);
+                _basicSupported = _basicWss != null;
 
                 _wss.Initialize();
                 _snapshot = WssConfigurationSnapshot.ReadDefaults(_startupPath).CaptureCurrent(_wss);
@@ -178,25 +178,25 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     private WssTransport.ITransport CreateTransport()
     {
         return _options.Transport switch
-            {
-                StimulationTransportKind.Conformance => new EmulatedWssTransport(),
-                StimulationTransportKind.Test => new WssTransport.TestModeTransport(
-                    new WssTransport.TestModeTransportOptions()),
-                StimulationTransportKind.Ble => new WssTransport.BleNusTransport(
-                    new WssTransport.BleNusTransportOptions
-                    {
-                        AutoSelectDevice = _options.BleAutoSelect,
-                        DeviceId = _options.BleDeviceId,
-                        DeviceName = _options.BleDeviceName
-                    }),
-                StimulationTransportKind.Serial => new WssTransport.SerialPortTransport(
-                    new WssTransport.SerialPortTransportOptions
-                    {
-                        PortName = _options.SerialPort ?? string.Empty,
-                        AutoSelectPort = string.IsNullOrWhiteSpace(_options.SerialPort)
-                    }),
-                _ => throw new InvalidOperationException($"Unsupported transport '{_options.Transport}'.")
-            };
+        {
+            StimulationTransportKind.Conformance => new EmulatedWssTransport(),
+            StimulationTransportKind.Test => new WssTransport.TestModeTransport(
+                new WssTransport.TestModeTransportOptions()),
+            StimulationTransportKind.Ble => new WssTransport.BleNusTransport(
+                new WssTransport.BleNusTransportOptions
+                {
+                    AutoSelectDevice = _options.BleAutoSelect,
+                    DeviceId = _options.BleDeviceId,
+                    DeviceName = _options.BleDeviceName
+                }),
+            StimulationTransportKind.Serial => new WssTransport.SerialPortTransport(
+                new WssTransport.SerialPortTransportOptions
+                {
+                    PortName = _options.SerialPort ?? string.Empty,
+                    AutoSelectPort = string.IsNullOrWhiteSpace(_options.SerialPort)
+                }),
+            _ => throw new InvalidOperationException($"Unsupported transport '{_options.Transport}'.")
+        };
     }
 
     private WssConfigurationSnapshot CurrentSnapshot() =>
@@ -326,10 +326,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int channel = FingerToChannel(finger);
-        wss.StimulateAnalog(channel, PW, amp, IPI);
-            }
+            var wss = EnsureWss();
+            int channel = FingerToChannel(finger);
+            wss.StimulateAnalog(channel, PW, amp, IPI);
+        }
     }
 
     /// <summary>
@@ -340,10 +340,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        wss.StartStim(WssTarget.Broadcast);
-        started = true;
-            }
+            var wss = EnsureWss();
+            wss.StartStim(WssTarget.Broadcast);
+            started = true;
+        }
     }
 
     /// <summary>
@@ -354,10 +354,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        wss.StopStim(WssTarget.Broadcast);
-        started = false;
-            }
+            var wss = EnsureWss();
+            wss.StopStim(WssTarget.Broadcast);
+            started = false;
+        }
     }
 
     /// <summary>
@@ -369,10 +369,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        wss.StopStim(IntToWssTarget(targetWSS));
-        started = false;
-            }
+            var wss = EnsureWss();
+            wss.StopStim(IntToWssTarget(targetWSS));
+            started = false;
+        }
     }
 
     /// <summary>
@@ -387,9 +387,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.Save(IntToWssTarget(targetWSS));
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.Save(IntToWssTarget(targetWSS));
+        }
     }
 
     /// <summary>
@@ -403,9 +403,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.Save(WssTarget.Broadcast);
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.Save(WssTarget.Broadcast);
+        }
     }
 
     /// <summary>
@@ -420,9 +420,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.Load(IntToWssTarget(targetWSS));
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.Load(IntToWssTarget(targetWSS));
+        }
     }
 
     /// <summary>
@@ -436,9 +436,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.Load(WssTarget.Broadcast);
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.Load(WssTarget.Broadcast);
+        }
     }
 
     /// <summary>
@@ -455,9 +455,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.Request_Configs(command, id, IntToWssTarget(targetWSS));
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.Request_Configs(command, id, IntToWssTarget(targetWSS));
+        }
     }
 
     /// <summary>
@@ -473,9 +473,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.UpdateWaveform(waveform, eventID, WssTarget.Broadcast);
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.UpdateWaveform(waveform, eventID, WssTarget.Broadcast);
+        }
     }
 
     /// <summary>
@@ -492,9 +492,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.UpdateWaveform(waveform, eventID, IntToWssTarget(targetWSS));
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.UpdateWaveform(waveform, eventID, IntToWssTarget(targetWSS));
+        }
     }
 
     /// <summary>
@@ -511,9 +511,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.UpdateEventShape(cathodicWaveform, anodicWaveform, eventID, WssTarget.Broadcast);
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.UpdateEventShape(cathodicWaveform, anodicWaveform, eventID, WssTarget.Broadcast);
+        }
     }
 
     /// <summary>
@@ -531,9 +531,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.UpdateEventShape(cathodicWaveform, anodicWaveform, eventID, IntToWssTarget(targetWSS));
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.UpdateEventShape(cathodicWaveform, anodicWaveform, eventID, IntToWssTarget(targetWSS));
+        }
     }
 
     /// <summary>
@@ -549,9 +549,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.UpdateWaveform(waveform, eventID, WssTarget.Broadcast);
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.UpdateWaveform(waveform, eventID, WssTarget.Broadcast);
+        }
     }
 
     /// <summary>
@@ -568,9 +568,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.UpdateWaveform(waveform, eventID, IntToWssTarget(targetWSS));
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.UpdateWaveform(waveform, eventID, IntToWssTarget(targetWSS));
+        }
     }
 
     /// <summary>
@@ -586,9 +586,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.LoadWaveform(fileName, eventID);
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.LoadWaveform(fileName, eventID);
+        }
     }
 
     /// <summary>
@@ -604,9 +604,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.WaveformSetup(wave, eventID, WssTarget.Broadcast);
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.WaveformSetup(wave, eventID, WssTarget.Broadcast);
+        }
     }
 
     /// <summary>
@@ -623,9 +623,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.WaveformSetup(wave, eventID, IntToWssTarget(targetWSS));
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.WaveformSetup(wave, eventID, IntToWssTarget(targetWSS));
+        }
     }
 
     /// <summary>
@@ -641,9 +641,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.UpdateIPD(ipd, eventID, WssTarget.Broadcast);
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.UpdateIPD(ipd, eventID, WssTarget.Broadcast);
+        }
     }
 
     /// <summary>
@@ -660,9 +660,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.UpdateIPD(ipd, eventID, IntToWssTarget(targetWSS));
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.UpdateIPD(ipd, eventID, IntToWssTarget(targetWSS));
+        }
     }
 
     /// <summary>
@@ -679,9 +679,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
-        basic.UpdateEventRatio(ratio, eventID, IntToWssTarget(targetWSS));
-            }
+            if (!TryGetBasic(out var basic)) { Log.Error("Basic stimulation not supported."); return; }
+            basic.UpdateEventRatio(ratio, eventID, IntToWssTarget(targetWSS));
+        }
     }
 
     #endregion
@@ -701,10 +701,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int ch = FingerToChannel(finger);
-        wss.StimulateNormalized(ch, magnitude);
-            }
+            var wss = EnsureWss();
+            int ch = FingerToChannel(finger);
+            wss.StimulateNormalized(ch, magnitude);
+        }
     }
 
     /// <summary>
@@ -720,10 +720,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int ch = FingerToChannel(finger);
-        return (int)wss.GetStimIntensity(ch);
-            }
+            var wss = EnsureWss();
+            int ch = FingerToChannel(finger);
+            return (int)wss.GetStimIntensity(ch);
+        }
     }
 
     /// <summary>
@@ -790,10 +790,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int ch = FingerToChannel(finger);
-        wss.SetChannelAmp(ch, mA);
-            }
+            var wss = EnsureWss();
+            int ch = FingerToChannel(finger);
+            wss.SetChannelAmp(ch, mA);
+        }
     }
 
     /// <summary>
@@ -809,10 +809,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int ch = FingerToChannel(finger);
-        wss.SetChannelPWMin(ch, us);
-            }
+            var wss = EnsureWss();
+            int ch = FingerToChannel(finger);
+            wss.SetChannelPWMin(ch, us);
+        }
     }
 
     /// <summary>
@@ -828,10 +828,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int ch = FingerToChannel(finger);
-        wss.SetChannelPWMax(ch, us);
-            }
+            var wss = EnsureWss();
+            int ch = FingerToChannel(finger);
+            wss.SetChannelPWMax(ch, us);
+        }
     }
 
     /// <summary>
@@ -847,10 +847,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int ch = FingerToChannel(finger);
-        wss.SetChannelIPI(ch, ms);
-            }
+            var wss = EnsureWss();
+            int ch = FingerToChannel(finger);
+            wss.SetChannelIPI(ch, ms);
+        }
     }
 
     /// <summary>
@@ -866,10 +866,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int ch = FingerToChannel(finger);
-        return wss.GetChannelAmp(ch);
-            }
+            var wss = EnsureWss();
+            int ch = FingerToChannel(finger);
+            return wss.GetChannelAmp(ch);
+        }
     }
 
     /// <summary>
@@ -885,10 +885,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int ch = FingerToChannel(finger);
-        return wss.GetChannelPWMin(ch);
-            }
+            var wss = EnsureWss();
+            int ch = FingerToChannel(finger);
+            return wss.GetChannelPWMin(ch);
+        }
     }
 
     /// <summary>
@@ -904,10 +904,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int ch = FingerToChannel(finger);
-        return wss.GetChannelPWMax(ch);
-            }
+            var wss = EnsureWss();
+            int ch = FingerToChannel(finger);
+            return wss.GetChannelPWMax(ch);
+        }
     }
 
     /// <summary>
@@ -923,10 +923,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int ch = FingerToChannel(finger);
-        return wss.GetChannelIPI(ch);
-            }
+            var wss = EnsureWss();
+            int ch = FingerToChannel(finger);
+            return wss.GetChannelIPI(ch);
+        }
     }
 
     /// <summary>
@@ -941,10 +941,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int ch = FingerToChannel(finger);
-        return wss.IsChannelInRange(ch);
-            }
+            var wss = EnsureWss();
+            int ch = FingerToChannel(finger);
+            return wss.IsChannelInRange(ch);
+        }
     }
 
     /// <summary>
@@ -960,10 +960,10 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int ch = FingerToChannel(finger);
-        wss.StimWithMode(ch, magnitude);
-            }
+            var wss = EnsureWss();
+            int ch = FingerToChannel(finger);
+            wss.StimWithMode(ch, magnitude);
+        }
     }
 
     /// <summary>
@@ -981,16 +981,16 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        var wss = EnsureWss();
-        int ch = FingerToChannel(finger);
-        if (!wss.IsChannelInRange(ch))
-            throw new ArgumentOutOfRangeException(nameof(finger), $"Channel {ch} is not valid for current config.");
+            var wss = EnsureWss();
+            int ch = FingerToChannel(finger);
+            if (!wss.IsChannelInRange(ch))
+                throw new ArgumentOutOfRangeException(nameof(finger), $"Channel {ch} is not valid for current config.");
 
-        string baseKey = $"stim.ch.{ch}";
-        wss.AddOrUpdateStimParam($"{baseKey}.maxPW", max);
-        wss.AddOrUpdateStimParam($"{baseKey}.minPW", min);
-        wss.AddOrUpdateStimParam($"{baseKey}.defaultPA", amp);
-            }
+            string baseKey = $"stim.ch.{ch}";
+            wss.AddOrUpdateStimParam($"{baseKey}.maxPW", max);
+            wss.AddOrUpdateStimParam($"{baseKey}.minPW", min);
+            wss.AddOrUpdateStimParam($"{baseKey}.defaultPA", amp);
+        }
     }
 
     #endregion
@@ -1030,18 +1030,18 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        lock (_gate)
-        {
-            if (_transport is IConformanceProvider provider)
+            lock (_gate)
             {
-                conformance = provider.Conformance;
-                return true;
-            }
+                if (_transport is IConformanceProvider provider)
+                {
+                    conformance = provider.Conformance;
+                    return true;
+                }
 
-            conformance = null!;
-            return false;
-        }
+                conformance = null!;
+                return false;
             }
+        }
     }
 
     /// <summary>
@@ -1123,9 +1123,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        Shutdown();
-        GC.SuppressFinalize(this);
-            }
+            Shutdown();
+            GC.SuppressFinalize(this);
+        }
     }
 
     /// <summary>
@@ -1139,9 +1139,9 @@ public sealed class StimulationController : IAsyncDisposable, IDisposable
     {
         lock (_gate)
         {
-        Shutdown();
-        return ValueTask.CompletedTask;
-            }
+            Shutdown();
+            return ValueTask.CompletedTask;
+        }
     }
 }
 

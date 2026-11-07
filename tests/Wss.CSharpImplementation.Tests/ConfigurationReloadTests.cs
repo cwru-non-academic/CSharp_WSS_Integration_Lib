@@ -166,6 +166,11 @@ public sealed class ConfigurationReloadTests
     }
 
     private static void WriteCore(string directory, int devices) => File.WriteAllText(Path.Combine(directory, "stimConfig.json"),
-        JsonSerializer.Serialize(new { maxWSS = devices, firmware = "J03", useConfigAmpCurves = true,
-            ampCurves = new[] { new { LowThreshold = 0, LowConst = 1, ExpPower = 1, LinearOffset = -1, LinearSlope = 1 } } }));
+        JsonSerializer.Serialize(new
+        {
+            maxWSS = devices,
+            firmware = "J03",
+            useConfigAmpCurves = true,
+            ampCurves = new[] { new { LowThreshold = 0, LowConst = 1, ExpPower = 1, LinearOffset = -1, LinearSlope = 1 } }
+        }));
 }
