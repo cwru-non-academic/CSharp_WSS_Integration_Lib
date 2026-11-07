@@ -1,0 +1,38 @@
+name: Local test variable snapshot
+run-name: WSS test variables ${{ fromJSON(inputs.request).request_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      request:
+        description: Immutable authenticated Core request
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    name: Capture effective test variables
+    if: github.event_name == 'workflow_dispatch' && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Capture named effective settings
+        id: capture
+        env:
+          WSS_USE_PIN_TESTS: ${{ vars.WSS_USE_PIN_TESTS }}
+          WSS_PIN_TEST_REPOSITORY: ${{ vars.WSS_PIN_TEST_REPOSITORY }}
+          WSS_PIN_TEST_COMMIT: ${{ vars.WSS_PIN_TEST_COMMIT }}
+        run: node .github/scripts/wss-ci/capture-test-variables.mjs "$RUNNER_TEMP/snapshot.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.capture.outputs.artifact_name }}
+          path: ${{ runner.temp }}/snapshot.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 90
