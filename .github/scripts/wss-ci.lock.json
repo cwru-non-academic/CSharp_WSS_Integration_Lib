@@ -2,8 +2,8 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "3afae955d2decee94496e8615ac0246cefdc331f",
-  "source_ref": "refs/heads/ci/tooling/3afae955d2decee94496e8615ac0246cefdc331f",
+  "source_commit": "3eb48da437841fb705c4e984c839838722e77baf",
+  "source_ref": "refs/heads/ci/tooling/3eb48da437841fb705c4e984c839838722e77baf",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
@@ -241,12 +241,17 @@
     ".github/scripts/wss-ci/restored-assets/RestoredAssets.Tests.ps1": {
       "origin": "core",
       "source": "tools/ci/shared/restored-assets/RestoredAssets.Tests.ps1",
-      "sha256": "224804007bcf9bee6bcc48fec3734743aba4cfc91c048df4e018a32d31cd8d6b"
+      "sha256": "4d60a06d5e2d7adf02d8f26fd75c4b77d224a7b06ba1b7494008576ef0a8b879"
     },
     ".github/scripts/wss-ci/restored-assets/RestoredAssets.ps1": {
       "origin": "core",
       "source": "tools/ci/shared/restored-assets/RestoredAssets.ps1",
       "sha256": "bc3249f703d22ec12947552a89203532ca5cfeecede880f3991bdac87bebe5e0"
+    },
+    ".github/scripts/wss-ci/compiled-tests/CompiledCSharpTests.ps1": {
+      "origin": "core",
+      "source": "tools/ci/shared/compiled-tests/CompiledCSharpTests.ps1",
+      "sha256": "903f0e48225453716d3ce8405f45a85d0c59f553c30664746ba9a60c177ae84f"
     }
   }
 }

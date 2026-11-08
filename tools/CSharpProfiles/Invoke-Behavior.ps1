@@ -5,10 +5,14 @@ param(
     [string]$ArtifactDirectory = $env:WSS_ARTIFACT_DIR,
     [string]$BleArtifactDirectory = $env:WSS_BLE_ARTIFACT_DIR,
     [switch]$IsolatedBuild,
+    [object]$CompiledProof,
     [Parameter(Mandatory)][ValidateSet('legacy-v1','layered-v1')][string]$Profile
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if($null -eq $CompiledProof){
+ throw 'Behavioral tests require a trusted compiled proof; use the prepared runner after building.'
+}
 
 # This inventory is independent of the Core catalog: removing a scenario must fail CI.
 $baseCases = @(
@@ -27,13 +31,7 @@ try {
         $env:WSS_CONFORMANCE_STAGE = $stage
         $directory = Join-Path $ResultsDirectory $stage
         New-Item -ItemType Directory -Force -Path $directory | Out-Null
-        $arguments = @('test', $Project, '-c', 'Release', '--no-build', '--no-restore',
-            '--filter', $filter, '-p:TreatWarningsAsErrors=true',
-            '--logger', 'trx;LogFileName=behavior.trx', '--results-directory', $directory)
-        if ($IsolatedBuild) { $arguments += @('-p:ImportDirectoryBuildProps=false','-p:ImportDirectoryBuildTargets=false') }
-        if ($ArtifactDirectory) { $arguments += "-p:WSS_ARTIFACT_DIR=$ArtifactDirectory" }
-        if ($BleArtifactDirectory) { $arguments += "-p:WSS_BLE_ARTIFACT_DIR=$BleArtifactDirectory" }
-        & dotnet @arguments
+        Invoke-CompiledCSharpTests -Proof $CompiledProof -ResultsDirectory $directory -Filter $filter -TrxFileName 'behavior.trx'
         if ($LASTEXITCODE -ne 0) { throw "Behavioral conformance failed in the $stage stage." }
         [xml]$trx = Get-Content -LiteralPath (Join-Path $directory 'behavior.trx') -Raw
         $definitions = @($trx.TestRun.TestDefinitions.UnitTest | Where-Object {

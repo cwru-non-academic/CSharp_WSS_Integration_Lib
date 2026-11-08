@@ -4,9 +4,9 @@ function Assert-CSharpProfileBootstrap {
     $files=@{
         'Profile.ps1'='db6d9d261215903300f3ad397a80cb4b0c1d7f5ab3b62d151f224421396d1ea9'
         'Prepare-CSharpProfile.ps1'='1562b2c9ae4ed219be88bf0dedd30e5788390a3917210ba23cd6d29af2a6ffb8'
-        'Invoke-PreparedBehavior.ps1'='a322414d4e70a33078c504baed27d0e1cff9636bcc378ca9ee86c3dd520f3fc7'
-        'Invoke-PreparedFullTests.ps1'='ed1b20ab888e8692f469515155f553e07ba82870407b949c932b7384d003afdf'
-        'Invoke-Behavior.ps1'='d9419f2f7909a9b579cca546af90f491b5c734f50bc8fd2a68510902d924e9c9'
+        'Invoke-PreparedBehavior.ps1'='43aae358f90562130166509a96846cf13102a7c497596cdb8b8ea8ab79febe08'
+        'Invoke-PreparedFullTests.ps1'='e95655cea2284910ef27251c0052a8d66455f558873474231036a9f16dda38a7'
+        'Invoke-Behavior.ps1'='36ef5788c2f8874fc7152fe3ba4e1a0ad9229a8788f624bb5519da64d193499a'
         'fixtures/legacy-v1/StimulationControllerConformanceTests.cs'='f6aeced83d35255532b6685d9c870307f856aad140da133695a77e9de6104ee2'
         'fixtures/layered-v1/StimulationControllerConformanceTests.cs'='96812ab33be7ede8840ddb78131a50796fd3f797d9627f958251b3e58796baf8'
     }
