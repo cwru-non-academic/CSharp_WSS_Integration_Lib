@@ -1,20 +1,11 @@
-name: Emit release acceptance receipt
+# Generated from the immutable integration-owned common receipt template.
+name: Verify release acceptance
 run-name: WSS acceptance csharp-wrapper ${{ inputs.plan_id }}
 on:
   workflow_dispatch:
     inputs:
-      producer_run_id:
-        description: Canonical channel push producer run with frozen plan
-        required: true
-        type: string
-      plan_id:
-        description: Exact frozen wss-propagation-plan/v1 digest
-        required: true
-        type: string
-env:
-  WSS_CI_CHANNEL: ${{ github.ref_name }}
-  WSS_TARGET_ROOT: ${{ github.workspace }}/.accepted
-  WSS_CORE_TOOLS_ROOT: ${{ github.workspace }}/workflow-guard
+      producer_run_id: {required: true, type: string}
+      plan_id: {required: true, type: string}
 permissions:
   contents: read
   actions: read
@@ -24,68 +15,98 @@ concurrency:
   cancel-in-progress: false
 jobs:
   receipt:
-    name: Verify actual wrapper merge and exact candidate acceptance
-    if: github.repository == 'cwru-non-academic/CSharp_WSS_Integration_Lib' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    name: Verify exact reviewed acceptance
+    if: github.repository == 'cwru-non-academic/CSharp_WSS_Integration_Lib' && github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      WSS_CI_CHANNEL: ${{ github.ref_name }}
+      TARGET_ID: csharp-wrapper
+      PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
+      PLAN_ID: ${{ inputs.plan_id }}
+      WSS_RECEIPT_ENGINE_SHA: 45d571bef78b1cee9d6497e20448bed7d353644c
+      WSS_RECEIPT_CORE_SHA: 7712e609f44ffc3425df3c067be8e2e080506f59
+      WSS_RECEIPT_VALIDATOR_SHA: 45d571bef78b1cee9d6497e20448bed7d353644c
     steps:
+      - name: Require static caller eligibility before credentials
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -cne 'cwru-non-academic/CSharp_WSS_Integration_Lib' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or $env:GITHUB_REF -cnotin @('refs/heads/dev','refs/heads/main') -or $env:PRODUCER_RUN_ID -cnotmatch '^[1-9][0-9]*$' -or $env:PLAN_ID -cnotmatch '^[a-f0-9]{64}$') { throw 'Ineligible receipt caller.' }
+          if ($env:GITHUB_WORKFLOW_SHA -cne $env:GITHUB_SHA -or $env:GITHUB_WORKFLOW_REF -cne "$env:GITHUB_REPOSITORY/.github/workflows/release-receipt.yml@$env:GITHUB_REF") { throw 'Receipt workflow source differs from accepted source.' }
       - uses: actions/checkout@v4
         with:
-          ref: main
-          path: .tools
-          fetch-depth: 0
+          repository: cwru-non-academic/Python_WSS_Integration_Lib
+          ref: 45d571bef78b1cee9d6497e20448bed7d353644c
+          path: bootstrap/Python_WSS_Integration_Lib
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
-          ref: main
-          path: .validation-tools
-          fetch-depth: 0
+          repository: cwru-non-academic/WSSCore
+          ref: 7712e609f44ffc3425df3c067be8e2e080506f59
+          path: core
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-          path: .accepted
+          path: accepted
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: ${{ false }}
+        with:
+          repository: cwru-non-academic/CSharp_WSS_Integration_Lib
+          ref: ${{ github.sha }}
+          path: validator
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: ${{ false }}
+        with:
+          repository: cwru-non-academic/CSharp_WSS_Integration_Lib
+          ref: ${{ github.ref_name }}
+          path: integration
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Read locked Core guard source
-        id: guard
+      - name: Check local eligibility and native readiness before read credentials
         shell: pwsh
         run: |
-          $lock=Get-Content .accepted/.github/scripts/wss-ci.lock.json -Raw|ConvertFrom-Json
-          if($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cnotmatch '^[a-f0-9]{40}$' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)"){throw 'Invalid immutable Core guard lock.'}
-          "commit=$($lock.source_commit)" >> $env:GITHUB_OUTPUT
-      - uses: actions/checkout@v4
-        with:
-          repository: cwru-non-academic/WSSCore
-          ref: ${{ steps.guard.outputs.commit }}
-          path: workflow-guard
-          persist-credentials: false
-      - name: Create receipt evidence read token
-        id: receipt-evidence
-        uses: actions/create-github-app-token@v2
+          & node (Join-Path $env:GITHUB_WORKSPACE 'bootstrap/Python_WSS_Integration_Lib/.github/scripts/wss-ci/receipt.mjs') --eligibility (Join-Path $env:GITHUB_WORKSPACE 'accepted')
+          if($LASTEXITCODE -ne 0){throw 'Common local receipt eligibility failed.'}
+      - uses: actions/create-github-app-token@v2
+        id: read
         with:
           app-id: ${{ vars.WSS_GITHUB_APP_ID }}
           private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
           owner: cwru-non-academic
-          repositories: |
-            WSSCore
-            CSharp_WSS_Integration_Lib
-            CLI_CSharp_WSS_Application
+          repositories: WSSCore,CSharp_WSS_Integration_Lib,CLI_CSharp_WSS_Application
           permission-contents: read
           permission-actions: read
           permission-pull-requests: read
-      - name: Validate provenance, paired preflights, actual merge and fresh normal CI
+      - name: Admit authority, invoke native proof, recheck and emit
         id: receipt
         shell: pwsh
         env:
-          GH_TOKEN: ${{ steps.receipt-evidence.outputs.token }}
-          PRODUCER_RUN: ${{ inputs.producer_run_id }}
-          PLAN_ID: ${{ inputs.plan_id }}
-        run: ./.tools/.github/scripts/Write-ReleaseReceipt.ps1 -TargetId csharp-wrapper -ProducerRunId $env:PRODUCER_RUN -PlanId $env:PLAN_ID
+          GH_TOKEN: ${{ steps.read.outputs.token }}
+        run: |
+          $config=@{
+            sourceRoot=Join-Path $env:GITHUB_WORKSPACE 'accepted'
+            toolsRoot=Join-Path $env:GITHUB_WORKSPACE 'accepted'
+            validatorRoot=Join-Path $env:GITHUB_WORKSPACE 'accepted'
+            integrationRoot=Join-Path $env:GITHUB_WORKSPACE 'accepted'
+            engineRoot=Join-Path $env:GITHUB_WORKSPACE 'bootstrap/Python_WSS_Integration_Lib'
+            coreRoot=Join-Path $env:GITHUB_WORKSPACE 'core'
+            outputRoot=Join-Path $env:RUNNER_TEMP 'release-receipt'
+          }
+          $configPath=Join-Path $env:RUNNER_TEMP 'receipt-config.json'
+          $config|ConvertTo-Json|Set-Content -LiteralPath $configPath
+          & node (Join-Path $config.engineRoot '.github/scripts/wss-ci/receipt.mjs') $configPath
+          if($LASTEXITCODE -ne 0){throw 'Common receipt verification failed.'}
       - uses: actions/upload-artifact@v4
+        if: ${{ success() }}
         with:
           name: ${{ steps.receipt.outputs.artifact_name }}
-          path: receipt-output/receipt.json
+          retention-days: 90
           if-no-files-found: error
+          path: ${{ runner.temp }}/release-receipt/receipt.json

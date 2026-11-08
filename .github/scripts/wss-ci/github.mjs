@@ -1,3 +1,5 @@
+import {detachAdmission,createAdmissionRefresh,refreshProducerMetadata,refreshNormalMetadata,refreshPreflightMetadata,refreshEmitterMetadata} from './admission-context.mjs';
+import {collectPreflightProof,preflightCandidate} from './preflight-proof.mjs';
 import {selectionFields,collectSelectedTestArtifact} from './campaign-test-selection.mjs';
 import {execFileSync} from 'node:child_process';
 import {mkdtempSync,readdirSync,readFileSync,writeFileSync,rmSync} from 'node:fs';
@@ -5,7 +7,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {allClear,bytesDigest,candidate,canonical,CORE,digest,manifest,plan,producer,requireThat} from './verify.mjs';
 import {checkTagGuard} from './policy.mjs';
-import {findNormalRuns} from './normal-ci.mjs';
+import {findNormalRuns,selectNormalRun} from './normal-ci.mjs';
 import {channelContext,releaseFingerprint} from './channels.mjs';
 
 // No shell expansion, caller-provided commands, implicit pagination or token output.
@@ -38,7 +40,8 @@ export class GitHub {
   artifact(repo,run,name) {
     const all=this.pages(`repos/${repo}/actions/runs/${run}/artifacts`,'artifacts').filter(a=>a.name===name);
     requireThat(all.length===1 && all[0].expired===false,`Missing/duplicate/expired ${name}`);
-    return this.get(`repos/${repo}/actions/artifacts/${all[0].id}`);
+    const detail=this.get(`repos/${repo}/actions/artifacts/${all[0].id}`);
+    requireThat(String(detail.id)===String(all[0].id)&&detail.name===name&&detail.expired===false,'Artifact detail differs from unique live inventory');return detail;
   }
   download(repo,run,name,files) {
     this.artifact(repo,run,name); // Reject ambiguous same-name artifacts before gh extraction.
@@ -89,22 +92,15 @@ export function archive(g,c) {
   const lines=files['SHA256SUMS.txt'].toString('utf8').trim().split(/\r?\n/);
   requireThat(lines.length===1 && lines[0]===`${c.sha256}  ${c.archive}`,'Checksum metadata differs from exact accepted ZIP');
   requireThat(bytesDigest(files[c.archive])===c.sha256,'Downloaded ZIP checksum mismatch');
-  return {artifact:a,files};
+  return detachAdmission({artifact:a,files});
 }
 export function collect(g,p) {
+  const client=g;g=new Proxy(client,{get(target,key){const value=Reflect.get(target,key);return typeof value==='function'?(...args)=>detachAdmission(value.apply(client,args)):value;}});
   plan(p);
-  const c=p.candidate, source=g.run(CORE,c.run_id), zip=archive(g,c);
+  const c=p.candidate, source=structuredClone(g.run(CORE,c.run_id)), zip=archive(g,c);
   const evidence={producer:{run:source,current_head:g.head(CORE,p.channel),jobs:g.jobs(CORE,source),artifact:zip.artifact,archive_sha256:bytesDigest(zip.files[c.archive])},targets:{}};
   for(const t of p.manifest.targets) {
-    const runs=g.pages(`repos/${t.repository}/actions/workflows/release-receipt.yml/runs?branch=${t.branch}`,'workflow_runs');
-    const matches=[];
-    for(const emitter of runs) {
-      const name=`wss-acceptance-${t.id}-${p.plan_id}-a${emitter.run_attempt}`;
-      const artifacts=g.pages(`repos/${t.repository}/actions/runs/${emitter.id}/artifacts`,'artifacts').filter(a=>a.name===name);
-      if(artifacts.length) matches.push({emitter,name});
-    }
-    requireThat(matches.length===1,`Missing or ambiguous actual acceptance receipt for ${t.id}`);
-    const {emitter,name}=matches[0];
+    const {emitter,name}=discoverReceipt(g,p,t);
     const receipt_bytes=g.download(t.repository,String(emitter.id),name,['receipt.json'])['receipt.json'];
     const r=JSON.parse(receipt_bytes.toString('utf8'));
     requireThat(r.emitter?.run_id===String(emitter.id),'Receipt emitter identifier mismatch');
@@ -119,19 +115,61 @@ export function collect(g,p) {
       return [parent,link.sha];
     }));
     const preflights=(r.preflights || []).map(d=>{
-      const run=g.run(d.repository,d.run_id),target=p.manifest.targets.find(t=>t.repository===d.repository);
+      const proof=collectPreflightProof(g,d),run=proof.run,target=p.manifest.targets.find(t=>t.repository===d.repository);
       requireThat(target,'Unknown preflight target');
-      return {run,candidate:JSON.parse(g.download(d.repository,d.run_id,'wss-candidate-provenance',['candidate.json'])['candidate.json']),
-        ...(p.test_selection?{selected_tests:collectSelectedTestArtifact(g,p,target.id,run)}:{})};
+      return detachAdmission({...proof,candidate:preflightCandidate(g,d),
+        ...(p.test_selection?{selected_tests:collectSelectedTestArtifact(g,p,target.id,run)}:{})});
     });
-    evidence.targets[t.id]={receipt:r,receipt_bytes,receipt_sha256:bytesDigest(receipt_bytes),pr,current_head:g.head(t.repository,t.branch),
+    evidence.targets[t.id]=detachAdmission({receipt:r,receipt_bytes,receipt_sha256:bytesDigest(receipt_bytes),pr,current_head:g.head(t.repository,t.branch),
       merge_tree:g.tree(t.repository,r.merge.sha),tested_tree:g.tree(t.repository,normal.head_sha),
       trusted:Object.fromEntries(t.trusted_paths.map(path=>[path,g.object(t.repository,r.merge.sha,path).sha])),
       parent_gitlinks,normal_run:normal,normal_latest_run_id:String(normals[0].id),normal_jobs:g.jobs(t.repository,normal),
       ...(p.test_selection?{selected_tests:collectSelectedTestArtifact(g,p,t.id,normal)}:{}),
-      emitter_run:g.run(t.repository,String(emitter.id)),artifact:g.artifact(t.repository,String(emitter.id),name),preflights};
+      emitter_run:g.run(t.repository,String(emitter.id)),artifact:g.artifact(t.repository,String(emitter.id),name),preflights});
   }
-  return {record:allClear(p,evidence),files:zip.files};
+  // Finish expensive native artifact/log IO before the final admission reads.
+  for(const target of Object.values(evidence.targets))for(const d of target.receipt.preflights)collectPreflightProof(g,d);
+  return {record:refreshAdmission(g,p,evidence),files:zip.files,admission:evidence};
+}
+
+// Internal evidence context only; frozen plans and acceptance wire schemas stay
+// unchanged. Reuse receipt/producer/allClear policy after refreshing mutable CI
+// metadata, then read exact accepted heads last (parents are also required targets).
+// These distributed observations narrow the IO window; they are not atomic.
+export function discoverReceipt(g,p,t) {
+  const runs=g.pages(`repos/${t.repository}/actions/workflows/release-receipt.yml/runs?branch=${t.branch}`,'workflow_runs'),matches=[];
+  for(const emitter of runs){const name=`wss-acceptance-${t.id}-${p.plan_id}-a${emitter.run_attempt}`;
+    if(g.pages(`repos/${t.repository}/actions/runs/${emitter.id}/artifacts`,'artifacts').some(a=>a.name===name))matches.push({emitter,name});}
+  requireThat(matches.length===1,`Missing or ambiguous actual acceptance receipt for ${t.id}`);return matches[0];
+}
+export function assertPublicationAbsent(g,p) {
+  const tag=releaseFingerprint(p.channel,p.candidate.run_id,p.plan_id);
+  requireThat(g.pages(`repos/${CORE}/git/matching-refs/tags/${tag}`).filter(t=>t.ref===`refs/tags/${tag}`).length===0&&
+    g.pages(`repos/${CORE}/releases`).filter(r=>r.tag_name===tag).length===0,'Exact publication tag/release appeared before create');
+}
+export function refreshAdmission(g,p,captured,{publication=false}={}) {
+  requireThat(captured?.producer&&captured?.targets,'Publication requires collected admission evidence');
+  const evidence=detachAdmission(captured),session=createAdmissionRefresh(g);
+  for(const t of p.manifest.targets) {
+    const e=evidence.targets[t.id],r=e.receipt;
+    const normal=refreshNormalMetadata(g,p,t,{run:e.normal_run,jobs:e.normal_jobs,selected_tests:e.selected_tests,merge_sha:r.merge.sha,merged_at:e.pr.merged_at},{session});
+    e.normal_run=normal.run;e.normal_jobs=normal.jobs;e.normal_latest_run_id=String(normal.run.id);if(p.test_selection)e.selected_tests=normal.selected_tests;
+    e.preflights=e.preflights.map((proof,i)=>{
+      const fresh=refreshPreflightMetadata(g,p,{descriptor:r.preflights[i],proof,candidate:proof.candidate,selected_tests:proof.selected_tests},{session});
+      return {...fresh.proof,candidate:fresh.candidate,...(fresh.selected_tests?{selected_tests:fresh.selected_tests}:{})};
+    });
+    e.emitter_run=refreshEmitterMetadata(g,p,t,e.emitter_run,{session});
+    const found=discoverReceipt(g,p,t);
+    requireThat(String(found.emitter.id)===r.emitter.run_id&&found.emitter.run_attempt===r.emitter.attempt,'Receipt discovery changed emitter identity/attempt');
+    const artifact=detachAdmission(g.artifact(t.repository,r.emitter.run_id,found.name));
+    requireThat(String(artifact.id)===String(e.artifact.id)&&artifact.digest===e.artifact.digest,'Receipt artifact replaced since authentication');e.artifact=artifact;
+  }
+  evidence.producer=refreshProducerMetadata(g,p,evidence.producer,{session});
+  if(publication){checkTagGuard(g,p.manifest);assertPublicationAbsent(g,p);}
+  session.finish();
+  for(const t of p.manifest.targets)evidence.targets[t.id].current_head=g.head(t.repository,t.branch);
+  evidence.producer.current_head=g.head(CORE,p.channel);
+  return allClear(p,evidence);
 }
 
 export function publish(g,p,accepted,directory,reader=g) {
@@ -157,6 +195,7 @@ export function publish(g,p,accepted,directory,reader=g) {
   // Re-collect live proof immediately before the only publication mutation.
   const fresh=collect(reader,p);
   requireThat(canonical(fresh.record)===canonical(accepted.record),'Acceptance evidence changed during publication');
+  requireThat(canonical(Object.keys(fresh.files).sort())===canonical(Object.keys(accepted.files).sort())&&Object.entries(fresh.files).every(([name,bytes])=>Buffer.isBuffer(accepted.files[name])&&bytesDigest(bytes)===bytesDigest(accepted.files[name])),'Captured publication bytes changed');
   checkTagGuard(reader,p.manifest);
   const paths=Object.entries(expected).map(([name,bytes])=>{const path=join(directory,name);writeFileSync(path,bytes);return path;});
   g.command(['release','create',tag,'--repo',CORE,'--target',p.candidate.commit,...(context.kind==='beta'?['--prerelease']:[]),'--title',tag,

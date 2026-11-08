@@ -1,3 +1,4 @@
+param([string]$ReceiptCommonRoot=(Join-Path $PSScriptRoot '../wss-ci'))
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . "$PSScriptRoot/../WssReleaseReceipt.ps1"
@@ -5,21 +6,20 @@ Set-StrictMode -Version Latest
 # Hosted configuration contract: cross-repository evidence uses only the
 # existing, explicitly scoped read-only WSS App token.
 function Assert-WssReceiptEvidenceWorkflow([string] $Workflow, [string] $ExpectedRepository) {
-    $tokens=[regex]::Matches($Workflow,'(?ms)^      - name: Create receipt evidence read token\r?\n(?<body>.*?)(?=^      - |\z)')
-    $validation=[regex]::Match($Workflow,'(?ms)^      - name: Validate provenance,[^\r\n]*\r?\n(?<body>.*?)(?=^      - |\z)')
+    $tokens=[regex]::Matches($Workflow,'(?ms)^      - uses: actions/create-github-app-token@v2\r?\n(?<body>.*?)(?=^      - |\z)')
+    $validation=[regex]::Match($Workflow,'(?ms)^      - name: Admit authority, invoke native proof, recheck and emit\r?\n(?<body>.*?)(?=^      - |\z)')
     if ($tokens.Count -ne 1 -or !$validation.Success -or $tokens[0].Index -ge $validation.Index -or
-        [regex]::Matches($Workflow,'(?m)^\s+uses: actions/create-github-app-token@').Count -ne 1) { throw 'Receipt evidence token must be minted once before validation.' }
+        [regex]::Matches($Workflow,'(?m)^\s+- uses: actions/create-github-app-token@').Count -ne 1) { throw 'Receipt evidence token must be minted once before validation.' }
     $body=$tokens[0].Groups['body'].Value
     foreach ($line in @(
-        '        id: receipt-evidence',
-        '        uses: actions/create-github-app-token@v2',
+        '        id: read',
         ('          app-id: '+'$'+'{{ vars.WSS_GITHUB_APP_ID }}'),
         ('          private-key: '+'$'+'{{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}'),
         '          owner: cwru-non-academic'
     )) { if (!(($body -split '\r?\n') -ccontains $line)) { throw 'Receipt token must use the existing WSS App configuration.' } }
-    $repositories=[regex]::Matches($body,'(?m)^          repositories: \|\r?\n(?<items>(?:            \S+\r?\n)+)')
+    $repositories=[regex]::Matches($body,'(?m)^          repositories: (?<items>[A-Za-z0-9_,]+)\r?$')
     if ($repositories.Count -ne 1) { throw 'Receipt token requires an explicit repository list.' }
-    $actual=@($repositories[0].Groups['items'].Value.Trim() -split '\r?\n' | ForEach-Object { $_.Trim() })
+    $actual=@($repositories[0].Groups['items'].Value.Trim() -split ',' | ForEach-Object { $_.Trim() })
     $required=@('WSSCore','CSharp_WSS_Integration_Lib','CLI_CSharp_WSS_Application')
     if ($actual.Count -ne 3 -or @(Compare-Object $required $actual -CaseSensitive).Count) { throw 'Receipt evidence token repository scope changed.' }
     $permissions=[regex]::Matches($body,'(?m)^\s+permission-(?<name>[a-z-]+): (?<level>\S+)\r?$')
@@ -28,10 +28,10 @@ function Assert-WssReceiptEvidenceWorkflow([string] $Workflow, [string] $Expecte
         $matching=@($permissions | Where-Object { $_.Groups['name'].Value -ceq $name -and $_.Groups['level'].Value -ceq 'read' })
         if ($matching.Count -ne 1) { throw 'Receipt evidence token cannot request missing, duplicate or write permissions.' }
     }
-    $expectedToken='          GH_TOKEN: '+'$'+'{{ steps.receipt-evidence.outputs.token }}'
+    $expectedToken='          GH_TOKEN: '+'$'+'{{ steps.read.outputs.token }}'
     if (!(($validation.Groups['body'].Value -split '\r?\n') -ccontains $expectedToken) -or
         [regex]::Matches($Workflow,'(?m)^\s+GH_TOKEN:').Count -ne 1) { throw 'Receipt validation must use only the scoped evidence token.' }
-    if (!$Workflow.Contains("    if: github.repository == '$ExpectedRepository' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')")) { throw 'Receipt execution must remain canonical-repository and restricted to the two registered channels.' }
+    if (!$Workflow.Contains("    if: github.repository == '$ExpectedRepository' && github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')")) { throw 'Receipt execution must remain canonical-repository and restricted to the two registered channels.' }
 }
 $receiptWorkflow=Get-Content "$PSScriptRoot/../../workflows/release-receipt.yml" -Raw
 $receiptRepository=if ($receiptWorkflow.Contains('run-name: WSS acceptance csharp-wrapper ')) {
@@ -42,13 +42,13 @@ $receiptRepository=if ($receiptWorkflow.Contains('run-name: WSS acceptance cshar
 Assert-WssReceiptEvidenceWorkflow $receiptWorkflow $receiptRepository
 $evidenceRejections=0
 foreach ($mutate in @(
-    {param($w)$w.Replace(('GH_TOKEN: '+'$'+'{{ steps.receipt-evidence.outputs.token }}'),('GH_TOKEN: '+'$'+'{{ github.token }}'))},
+    {param($w)$w.Replace(('GH_TOKEN: '+'$'+'{{ steps.read.outputs.token }}'),('GH_TOKEN: '+'$'+'{{ github.token }}'))},
     {param($w)$w.Replace('          owner: cwru-non-academic','          owner: another-owner')},
-    {param($w)$w.Replace('            WSSCore',('            OtherRepository'+[Environment]::NewLine+'            WSSCore'))},
+    {param($w)$w.Replace('repositories: WSSCore,','repositories: OtherRepository,WSSCore,')},
     {param($w)$w.Replace('permission-actions: read','permission-actions: write')},
     {param($w)$w.Replace('permission-pull-requests: read','permission-issues: read')},
     {param($w)$w.Replace("github.ref == 'refs/heads/dev'","github.ref == 'refs/heads/main'")},
-    {param($w)$token=[regex]::Match($w,'(?ms)^      - name: Create receipt evidence read token\r?\n.*?(?=^      - |\z)').Value; $w.Replace($token,'')+$token}
+    {param($w)$token=[regex]::Match($w,'(?ms)^      - uses: actions/create-github-app-token@v2\r?\n.*?(?=^      - |\z)').Value; $w.Replace($token,'')+$token}
 )) {
     $invalid=& $mutate $receiptWorkflow
     if ($invalid -ceq $receiptWorkflow) { throw 'Evidence-token regression fixture did not change the workflow.' }
@@ -165,7 +165,7 @@ foreach ($targetId in @('csharp-wrapper', 'csharp-cli')) {
         Reject-ToolingMutation ".accepted|HEAD:$path" 'Accepted receiver tooling differs:*'
     }
     foreach ($path in @('.github/workflows/release-receipt.yml', '.github/scripts/Write-ReleaseReceipt.ps1', '.github/scripts/WssReleaseReceipt.ps1', '.github/scripts/wss-ci')) {
-        Reject-ToolingMutation ".tools|HEAD:$path" 'Trusted main receipt tooling differs:*'
+        Reject-ToolingMutation ".tools|HEAD:$path" 'Admitted receipt tooling differs:*'
     }
     foreach ($path in @('.github/scripts/WssPromotion.ps1', '.github/scripts/Universal-WssFiles.ps1', '.github/scripts/Resolve-WssRelease.ps1', '.github/scripts/wss-ci')) {
         Reject-ToolingMutation ".validation-tools|HEAD:$path" 'Shared C# validator differs from frozen code:*'
@@ -219,7 +219,7 @@ try {
                 manifest=@{schema='wss-required-targets/v1';channel='dev';release_kind='beta';stable_enabled=$false;targets=@($profiles.PSObject.Properties | ForEach-Object { $_.Value.target });excluded=@()}
                 target_snapshots=@{}
             }
-            target=$target;paths=@{toolsRoot=$policyRoot}
+            target=$target;paths=@{toolsRoot=$policyRoot;engineRoot=$policyRoot}
         }
         # Each fixture has the actual nine profiles, not a manually duplicated
         # C# policy table. Snapshot identities are synthetic contract data.
@@ -229,6 +229,9 @@ try {
             $context.plan.target_snapshots[$entry.id]=@{head_sha=('d'*40);trusted=$trusted}
         }
         if ($policyId -ceq 'csharp-wrapper' -and '.github/workflows/notify-core-stage.yml' -cnotin $target.trusted_paths) { throw 'Canonical wrapper profile must cover its notifier.' }
+        # Native receiver tooling may differ from the immutable common engine root.
+        # The bridge must import only the latter, never execute the receiver copy.
+        $context.paths.toolsRoot=Join-Path $policyRoot 'accepted receiver tools'
         Invoke-PolicyContext $context $policyId
         $main=$context|ConvertTo-Json -Depth 50|ConvertFrom-Json
         $main.plan.schema='wss-propagation-plan/v2';$main.plan.channel='main'
@@ -254,7 +257,7 @@ try {
             {param($c)$c.plan.manifest.excluded=@(@{id=$c.target.id})},
             {param($c)$c.plan.channel='main'}, {param($c)$c.plan.manifest.channel='main'},
             {param($c)$c.target.jobs=@('unverified')}, {param($c)$c.target.role='other'},
-            {param($c)$c.paths.toolsRoot=Join-Path $policyRoot 'different-tools'},
+            {param($c)$c.paths.engineRoot=Join-Path $policyRoot 'different-tools'},
             {param($c)$c.plan=$null}, {param($c)$c.target=$null}, {param($c)$c.paths=$null}
         )) {
             $bad=$context | ConvertTo-Json -Depth 50 | ConvertFrom-Json
@@ -387,3 +390,13 @@ Reject { Assert-WssReceiptNormalFresh $originalNormal $latestNormal $liveNormal 
 # Expected native rejection cases above leave a nonzero process status; all
 # assertions have completed successfully if execution reaches this point.
 $global:LASTEXITCODE=0
+
+# Validate the adapter-only common invocation boundary without native execution.
+& "$PSScriptRoot/NativeReceiptAdapter.Tests.ps1"
+# Both wrapper and CLI source checks require the frozen preflight commit in Git history.
+& "$PSScriptRoot/NativeReceiptHistory.Tests.ps1"
+
+& "$PSScriptRoot/ReceiptSnapshots.Tests.ps1"
+
+# Compose real native checks with the real shared proof transport; only GitHub is faked.
+& "$PSScriptRoot/ReceiptBridgeComposition.Tests.ps1" -CommonRoot $ReceiptCommonRoot

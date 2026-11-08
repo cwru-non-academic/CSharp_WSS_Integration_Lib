@@ -41,3 +41,37 @@ function Assert-WssCiArchitecturePair($Records,[string[]]$Architectures) {
     }
     if(@($Records).Count -ne $Architectures.Count){throw 'Missing/extra architecture evidence.'}
 }
+
+# Receipt-only observed proof transport. Existing rich validators retain policy.
+function Invoke-WssCiNativeProofRequest($Request,[string]$Root) {
+    $requestPath=Join-Path $Root (([guid]::NewGuid().ToString('N'))+'.request.json')
+    $responsePath=Join-Path $Root (([guid]::NewGuid().ToString('N'))+'.response.json')
+    [IO.File]::WriteAllText($requestPath,(ConvertTo-Json -InputObject $Request -Depth 100 -Compress),[Text.UTF8Encoding]::new($false))
+    try {
+        & node (Join-Path $PSScriptRoot 'receipt-proof-cli.mjs') $requestPath $responsePath
+        if($LASTEXITCODE -ne 0){throw 'Authenticated native proof transport failed.'}
+        Get-Content -LiteralPath $responsePath -Raw | ConvertFrom-Json -Depth 100
+    } finally {
+        Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue
+        if(Test-Path -LiteralPath $responsePath){Remove-Item -LiteralPath $responsePath -Force}
+    }
+}
+function Start-WssCiPreflightProof([string]$Repository,[string]$RunId,[string]$SourceSha,[string]$Root,[int]$ExpectedAttempt) {
+    if($ExpectedAttempt -lt 1 -or (Test-Path -LiteralPath $Root)){throw 'Observed attempt and new proof root required.'}
+    $null=New-Item -ItemType Directory -Path $Root
+    $state=Invoke-WssCiNativeProofRequest @{operation='start';identity=@{repository=$Repository;run_id=$RunId;source_sha=$SourceSha;attempt=$ExpectedAttempt}} $Root
+    [pscustomobject]@{Root=$Root;State=$state;Run=$state.run;Jobs=@($state.jobs)}
+}
+function Read-WssCiPreflightArtifact($Proof,[string]$Name,[string]$Destination) {
+    $Proof.State=Invoke-WssCiNativeProofRequest @{operation='artifact';state=$Proof.State;name=$Name;destination=$Destination} $Proof.Root
+}
+function Read-WssCiPreflightLog($Proof,[string]$JobId) {
+    $path=Join-Path $Proof.Root (([guid]::NewGuid().ToString('N'))+'.job.log')
+    try {
+        $Proof.State=Invoke-WssCiNativeProofRequest @{operation='log';state=$Proof.State;job_id=$JobId;destination=$path} $Proof.Root
+        [IO.File]::ReadAllText($path,[Text.UTF8Encoding]::new($false,$true))
+    } finally {if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path -Force}}
+}
+function Complete-WssCiPreflightProof($Proof) {
+    Invoke-WssCiNativeProofRequest @{operation='complete';state=$Proof.State} $Proof.Root
+}

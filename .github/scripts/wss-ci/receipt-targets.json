@@ -27,6 +27,26 @@
         "canonical-conformance",
         "packaged-macos-ble-load"
       ]
+    },
+    "receipt": {
+      "runner": "windows-2022",
+      "timeout_minutes": 30,
+      "adapter": ".github/scripts/Write-ReleaseReceipt.ps1",
+      "adapter_owner": "receiver",
+      "configuration": null,
+      "read_repositories": [
+        "WSSCore",
+        "CSharp_WSS_Integration_Lib",
+        "CLI_CSharp_WSS_Application"
+      ],
+      "aliases": [
+        [
+          "sourceRoot",
+          "integrationRoot",
+          "validatorRoot",
+          "toolsRoot"
+        ]
+      ]
     }
   },
   "csharp-cli": {
@@ -57,6 +77,24 @@
       "coverage": [
         "canonical-conformance",
         "packaged-macos-ble-load"
+      ]
+    },
+    "receipt": {
+      "runner": "windows-2022",
+      "timeout_minutes": 30,
+      "adapter": ".github/scripts/Write-ReleaseReceipt.ps1",
+      "adapter_owner": "receiver",
+      "configuration": null,
+      "read_repositories": [
+        "WSSCore",
+        "CSharp_WSS_Integration_Lib",
+        "CLI_CSharp_WSS_Application"
+      ],
+      "aliases": [
+        [
+          "sourceRoot",
+          "toolsRoot"
+        ]
       ]
     }
   },
@@ -90,6 +128,26 @@
         "packaged-macos-ble-load",
         "dotnet-harness-not-unity-editor"
       ]
+    },
+    "receipt": {
+      "runner": "windows-2022",
+      "timeout_minutes": 30,
+      "adapter": ".github/scripts/Write-ReleaseReceipt.ps1",
+      "adapter_owner": "receiver",
+      "configuration": ".github/unity-ci.json",
+      "read_repositories": [
+        "WSSCore",
+        "Unity_WSS_Integration_Lib",
+        "GUI_Unity_WSS_Application"
+      ],
+      "aliases": [
+        [
+          "sourceRoot",
+          "integrationRoot",
+          "validatorRoot",
+          "toolsRoot"
+        ]
+      ]
     }
   },
   "unity-gui": {
@@ -121,6 +179,24 @@
         "canonical-conformance",
         "packaged-macos-ble-load",
         "dotnet-harness-not-unity-editor"
+      ]
+    },
+    "receipt": {
+      "runner": "windows-2022",
+      "timeout_minutes": 30,
+      "adapter": ".github/scripts/Write-ReleaseReceipt.ps1",
+      "adapter_owner": "receiver",
+      "configuration": ".github/unity-ci.json",
+      "read_repositories": [
+        "WSSCore",
+        "Unity_WSS_Integration_Lib",
+        "GUI_Unity_WSS_Application"
+      ],
+      "aliases": [
+        [
+          "sourceRoot",
+          "toolsRoot"
+        ]
       ]
     }
   },
@@ -155,6 +231,27 @@
         "canonical-conformance",
         "packaged-macos-ble-load"
       ]
+    },
+    "receipt": {
+      "runner": "windows-2022",
+      "timeout_minutes": 30,
+      "adapter": ".github/scripts/Verify-ReleaseAcceptance.ps1",
+      "adapter_owner": "wrapper",
+      "configuration": ".github/python-ci.json",
+      "read_repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "aliases": [
+        [
+          "sourceRoot",
+          "integrationRoot",
+          "validatorRoot",
+          "toolsRoot"
+        ]
+      ]
     }
   },
   "python-cli": {
@@ -186,6 +283,25 @@
       "coverage": [
         "canonical-conformance",
         "packaged-macos-ble-load"
+      ]
+    },
+    "receipt": {
+      "runner": "windows-2022",
+      "timeout_minutes": 30,
+      "adapter": ".github/scripts/Verify-ReleaseAcceptance.ps1",
+      "adapter_owner": "wrapper",
+      "configuration": ".github/python-ci.json",
+      "read_repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "aliases": [
+        [
+          "toolsRoot",
+          "validatorRoot"
+        ]
       ]
     }
   },
@@ -221,6 +337,25 @@
         "packaged-macos-ble-load",
         "ros-native-humble"
       ]
+    },
+    "receipt": {
+      "runner": "windows-2022",
+      "timeout_minutes": 30,
+      "adapter": ".github/scripts/Verify-ReleaseAcceptance.ps1",
+      "adapter_owner": "wrapper",
+      "configuration": ".github/python-ci.json",
+      "read_repositories": [
+        "WSSCore",
+        "Python_WSS_Integration_Lib",
+        "CLI_Python_WSS_Application",
+        "ROS_Python_WSS_Application"
+      ],
+      "aliases": [
+        [
+          "toolsRoot",
+          "validatorRoot"
+        ]
+      ]
     }
   },
   "matlab-wrapper": {
@@ -254,6 +389,26 @@
       "coverage": [
         "canonical-conformance",
         "packaged-macos-ble-load"
+      ]
+    },
+    "receipt": {
+      "runner": "windows-2022",
+      "timeout_minutes": 30,
+      "adapter": ".github/scripts/Verify-ReleaseAcceptance.ps1",
+      "adapter_owner": "wrapper",
+      "configuration": ".github/matlab-ci.json",
+      "read_repositories": [
+        "WSSCore",
+        "Matlab_WSS_Integration_Lib",
+        "CLI_Matlab_WSS_Application"
+      ],
+      "aliases": [
+        [
+          "sourceRoot",
+          "integrationRoot",
+          "validatorRoot",
+          "toolsRoot"
+        ]
       ]
     }
   },
@@ -289,6 +444,24 @@
       "coverage": [
         "canonical-conformance",
         "packaged-macos-ble-load"
+      ]
+    },
+    "receipt": {
+      "runner": "windows-2022",
+      "timeout_minutes": 30,
+      "adapter": ".github/scripts/Verify-ReleaseAcceptance.ps1",
+      "adapter_owner": "wrapper",
+      "configuration": ".github/matlab-ci.json",
+      "read_repositories": [
+        "WSSCore",
+        "Matlab_WSS_Integration_Lib",
+        "CLI_Matlab_WSS_Application"
+      ],
+      "aliases": [
+        [
+          "toolsRoot",
+          "validatorRoot"
+        ]
       ]
     }
   }
