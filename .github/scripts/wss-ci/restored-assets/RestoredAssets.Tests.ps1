@@ -144,6 +144,7 @@ try {
  Write-Output "Restored assets/output contracts passed: $count. Synthetic byte files only; no WSS/native execution."
 } finally {
  $resolved=[IO.Path]::GetFullPath($scratch);$temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+ if(!$IsWindows){Push-Location $temp;try{$temp=(& /bin/pwd -P).Trim()}finally{Pop-Location}}
  if(!$resolved.StartsWith($temp,[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($resolved) -cnotmatch '^wss-restored-assets-[a-f0-9]{32}$'){throw 'Unsafe fixture cleanup path'}
  Remove-Item -LiteralPath $resolved -Recurse -Force
 }

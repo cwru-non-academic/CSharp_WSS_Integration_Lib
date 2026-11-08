@@ -2,7 +2,7 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 $cli=Test-Path (Join-Path $root '.github/workflows/cli-ci.yml')
-$files=@('.github/scripts/Invoke-SelectedCSharpTests.ps1','tools/CSharpProfiles/Invoke-BaselineProfileTests.ps1','.github/scripts/Invoke-SelectedCSharpTestsWithContext.ps1','tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1')
+$files=@('.github/scripts/Invoke-SelectedCSharpTests.ps1','tools/CSharpProfiles/Invoke-BaselineProfileTests.ps1','.github/scripts/Invoke-SelectedCSharpTestsWithContext.ps1','tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1','tools/CSharpProfiles/Invoke-PreparedFullTests.ps1')
 $files+=if($cli){@('.github/workflows/cli-ci.yml','.github/workflows/wss-preflight.yml')}else{@('.github/workflows/wss-compatibility.yml','.github/workflows/wss-preflight.yml')}
 $scratch=Join-Path ([IO.Path]::GetTempPath()) ('wss-caller-capture-'+[guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory $scratch
@@ -33,7 +33,10 @@ function Assert-WssRestoredAssetsProof {
  $script:events.Add([pscustomobject]@{kind='assert';id=$Proof.id})
 }
 function Capture-Child {$script:events.Add([pscustomobject]@{kind='child';id=-1});$global:LASTEXITCODE=0}
-function Capture-TrustedPublish {$global:LASTEXITCODE=0}
+function Capture-TrustedPublish {Require ((@($args) -join '|') -match '-p:(\|)?DisablePackageAssetsCache=true') 'Publish omitted cache contract';$global:LASTEXITCODE=0}
+function Capture-Build {Require (@($args) -ccontains '-p:DisablePackageAssetsCache=true') 'Build omitted cache contract';Require (@($args) -ccontains '--no-restore') 'Build may implicitly rewrite captured restore';$script:events.Add([pscustomobject]@{kind='build';id=-1});$global:LASTEXITCODE=0}
+function Capture-Restore {Require (@($args) -ccontains '-p:DisablePackageAssetsCache=true') 'Restore omitted cache contract';$script:events.Add([pscustomobject]@{kind='restore';id=-1});$global:LASTEXITCODE=0}
+function New-CompiledCSharpTestProof {param([string]$OutputRoot,[string]$AssemblyName);[pscustomobject]@{output_root=$OutputRoot;assembly=$AssemblyName}}
 function Capture-TrustedCliBaseline {@('synthetic CLI baseline')}
 function New-TrustedBaselineSnapshot([string[]]$Roots) {
  $paths=@($Roots|ForEach-Object {[IO.Path]::GetFullPath($_)})
@@ -66,9 +69,9 @@ function New-Projection([string]$Text,[string]$Start,[string]$Stop){
  foreach($command in $ast.FindAll({param($n)$n -is [Management.Automation.Language.CommandAst]},$true)){
   $target=$command.CommandElements[0];$name=$target.Extent.Text
   $replacement=if($name.Contains('Verify-WssOutput.ps1') -or $name -ceq '$validator'){'Capture-Verifier'}
-   elseif($name.Contains('Invoke-Behavior.ps1') -or $name.Contains('Invoke-WssBehavioralConformance.ps1') -or $name -ceq 'Invoke-CredentialFreeSelectedPowerShell'){'Capture-Child'}
+   elseif($name.Contains('Invoke-Behavior.ps1') -or $name.Contains('Invoke-WssBehavioralConformance.ps1') -or $name -ceq 'Invoke-CredentialFreeSelectedPowerShell' -or $name -ceq 'Invoke-CompiledCSharpTests'){'Capture-Child'}
    elseif($name -ceq 'Invoke-TrustedCliBaseline'){'Capture-TrustedCliBaseline'}
-   elseif($name -ceq 'dotnet'){if($command.Extent.Text -match 'dotnet publish'){'Capture-TrustedPublish'}else{'Capture-Child'}}
+   elseif($name -ceq 'dotnet'){if($command.Extent.Text -match 'dotnet publish'){'Capture-TrustedPublish'}elseif($command.Extent.Text -match 'dotnet build'){'Capture-Build'}elseif($command.Extent.Text -match 'dotnet restore'){'Capture-Restore'}else{throw 'Project-based test command remains after proof capture'}}
    else{$null}
   if($replacement){$edits+=@{start=$target.Extent.StartOffset;end=$target.Extent.EndOffset;text=$replacement}}
  }
@@ -105,10 +108,16 @@ function Test-OrderedCaller([string]$Relative,[string]$Variant){
   $slice=New-Projection $text '# Immutable baseline builds' '# Workflow callers'
  }
  elseif($Relative.Contains('HostedSelectedRuntime')){$slice=New-Projection $text ' # The immutable baseline' ' $success='}
- else{$slice=New-Projection $text '# Freeze restore identity' '$evidence='}
+ else{$slice=New-Projection $text '$properties=@' '$evidence='}
  & ([scriptblock]::Create($slice))
  $events=@($script:events);$children=@(0..($events.Count-1)|Where-Object {$events[$_].kind -ceq 'child'})
  Require ($children.Count -gt 0) "No executable child capture: $Relative/$Variant"
+ $builds=@(0..($events.Count-1)|Where-Object {$events[$_].kind -ceq 'build'})
+ if($builds.Count){
+  $restores=@(0..($events.Count-1)|Where-Object {$events[$_].kind -ceq 'restore'})
+  $captures=@(0..($events.Count-1)|Where-Object {$events[$_].kind -ceq 'capture'})
+  Require ($restores.Count -eq 1 -and $restores[0] -lt $captures[0] -and $captures[0] -lt $builds[0] -and $builds[-1] -lt $children[0]) 'Explicit restore, same-proof build and child ordering changed'
+ }
  foreach($p in $script:proofs){
   $capture=@(0..($events.Count-1)|Where-Object {$events[$_].kind -ceq 'capture' -and $events[$_].id -eq $p.id})
   $verified=@(0..($events.Count-1)|Where-Object {$events[$_].kind -ceq 'verify' -and $events[$_].id -eq $p.id})
@@ -133,11 +142,12 @@ try{
  # Bind every actual verifier invocation, including unchanged trusted workflow publish calls.
  $WorkRoot=Join-Path $scratch 'synthetic work with spaces';$project=Join-Path $WorkRoot 'SelectedTests.csproj';$PayloadRoot='authenticated payload';$output='generated output'
  $profile=@{source_root=(Join-Path $WorkRoot 'profile product')};$proof=@{state=@{source_root=$profile.source_root;project=$project;output_root='prepared output'}}
- $state=@{payload_root=$PayloadRoot};$FixtureRoot='synthetic fixture';$integration='unchanged integration'
+ $state=@{payload_root=$PayloadRoot;project=$project;output_root='prepared output'};$FixtureRoot='synthetic fixture';$integration='unchanged integration'
  $restoredAssets=Join-Path $WorkRoot 'obj/project.assets.json';$baselineAssets=$restoredAssets
  $publishProject=Join-Path $profile.source_root 'src/Wss.CSharpImplementation.csproj';$publishAssets=Join-Path $profile.source_root 'src/obj/project.assets.json'
  $cliBaselineProject=Join-Path ($WorkRoot+'-baseline-cli') 'SelectedTests.csproj';$cliBaselineAssets=Join-Path ($WorkRoot+'-baseline-cli') 'obj/project.assets.json'
- $restoreProof=$baselineRestoreProof=$publishRestoreProof=$cliRestoreProof=[pscustomobject]@{sentinel='captured parent proof'}
+ $assets=$restoredAssets;$builtProfile=@{payload_root=$PayloadRoot;output_root='prepared output'};$reloadProject='tests/Wss.Cli.Reload.Tests/Wss.Cli.Reload.Tests.csproj';$reloadAssets='tests/Wss.Cli.Reload.Tests/obj/project.assets.json';$reloadOutput='tests/Wss.Cli.Reload.Tests/bin/Release/net9.0'
+ $restoreProof=$baselineRestoreProof=$publishRestoreProof=$cliRestoreProof=$buildRestoreProof=$reloadRestoreProof=[pscustomobject]@{sentinel='captured parent proof'}
  $env:WSS_PROFILE_PROJECT=$project;$env:WSS_ARTIFACT_DIR=$PayloadRoot;$env:RUNNER_TEMP='runner temporary directory'
  foreach($relative in $files){
   $text=Get-Content (Join-Path $root $relative) -Raw

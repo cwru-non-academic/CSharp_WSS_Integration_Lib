@@ -52,7 +52,7 @@ foreach ($file in @($normal,'wss-preflight.yml')) {
     if (!$workflow.Contains('os: macos-15-intel') -or !$workflow.Contains('os: macos-15') -or
         !$workflow.Contains('cpu: Intel x86_64') -or !$workflow.Contains('cpu: Apple Silicon arm64') -or
         !(($workflow -split '\r?\n') -ccontains $expectedDependencies) -or !$workflow.Contains('Complete-WssMacOSGate ') -or
-        !$workflow.Contains('RunConfiguration.TargetPlatform=') -or !$workflow.Contains('name: wss-macos-') -or
+        !$workflow.Contains('-Platform ''${{ matrix.test_platform }}''') -or !$workflow.Contains('name: wss-macos-') -or
         !$workflow.Contains('name: Record canonical packaged BLE result before any synthetic fixture')) { throw 'Both native architectures, fixed test-host target and fail-closed aggregate are required.' }
     $gate=[regex]::Match($workflow,'(?ms)^  macos_compatibility:\r?\n(?<body>.*)\z')
     if (!$gate.Success -or !$gate.Groups['body'].Value.Contains('    if: always()') -or

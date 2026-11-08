@@ -38,3 +38,9 @@ jobs:
       - name: Reject child mutation of restored package proof
         shell: pwsh
         run: ./.github/scripts/tests/RestoredAssetsProof.Tests.ps1
+      - name: Verify compiled test input and runner contracts
+        shell: pwsh
+        run: ./.github/scripts/tests/CompiledCSharpTests.Tests.ps1
+      - name: Verify cache-disabled SDK invocation contracts
+        shell: pwsh
+        run: ./.github/scripts/tests/SdkInvocationContracts.Tests.ps1

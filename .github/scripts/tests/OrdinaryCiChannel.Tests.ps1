@@ -437,7 +437,7 @@ function Assert-OrdinaryWorkflow([string]$Text, [string]$Workflow) {
     $restored = $text.Replace("$resolver`n", '').Replace("$ordinary`n", '').Replace($aggregate, '    needs: macos_architecture').Replace("$guard`n", '').Replace("$fixture`n", '')
     $restored = $restored.Replace("permissions:`n", "env:`n  WSS_CI_CHANNEL: dev`npermissions:`n")
     $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($restored))).ToLowerInvariant()
-    $expected = if ($Workflow -ceq 'cli-ci.yml') { 'ac030fa6fe5c253a1c04e264bccea3803ec610f3ab988e1a533a0c2cb0e5a3e0' } else { '30a5adb66e325f1977234c3d081975b5ade8afe4e1dc518c3ae4757c3aa478ee' }
+    $expected = if ($Workflow -ceq 'cli-ci.yml') { 'ac030fa6fe5c253a1c04e264bccea3803ec610f3ab988e1a533a0c2cb0e5a3e0' } else { '553db58f22dab02281836728716b087f17d7073009cc49b5740bc5fdeeb19bff' }
     if ($digest -cne $expected) { throw 'Ordinary workflow triggers, permissions or mandatory baseline jobs changed.' }
 }
 $workflow = if (Test-Path "$PSScriptRoot/../../workflows/cli-ci.yml") { 'cli-ci.yml' } else { 'wss-compatibility.yml' }
