@@ -2,21 +2,21 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "4a7e099ef095ad7bc2d334aa5309a09fb484303a",
-  "source_ref": "refs/heads/ci/tooling/4a7e099ef095ad7bc2d334aa5309a09fb484303a",
+  "source_commit": "d4615cbc1854b5937d799df67171c33447acef53",
+  "source_ref": "refs/heads/ci/tooling/d4615cbc1854b5937d799df67171c33447acef53",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "1f4bd6353cb4a5767baea64daf6647c8fb4aa31d",
-      "ref": "refs/heads/ci/tooling/1f4bd6353cb4a5767baea64daf6647c8fb4aa31d"
+      "commit": "20e75c7fd91f595d6cef12b22e2c40312f31f36d",
+      "ref": "refs/heads/ci/tooling/20e75c7fd91f595d6cef12b22e2c40312f31f36d"
     }
   },
   "files": {
     ".github/scripts/wss-ci/campaign-test-selection.mjs": {
       "origin": "core",
       "source": "tools/release/campaign-test-selection.mjs",
-      "sha256": "9c4ce1ba59b807d5b5ef03aa9c5e02fea68181c118b35d8bff5f611a1a1f90fe"
+      "sha256": "a4248ed2461b154d54d1ea71f7bbd5206f9b5823d045e3cbdca9a98bd7e89971"
     },
     ".github/scripts/wss-ci/test-selection-contract.mjs": {
       "origin": "core",
@@ -41,7 +41,7 @@
     ".github/scripts/wss-ci/github.mjs": {
       "origin": "core",
       "source": "tools/release/github.mjs",
-      "sha256": "c736eb87cbb9e9f02bfaad1cc88d14622d12785ee03f5f659fba880e5acae533"
+      "sha256": "aa6923150868acac185f544a4252217bd53420d986a3ad82b8a203b9b04e8413"
     },
     ".github/scripts/wss-ci/policy.mjs": {
       "origin": "core",
@@ -51,7 +51,7 @@
     ".github/scripts/wss-ci/receipt.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/receipt.mjs",
-      "sha256": "1853ccb565d579cbdad944a706734114c637e91347b5d403a20be2a8d004e5dd"
+      "sha256": "c5ad3d1fa87f5be6a333549d006e6ed0dd1924ba08c8f54446ed2bb073c14896"
     },
     ".github/scripts/wss-ci/promotion.mjs": {
       "origin": "integration",
@@ -201,7 +201,7 @@
     ".github/scripts/wss-ci/preflight-proof.mjs": {
       "origin": "core",
       "source": "tools/release/preflight-proof.mjs",
-      "sha256": "a1681626aac1c612bfba55e4019abb154d0e0dd01c52c2064c8c5ae5a0fe3659"
+      "sha256": "56f75e4160f5059b60eadbd33eb4af542464ff7d61a5b0878caffb2334bbdd69"
     },
     ".github/scripts/wss-ci/verified-json-artifact.mjs": {
       "origin": "core",
@@ -217,6 +217,11 @@
       "origin": "integration",
       "source": ".github/scripts/wss-ci/tests/receipt-gh-preload.mjs",
       "sha256": "86680433ce2dcadefff2ab2b42ab877db2a9cc774e0fef0c1440fb08cd4caab5"
+    },
+    ".github/scripts/wss-ci/admission-context.mjs": {
+      "origin": "core",
+      "source": "tools/release/admission-context.mjs",
+      "sha256": "708de30d6aad40c0d60d64341a8d4116df77612344a745c36518f49a454573b5"
     }
   }
 }

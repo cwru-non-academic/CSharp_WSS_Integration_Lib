@@ -1,4 +1,5 @@
 import {proofDescriptor,collectPreflightProof,preflightCandidate} from './preflight-proof.mjs';
+import {detachAdmission,createAdmissionRefresh,refreshProducerMetadata,refreshNormalMetadata,refreshPreflightMetadata,refreshEmitterMetadata} from './admission-context.mjs';
 import {collectSelectedTestArtifact,verifySelectedTestArtifact} from './campaign-test-selection.mjs';
 import {isEntrypoint} from './entrypoint.mjs';
 // Receiver engine extracted from Python's reviewed Node receipt writer.
@@ -118,17 +119,19 @@ export async function runReceipt(config,{g=new ReadOnly(),env=process.env}={}) {
   authority.receiptAuthorization(g,p,id);
   changedHead(head,snapshot);
   v.requireThat(git(sourceRoot,'rev-parse','HEAD')===head&&env.GITHUB_SHA===head,'Actual reviewed dependency merge/source is required');
-  emitter(g.run(t.repository,env.GITHUB_RUN_ID),env,t,head);
+  const capturedEmitter=detachAdmission(g.run(t.repository,env.GITHUB_RUN_ID));
+  emitter(capturedEmitter,env,t,head);
   for(const path of t.trusted_paths)v.requireThat(object(sourceRoot,path)===snapshot.trusted[path]&&g.object(t.repository,head,path).sha===snapshot.trusted[path],`Frozen receipt/CI tooling changed: ${path}`);
   const wrapperSnapshot=p.target_snapshots[profile.wrapper];
   for(const path of ['.github/scripts',...(profile.receipt.configuration?[profile.receipt.configuration]:[])])v.requireThat(object(validatorRoot,path)===wrapperSnapshot.trusted[path],`Native validator differs from frozen wrapper source: ${path}`);
   v.requireThat(toolsRoot===(profile.receipt.adapter_owner==='receiver'?sourceRoot:validatorRoot),'Native adapter root differs from registered owner');
   receiptLocalReadiness(sourceRoot,profile);
-  const zip=archive(g,p.candidate),coreRun=g.run(v.CORE,producerId);
-  v.producer(p,{run:coreRun,current_head:g.head(v.CORE,p.channel),jobs:g.jobs(v.CORE,coreRun),artifact:zip.artifact,archive_sha256:v.bytesDigest(zip.files[p.candidate.archive])});
+  const zip=archive(g,p.candidate),coreRun=detachAdmission(g.run(v.CORE,producerId));
+  const producerEvidence=detachAdmission({run:coreRun,current_head:g.head(v.CORE,p.channel),jobs:g.jobs(v.CORE,coreRun),artifact:zip.artifact,archive_sha256:v.bytesDigest(zip.files[p.candidate.archive])});
+  v.producer(p,producerEvidence);
   const associations=g.pages(`repos/${t.repository}/commits/${head}/pulls`).filter(pr=>pr.merge_commit_sha===head && pr.merged_at && pr.base?.ref===t.branch && pr.base?.repo?.full_name===t.repository && pr.head?.repo?.full_name===t.repository);
   v.requireThat(associations.length===1,'Current dev is not a unique reviewed dependency merge');
-  const pr=g.get(`repos/${t.repository}/pulls/${associations[0].number}`);
+  const pr=detachAdmission(g.get(`repos/${t.repository}/pulls/${associations[0].number}`));
   mergedPr(pr,t,head,p.candidate);
   const normalProof=()=>selectNormalRun(g.pages(`repos/${t.repository}/actions/workflows/${t.workflow.split('/').at(-1)}/runs?branch=${t.branch}&head_sha=${head}`,'workflow_runs'),t,head,pr.merged_at);
   const normal=structuredClone(normalProof());v.jobs(g.jobs(t.repository,normal),t.jobs);
@@ -155,35 +158,48 @@ export async function runReceipt(config,{g=new ReadOnly(),env=process.env}={}) {
     }
     phase='proof';
     v.requireThat(Array.isArray(preflights) && preflights.length===profile.preflights,'Missing rich paired/actual merged-wrapper preflight proof');
-    const seen=new Set();
+    const seen=new Set(),capturedPreflights=[];
     for(const d of preflights) {
       proofDescriptor(d);
       const sourceTarget=p.manifest.targets.find(target=>target.repository===d.repository);
       const proofKey=`${d.repository}/${d.run_id}`;
       v.requireThat(sourceTarget&&d.workflow==='.github/workflows/wss-preflight.yml'&&d.source_sha===p.target_snapshots[sourceTarget.id].head_sha&&/^[1-9][0-9]*$/.test(d.run_id)&&!seen.has(proofKey),'Native proof differs from frozen source or duplicates a run');
       seen.add(proofKey);
-      const r=collectPreflightProof(g,d).run;v.requireThat(String(r.id)===d.run_id&&r.run_attempt===d.attempt,'Native proof run/attempt identity differs');runIdentity(r,d.repository,d.workflow,d.source_sha,'workflow_dispatch',p.channel);
+      const proof=detachAdmission(collectPreflightProof(g,d)),r=proof.run;v.requireThat(String(r.id)===d.run_id&&r.run_attempt===d.attempt,'Native proof run/attempt identity differs');runIdentity(r,d.repository,d.workflow,d.source_sha,'workflow_dispatch',p.channel);
       v.requireThat(r.status==='completed' && r.conclusion==='success','Preflight is not successful');
       const normalized=preflightCandidate(g,d);
       v.candidate(normalized);v.requireThat(v.canonical(normalized)===v.canonical(p.candidate),'Normalized candidate differs from rich proof/frozen plan');
+      let selectedProof;
       if(p.test_selection) {
         const sourceTarget=p.manifest.targets.find(target=>target.repository===d.repository);
         v.requireThat(sourceTarget&&d.workflow==='.github/workflows/wss-preflight.yml'&&d.source_sha===p.target_snapshots[sourceTarget.id].head_sha&&String(r.id)===d.run_id,'Selected-test preflight differs from frozen target/source/run');
-        collectSelectedTestArtifact(g,p,sourceTarget.id,r);
+        selectedProof=collectSelectedTestArtifact(g,p,sourceTarget.id,r);
       }
+      capturedPreflights.push(detachAdmission({descriptor:d,proof,candidate:normalized,...(selectedProof?{selected_tests:selectedProof}:{})}));
     }
     phase='recheck';
     // Finish proof IO before final admission. Selected evidence belongs to the
     // originally captured normal attempt, never a newly observed rerun.
-    const selectedTests=p.test_selection?verifySelectedTestArtifact(p,id,normal,collectSelectedTestArtifact(g,p,id,normal)):undefined;
+    const selectedProof=p.test_selection?detachAdmission(collectSelectedTestArtifact(g,p,id,normal)):undefined;
+    const selectedTests=selectedProof?verifySelectedTestArtifact(p,id,normal,selectedProof):undefined;
     for(const d of preflights)collectPreflightProof(g,d);
     for(const path of t.trusted_paths) v.requireThat(g.object(t.repository,head,path).sha===snapshot.trusted[path],`Frozen tooling changed during validation: ${path}`);
     authority.receiptAuthorization(g,p,id);
-    const observed=g.run(t.repository,normal.id),normalJobs=g.jobs(t.repository,observed);
-    const latest=normalProof(),live=g.run(t.repository,normal.id);
-    v.requireThat([observed,latest,live].every(r=>String(r.id)===String(normal.id)&&r.run_attempt===normal.run_attempt),'Normal run/attempt changed during validation');
-    for(const r of [observed,live]){runIdentity(r,t.repository,t.workflow,head,normal.event,p.channel);v.requireThat(r.status==='completed'&&r.conclusion==='success','Normal CI is no longer successful');}
-    v.jobs(normalJobs,t.jobs);
+    // Reuse the same metadata-only admission predicates as Core. Authenticated
+    // candidate/log/selected bytes remain captured; this phase downloads none.
+    const session=createAdmissionRefresh(g);
+    v.producer(p,refreshProducerMetadata(g,p,producerEvidence,{session}));
+    for(const captured of capturedPreflights) {
+      const fresh=refreshPreflightMetadata(g,p,captured,{session});
+      runIdentity(fresh.proof.run,captured.descriptor.repository,captured.descriptor.workflow,captured.descriptor.source_sha,'workflow_dispatch',p.channel);
+      v.requireThat(v.canonical(fresh.candidate)===v.canonical(p.candidate),'Normalized candidate differs from frozen plan');
+    }
+    const refreshedNormal=refreshNormalMetadata(g,p,t,{run:normal,merge_sha:head,merged_at:pr.merged_at,...(selectedProof?{selected_tests:selectedProof}:{})},{session});
+    runIdentity(refreshedNormal.run,t.repository,t.workflow,head,normal.event,p.channel);
+    v.jobs(refreshedNormal.jobs,t.jobs);
+    if(selectedProof)v.requireThat(v.canonical(verifySelectedTestArtifact(p,id,refreshedNormal.run,refreshedNormal.selected_tests))===v.canonical(selectedTests),'Selected evidence changed during admission');
+    emitter(refreshEmitterMetadata(g,p,t,capturedEmitter,{running:true,session}),env,t,head);
+    session.finish();
     // These last observations narrow the admission window; sequential reads
     // and local emission cannot form an atomic transaction with GitHub.
     const currentHead=g.head(t.repository,t.branch);
