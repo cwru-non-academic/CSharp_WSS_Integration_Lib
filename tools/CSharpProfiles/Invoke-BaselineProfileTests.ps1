@@ -87,12 +87,14 @@ if ($LASTEXITCODE -ne 0) { throw 'Profile test build failed.' }
 $output=Join-Path $WorkRoot 'bin/Release/net9.0'
 # Reviewed bootstrap-owned propagation validator remains independent of selected and product checkouts.
 $validator=Join-Path $PSScriptRoot '../../.github/scripts/Verify-WssOutput.ps1'
-& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output -ProjectPath $project -ProjectAssetsFile (Join-Path $WorkRoot 'obj/project.assets.json')
-# Freeze restore metadata and neutral bytes before executing child test code.
+# Freeze restore identity, resolver selection and neutral bytes before executing child test code.
 . "$PSScriptRoot/../../.github/scripts/TrustedBaseline.ps1"
 $restoredAssets=Join-Path $WorkRoot 'obj/project.assets.json'
-$restoredNeutral=[Wss.BuildTools.RestoredPackageAssets]::ResolveProjectAsset($restoredAssets,$project,'System.IO.Ports/8.0.0','lib/net8.0/System.IO.Ports.dll','net9.0')
+. "$PSScriptRoot/../../.github/scripts/wss-ci/restored-assets/RestoredAssets.ps1"
+$restoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile $restoredAssets -ProjectPath $project
+$restoredNeutral=$restoreProof.NeutralAssetPath
 $restoredSnapshot=New-TrustedBaselineSnapshot @($project,$restoredAssets,$restoredNeutral)
+& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output -ProjectPath $project -ProjectAssetsFile (Join-Path $WorkRoot 'obj/project.assets.json') -RestoreProof $restoreProof
 
     & "$PSScriptRoot/Invoke-Behavior.ps1" -Profile $profile.profile -Project $project -IsolatedBuild -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot
     # Platform/reload/options suites are additive and never replace the mandatory profile catalog.
@@ -104,7 +106,8 @@ if((Get-WssProfileFixture $profile.profile) -cne $fixture){throw 'Fixture change
 Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','lib','tests','.github')
 Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src','lib','tests','.github')
 Assert-TrustedBaselineSnapshot $restoredSnapshot
-& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output -ProjectPath $project -ProjectAssetsFile (Join-Path $WorkRoot 'obj/project.assets.json')
+Assert-WssRestoredAssetsProof -Proof $restoreProof -ProjectAssetsFile $restoredAssets -ProjectPath $project
+& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output -ProjectPath $project -ProjectAssetsFile (Join-Path $WorkRoot 'obj/project.assets.json') -RestoreProof $restoreProof
 if ((Get-SelectedPayloadDigest $PayloadRoot) -cne $payloadDigest) { throw 'Selected payload changed during execution.' }
 $evidence=@{schema='wss-csharp-profile-runtime/v1';profile=$profile;product_sha=$ProductSha;build_product_sha=$IntegrationSha;payload_sha256=$payloadDigest;fixture_sha256=(Get-TestBundleFileHash $fixture);passed=$true}
 $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $WorkRoot 'profile-evidence.json')

@@ -2,9 +2,14 @@ param(
     [Parameter(Mandatory = $true)] [string] $ArtifactRoot,
     [Parameter(Mandatory = $true)] [string] $OutputRoot,
     [Parameter(Mandatory = $true)] [string] $ProjectAssetsFile,
-    [Parameter(Mandatory = $true)] [string] $ProjectPath
+    [Parameter(Mandatory = $true)] [string] $ProjectPath,
+    [object] $RestoreProof = $null
 )
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/RestoredAssets.ps1"
+# Authenticate explicit restore inputs even when the optional root Ports output is absent.
+if ($null -eq $RestoreProof) { $RestoreProof = New-WssRestoredAssetsProof -ProjectAssetsFile $ProjectAssetsFile -ProjectPath $ProjectPath }
+Assert-WssRestoredAssetsProof -Proof $RestoreProof -ProjectAssetsFile $ProjectAssetsFile -ProjectPath $ProjectPath
 . "$PSScriptRoot/Universal-WssFiles.ps1"
 $selectedFiles = @(Read-WssUniversalFiles $ArtifactRoot -AllowProvenance)
 Assert-WssMacOSPayload $ArtifactRoot $selectedFiles
@@ -33,13 +38,8 @@ if (Test-Path -LiteralPath $hostPorts) {
     $runtimePorts = Join-Path $ArtifactRoot "runtimes/$platform/lib/net8.0/System.IO.Ports.dll"
     # Framework-dependent builds retain NuGet's neutral net8 DLL at the root;
     # .deps.json selects the platform runtime tree. RID publishes can flatten it.
-    # Only this immutable bootstrap's managed helper is compiled, never project or child-provided source.
-    if (-not ('Wss.BuildTools.RestoredPackageAssets' -as [type])) {
-        Add-Type -Path (Join-Path $PSScriptRoot 'RestoredPackageAssets.cs')
-    }
-    $neutralPorts = [Wss.BuildTools.RestoredPackageAssets]::ResolveProjectAsset(
-        $ProjectAssetsFile, $ProjectPath, 'System.IO.Ports/8.0.0', 'lib/net8.0/System.IO.Ports.dll', 'net9.0')
-    $allowedHashes = @((Get-FileHash -LiteralPath $runtimePorts).Hash, (Get-FileHash -LiteralPath $neutralPorts).Hash)
+    # The parent-captured neutral hash remains authoritative after child execution.
+    $allowedHashes = @((Get-FileHash -LiteralPath $runtimePorts).Hash, $RestoreProof.NeutralSha256)
     if ((Get-FileHash -LiteralPath $hostPorts).Hash -cnotin $allowedHashes) {
         throw 'Root output Ports is neither the restored neutral net8 asset nor the verified host runtime asset; net462 is forbidden.'
     }

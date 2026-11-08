@@ -10,6 +10,7 @@ $ErrorActionPreference='Stop'
 . "$PSScriptRoot/SelectedProcessIsolation.ps1"
 . "$PSScriptRoot/SelectedTestContext.ps1"
 . "$PSScriptRoot/TrustedBaseline.ps1"
+. "$PSScriptRoot/wss-ci/restored-assets/RestoredAssets.ps1"
 # Freeze authority bytes before any child; mutable Git metadata alone is not proof.
 $authorityRoots=@(Get-ReviewedCoreAuthorityRoots $CoreRoot)+@((Join-Path $PSScriptRoot 'wss-ci.lock.json'),$ContextPath,$RootsPath)
 $authoritySnapshot=New-TrustedBaselineSnapshot $authorityRoots
@@ -35,10 +36,30 @@ $options=@{Role=$(if($TargetId -ceq 'csharp-wrapper'){'wrapper'}else{'cli'});Pro
 if($TargetId -ceq 'csharp-cli'){$options.IntegrationRoot=$wrapper.path;$options.IntegrationSha=$wrapper.commit}
 if($TargetId -ceq 'csharp-cli'){$baselineRoots+=@(Invoke-TrustedCliBaseline $options ($WorkRoot+'-baseline-cli'))}
 Assert-PreparedProfileProof $proof
+# Immutable baseline builds are complete. Capture parent-owned restore proofs
+# before freely selected code can change a package root or restore inputs.
+$baselineAssets=Join-Path (Split-Path -Parent $proof.state.project) 'obj/project.assets.json'
+$baselineRestoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile $baselineAssets -ProjectPath $proof.state.project
+$cliRestoreProof=$null
+if($TargetId -ceq 'csharp-cli'){
+ $cliBaselineProject=Join-Path ($WorkRoot+'-baseline-cli') 'SelectedTests.csproj'
+ $cliBaselineAssets=Join-Path ($WorkRoot+'-baseline-cli') 'obj/project.assets.json'
+ $cliRestoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile $cliBaselineAssets -ProjectPath $cliBaselineProject
+}
+function Assert-BaselineRestoreProofs {
+ Assert-WssRestoredAssetsProof -Proof $baselineRestoreProof -ProjectAssetsFile $baselineAssets -ProjectPath $proof.state.project
+ & "$PSScriptRoot/Verify-WssOutput.ps1" -ArtifactRoot $PayloadRoot -OutputRoot (Join-Path $proof.state.output_root 'Release/net9.0') -ProjectPath $proof.state.project -ProjectAssetsFile $baselineAssets -RestoreProof $baselineRestoreProof
+ if($null -ne $cliRestoreProof){
+  Assert-WssRestoredAssetsProof -Proof $cliRestoreProof -ProjectAssetsFile $cliBaselineAssets -ProjectPath $cliBaselineProject
+  & "$PSScriptRoot/Verify-WssOutput.ps1" -ArtifactRoot $PayloadRoot -OutputRoot (Join-Path ($WorkRoot+'-baseline-cli') 'bin/Release/net9.0') -ProjectPath $cliBaselineProject -ProjectAssetsFile $cliBaselineAssets -RestoreProof $cliRestoreProof
+ }
+}
+Assert-BaselineRestoreProofs
 $baselineSnapshot=New-TrustedBaselineSnapshot $baselineRoots
 Invoke-CredentialFreeSelectedPowerShell "$PSScriptRoot/Invoke-SelectedCSharpTests.ps1" $options
 Assert-PreparedProfileProof $proof
 Assert-TrustedBaselineSnapshot $baselineSnapshot
+Assert-BaselineRestoreProofs
 Assert-TrustedBaselineSnapshot $authoritySnapshot
 # Workflow callers must also preserve all existing native/platform and release gates.
 Invoke-ReviewedSelectionCore $CoreRoot evidence $TargetId $ContextPath $RootsPath (Join-Path $WorkRoot 'selection/evidence.json')
