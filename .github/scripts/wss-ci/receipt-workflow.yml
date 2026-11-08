@@ -49,6 +49,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: accepted
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/checkout@v4
         if: ${{ __WSS_IS_APP__ }}
@@ -63,6 +64,7 @@ jobs:
           repository: __WSS_WRAPPER__
           ref: ${{ github.ref_name }}
           path: integration
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:

@@ -2,14 +2,14 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "17ce329d027d28942d5c65a0375c2a9a83e993e6",
-  "source_ref": "refs/heads/ci/tooling/17ce329d027d28942d5c65a0375c2a9a83e993e6",
+  "source_commit": "d52ea2e6f2a8950d11c906545622ee5e8e40bdf0",
+  "source_ref": "refs/heads/ci/tooling/d52ea2e6f2a8950d11c906545622ee5e8e40bdf0",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "15c4358190f82b9cbca3e2f14b42d9121b36c287",
-      "ref": "refs/heads/ci/tooling/15c4358190f82b9cbca3e2f14b42d9121b36c287"
+      "commit": "a75dbb508487e6fcd30bbd862ef400ec639f0930",
+      "ref": "refs/heads/ci/tooling/a75dbb508487e6fcd30bbd862ef400ec639f0930"
     }
   },
   "files": {
@@ -196,7 +196,7 @@
     ".github/scripts/wss-ci/receipt-workflow.yml": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/receipt-workflow.yml",
-      "sha256": "a32a74a985ce47f0776f8646d76d02832eba16b9bdfb5438625242cbd1148a3b"
+      "sha256": "c0d356f22be78c4a92041dc57c646abe8f3fa63d4d212d6fb12a50b4ac6da5c1"
     }
   }
 }
