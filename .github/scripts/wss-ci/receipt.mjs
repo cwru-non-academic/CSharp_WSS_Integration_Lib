@@ -1,3 +1,4 @@
+import {proofDescriptor,collectPreflightProof,preflightCandidate} from './preflight-proof.mjs';
 import {collectSelectedTestArtifact,verifySelectedTestArtifact} from './campaign-test-selection.mjs';
 import {isEntrypoint} from './entrypoint.mjs';
 // Receiver engine extracted from Python's reviewed Node receipt writer.
@@ -155,14 +156,14 @@ export async function runReceipt(config,{g=new ReadOnly(),env=process.env}={}) {
     v.requireThat(Array.isArray(preflights) && preflights.length===profile.preflights,'Missing rich paired/actual merged-wrapper preflight proof');
     const seen=new Set();
     for(const d of preflights) {
-      v.requireThat(d&&v.canonical(Object.keys(d).sort())===v.canonical(['repository','run_id','source_sha','workflow']),'Invalid native proof descriptor shape');
+      proofDescriptor(d);
       const sourceTarget=p.manifest.targets.find(target=>target.repository===d.repository);
       const proofKey=`${d.repository}/${d.run_id}`;
       v.requireThat(sourceTarget&&d.workflow==='.github/workflows/wss-preflight.yml'&&d.source_sha===p.target_snapshots[sourceTarget.id].head_sha&&/^[1-9][0-9]*$/.test(d.run_id)&&!seen.has(proofKey),'Native proof differs from frozen source or duplicates a run');
       seen.add(proofKey);
-      const r=g.run(d.repository,d.run_id);v.requireThat(String(r.id)===d.run_id&&Number.isSafeInteger(r.run_attempt)&&r.run_attempt>=1,'Native proof run/attempt identity differs');runIdentity(r,d.repository,d.workflow,d.source_sha,'workflow_dispatch',p.channel);
+      const r=collectPreflightProof(g,d).run;v.requireThat(String(r.id)===d.run_id&&r.run_attempt===d.attempt,'Native proof run/attempt identity differs');runIdentity(r,d.repository,d.workflow,d.source_sha,'workflow_dispatch',p.channel);
       v.requireThat(r.status==='completed' && r.conclusion==='success','Preflight is not successful');
-      const normalized=JSON.parse(g.download(d.repository,d.run_id,'wss-candidate-provenance',['candidate.json'])['candidate.json']);
+      const normalized=preflightCandidate(g,d);
       v.candidate(normalized);v.requireThat(v.canonical(normalized)===v.canonical(p.candidate),'Normalized candidate differs from rich proof/frozen plan');
       if(p.test_selection) {
         const sourceTarget=p.manifest.targets.find(target=>target.repository===d.repository);
@@ -184,6 +185,7 @@ export async function runReceipt(config,{g=new ReadOnly(),env=process.env}={}) {
     // collector authenticates artifact ownership, source and attempt and checks
     // its downloaded bytes against the producer's frozen selection.
     const selectedTests=p.test_selection?verifySelectedTestArtifact(p,id,live,collectSelectedTestArtifact(g,p,id,live)):undefined;
+    for(const d of preflights)collectPreflightProof(g,d);
     const receipt={...(selectedTests?{selected_tests:selectedTests}:{}),schema:context.receiptSchema,plan_id:p.plan_id,channel:p.channel,target_id:id,candidate:p.candidate,mode:'merged-pr',merge:{pr_number:String(pr.number),head_sha:pr.head.sha,sha:head},normal_ci:{run_id:String(normal.id),attempt:normal.run_attempt},preflights,parents,emitter:{run_id:env.GITHUB_RUN_ID,attempt:Number(env.GITHUB_RUN_ATTEMPT),source_sha:head,workflow:WORKFLOW},coverage:t.coverage};
     phase='emission';
     v.requireThat(!existsSync(join(outputRoot,'receipt.json')),'Receipt output must be new');mkdirSync(outputRoot,{recursive:true});writeFileSync(join(outputRoot,'receipt.json'),v.canonical(receipt)+'\n');

@@ -2,14 +2,14 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "d52ea2e6f2a8950d11c906545622ee5e8e40bdf0",
-  "source_ref": "refs/heads/ci/tooling/d52ea2e6f2a8950d11c906545622ee5e8e40bdf0",
+  "source_commit": "60257c5c1be34b562fb171d5be10a61429f14d61",
+  "source_ref": "refs/heads/ci/tooling/60257c5c1be34b562fb171d5be10a61429f14d61",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "a75dbb508487e6fcd30bbd862ef400ec639f0930",
-      "ref": "refs/heads/ci/tooling/a75dbb508487e6fcd30bbd862ef400ec639f0930"
+      "commit": "6f73f3c83ac9468302957923d77edd23de644ffd",
+      "ref": "refs/heads/ci/tooling/6f73f3c83ac9468302957923d77edd23de644ffd"
     }
   },
   "files": {
@@ -26,7 +26,7 @@
     ".github/scripts/wss-ci/verify.mjs": {
       "origin": "core",
       "source": "tools/release/verify.mjs",
-      "sha256": "4b20fd712d14f05319fa1cac3309a322a1cfff69d29909751d24d3360e0c22d1"
+      "sha256": "d97ce86478b7d1f7040cd7ccfa185ae0601aa2dcd321a6153d718b1db0972b71"
     },
     ".github/scripts/wss-ci/producer-jobs.mjs": {
       "origin": "core",
@@ -41,7 +41,7 @@
     ".github/scripts/wss-ci/github.mjs": {
       "origin": "core",
       "source": "tools/release/github.mjs",
-      "sha256": "84a21a210337a2e6e01b0d58204f0809c2c67b8c99946a20a06c977b1cdfa083"
+      "sha256": "98e068a0514788e6500c1b605604eeab133ecbb595da422d344ab9fbcf5d170b"
     },
     ".github/scripts/wss-ci/policy.mjs": {
       "origin": "core",
@@ -51,7 +51,7 @@
     ".github/scripts/wss-ci/receipt.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/receipt.mjs",
-      "sha256": "a3e270d00f514c2175d2a18a483cd5fc08420afc78fcfcebbbc208a94ba2d036"
+      "sha256": "eab8a863c55c8a715e9633393dbc6c9b1b2f15a491e3d10085e87b60bcee657a"
     },
     ".github/scripts/wss-ci/promotion.mjs": {
       "origin": "integration",
@@ -106,7 +106,7 @@
     ".github/scripts/wss-ci/Evidence.ps1": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/Evidence.ps1",
-      "sha256": "9149823adda79d0d3b9a485d5fde7c2798603e9e17a49e1f7be255c1729a72bb"
+      "sha256": "a2370e407f803d67bd669b8061856cd29d1662983a5f96b4677e035255824a36"
     },
     ".github/scripts/wss-ci/README.md": {
       "origin": "core",
@@ -197,6 +197,26 @@
       "origin": "integration",
       "source": ".github/scripts/wss-ci/receipt-workflow.yml",
       "sha256": "c0d356f22be78c4a92041dc57c646abe8f3fa63d4d212d6fb12a50b4ac6da5c1"
+    },
+    ".github/scripts/wss-ci/preflight-proof.mjs": {
+      "origin": "core",
+      "source": "tools/release/preflight-proof.mjs",
+      "sha256": "a1681626aac1c612bfba55e4019abb154d0e0dd01c52c2064c8c5ae5a0fe3659"
+    },
+    ".github/scripts/wss-ci/verified-json-artifact.mjs": {
+      "origin": "core",
+      "source": "tools/release/verified-json-artifact.mjs",
+      "sha256": "6c7e516195755b109b9ae0cd41b4d94a54d1824a2e2905c868de54b3a0c330d9"
+    },
+    ".github/scripts/wss-ci/receipt-proof-cli.mjs": {
+      "origin": "integration",
+      "source": ".github/scripts/wss-ci/receipt-proof-cli.mjs",
+      "sha256": "2864f3a3cbf2b38f30c0733b12a5a04c646eb5cc8102477073c4d32d35b6e6a9"
+    },
+    ".github/scripts/wss-ci/tests/receipt-gh-preload.mjs": {
+      "origin": "integration",
+      "source": ".github/scripts/wss-ci/tests/receipt-gh-preload.mjs",
+      "sha256": "86680433ce2dcadefff2ab2b42ab877db2a9cc774e0fef0c1440fb08cd4caab5"
     }
   }
 }

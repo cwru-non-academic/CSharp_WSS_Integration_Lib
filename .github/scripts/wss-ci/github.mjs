@@ -1,3 +1,4 @@
+import {collectPreflightProof,preflightCandidate} from './preflight-proof.mjs';
 import {selectionFields,collectSelectedTestArtifact} from './campaign-test-selection.mjs';
 import {execFileSync} from 'node:child_process';
 import {mkdtempSync,readdirSync,readFileSync,writeFileSync,rmSync} from 'node:fs';
@@ -119,9 +120,9 @@ export function collect(g,p) {
       return [parent,link.sha];
     }));
     const preflights=(r.preflights || []).map(d=>{
-      const run=g.run(d.repository,d.run_id),target=p.manifest.targets.find(t=>t.repository===d.repository);
+      const proof=collectPreflightProof(g,d),run=proof.run,target=p.manifest.targets.find(t=>t.repository===d.repository);
       requireThat(target,'Unknown preflight target');
-      return {run,candidate:JSON.parse(g.download(d.repository,d.run_id,'wss-candidate-provenance',['candidate.json'])['candidate.json']),
+      return {...proof,candidate:preflightCandidate(g,d),
         ...(p.test_selection?{selected_tests:collectSelectedTestArtifact(g,p,target.id,run)}:{})};
     });
     evidence.targets[t.id]={receipt:r,receipt_bytes,receipt_sha256:bytesDigest(receipt_bytes),pr,current_head:g.head(t.repository,t.branch),
@@ -131,6 +132,10 @@ export function collect(g,p) {
       ...(p.test_selection?{selected_tests:collectSelectedTestArtifact(g,p,t.id,normal)}:{}),
       emitter_run:g.run(t.repository,String(emitter.id)),artifact:g.artifact(t.repository,String(emitter.id),name),preflights};
   }
+  // Recheck every proved native attempt after all nine targets were collected.
+  for(const target of Object.values(evidence.targets))for(const d of target.receipt.preflights)collectPreflightProof(g,d);
+  // Recheck all native attempts after collecting every receiver.
+  for(const target of Object.values(evidence.targets))for(const d of target.receipt.preflights)collectPreflightProof(g,d);
   return {record:allClear(p,evidence),files:zip.files};
 }
 
