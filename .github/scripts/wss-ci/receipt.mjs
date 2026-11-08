@@ -58,6 +58,7 @@ const git=(root,...args)=>execFileSync('git',['-C',root,...args],{encoding:'utf8
 const object=(root,path)=>git(root,'rev-parse',`HEAD:${path}`);
 
 export const ROOT_KEYS=['sourceRoot','toolsRoot','validatorRoot','integrationRoot','engineRoot','coreRoot','outputRoot'];
+const realpath=realpathSync.native;
 const fullSha=value=>typeof value==='string'&&/^[a-f0-9]{40}$/.test(value);
 export function receiptEligibility(env) {
   const profile=profiles[env.TARGET_ID],channel=env.WSS_CI_CHANNEL;
@@ -76,8 +77,8 @@ export function receiptRoots(config,profile) {
   const roots={};
   for(const key of ROOT_KEYS) {
     v.requireThat(typeof config[key]==='string'&&isAbsolute(config[key]),'Receipt roots must be explicit absolute paths');
-    roots[key]=key==='outputRoot'?join(realpathSync(dirname(config[key])),basename(config[key])):realpathSync(config[key]);
-    if(key!=='outputRoot')v.requireThat(git(roots[key],'rev-parse','--show-toplevel').replaceAll('\\','/').toLowerCase()===roots[key].replaceAll('\\','/').toLowerCase(),'Receipt role must identify a checkout root');
+    roots[key]=key==='outputRoot'?join(realpath(dirname(config[key])),basename(config[key])):realpath(config[key]);
+    if(key!=='outputRoot')v.requireThat(realpath(git(roots[key],'rev-parse','--show-toplevel'))===roots[key],'Receipt role must identify a checkout root');
   }
   if(profile.role==='wrapper')v.requireThat(['toolsRoot','validatorRoot','integrationRoot'].every(k=>roots[k]===roots.sourceRoot),'Wrapper native roles must alias its accepted product root');
   const contains=(a,b)=>{const r=relative(a,b);return !r||(!r.startsWith('..')&&!isAbsolute(r));};
