@@ -29,3 +29,12 @@ jobs:
       - name: Reject baseline additions, deletion, mutation and redirected paths
         shell: pwsh
         run: ./.github/scripts/tests/TrustedBaseline.Tests.ps1
+      - name: Verify shared restored-assets and output hash contracts
+        shell: pwsh
+        run: ./.github/scripts/wss-ci/restored-assets/RestoredAssets.Tests.ps1
+      - name: Verify exact restored project caller paths
+        shell: pwsh
+        run: ./.github/scripts/tests/RestoredAssetsCaller.Tests.ps1
+      - name: Reject child mutation of restored package proof
+        shell: pwsh
+        run: ./.github/scripts/tests/RestoredAssetsProof.Tests.ps1
