@@ -1,0 +1,112 @@
+# Generated from the immutable integration-owned common receipt template.
+name: Verify release acceptance
+run-name: WSS acceptance __WSS_ID__ ${{ inputs.plan_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      producer_run_id: {required: true, type: string}
+      plan_id: {required: true, type: string}
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: acceptance-__WSS_ID__-${{ inputs.plan_id }}
+  cancel-in-progress: false
+jobs:
+  receipt:
+    name: Verify exact reviewed acceptance
+    if: github.repository == '__WSS_REPOSITORY__' && github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
+    runs-on: __WSS_RUNNER__
+    timeout-minutes: __WSS_TIMEOUT__
+    env:
+      WSS_CI_CHANNEL: ${{ github.ref_name }}
+      TARGET_ID: __WSS_ID__
+      PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
+      PLAN_ID: ${{ inputs.plan_id }}
+      WSS_RECEIPT_ENGINE_SHA: __WSS_ENGINE__
+      WSS_RECEIPT_CORE_SHA: __WSS_CORE__
+      WSS_RECEIPT_VALIDATOR_SHA: __WSS_VALIDATOR__
+    steps:
+      - name: Require static caller eligibility before credentials
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -cne '__WSS_REPOSITORY__' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or $env:GITHUB_REF -cnotin @('refs/heads/dev','refs/heads/main') -or $env:PRODUCER_RUN_ID -cnotmatch '^[1-9][0-9]*$' -or $env:PLAN_ID -cnotmatch '^[a-f0-9]{64}$') { throw 'Ineligible receipt caller.' }
+          if ($env:GITHUB_WORKFLOW_SHA -cne $env:GITHUB_SHA -or $env:GITHUB_WORKFLOW_REF -cne "$env:GITHUB_REPOSITORY/.github/workflows/release-receipt.yml@$env:GITHUB_REF") { throw 'Receipt workflow source differs from accepted source.' }
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/Python_WSS_Integration_Lib
+          ref: __WSS_ENGINE__
+          path: bootstrap/Python_WSS_Integration_Lib
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: cwru-non-academic/WSSCore
+          ref: __WSS_CORE__
+          path: core
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: accepted
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: ${{ __WSS_IS_APP__ }}
+        with:
+          repository: __WSS_WRAPPER__
+          ref: __WSS_VALIDATOR_REF__
+          path: validator
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: ${{ __WSS_IS_APP__ }}
+        with:
+          repository: __WSS_WRAPPER__
+          ref: ${{ github.ref_name }}
+          path: integration
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check local eligibility and native readiness before read credentials
+        shell: pwsh
+        run: |
+          & node (Join-Path $env:GITHUB_WORKSPACE 'bootstrap/Python_WSS_Integration_Lib/.github/scripts/wss-ci/receipt.mjs') --eligibility (Join-Path $env:GITHUB_WORKSPACE 'accepted')
+          if($LASTEXITCODE -ne 0){throw 'Common local receipt eligibility failed.'}
+      - uses: actions/create-github-app-token@v2
+        id: read
+        with:
+          app-id: ${{ vars.WSS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.WSS_GITHUB_APP_PRIVATE_KEY }}
+          owner: cwru-non-academic
+          repositories: __WSS_READ_REPOSITORIES__
+          permission-contents: read
+          permission-actions: read
+          permission-pull-requests: read
+      - name: Admit authority, invoke native proof, recheck and emit
+        id: receipt
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.read.outputs.token }}
+        run: |
+          $config=@{
+            sourceRoot=Join-Path $env:GITHUB_WORKSPACE 'accepted'
+            toolsRoot=Join-Path $env:GITHUB_WORKSPACE '__WSS_TOOLS__'
+            validatorRoot=Join-Path $env:GITHUB_WORKSPACE '__WSS_VALIDATOR_ROOT__'
+            integrationRoot=Join-Path $env:GITHUB_WORKSPACE '__WSS_INTEGRATION_ROOT__'
+            engineRoot=Join-Path $env:GITHUB_WORKSPACE 'bootstrap/Python_WSS_Integration_Lib'
+            coreRoot=Join-Path $env:GITHUB_WORKSPACE 'core'
+            outputRoot=Join-Path $env:RUNNER_TEMP 'release-receipt'
+          }
+          $configPath=Join-Path $env:RUNNER_TEMP 'receipt-config.json'
+          $config|ConvertTo-Json|Set-Content -LiteralPath $configPath
+          & node (Join-Path $config.engineRoot '.github/scripts/wss-ci/receipt.mjs') $configPath
+          if($LASTEXITCODE -ne 0){throw 'Common receipt verification failed.'}
+      - uses: actions/upload-artifact@v4
+        if: ${{ success() }}
+        with:
+          name: ${{ steps.receipt.outputs.artifact_name }}
+          retention-days: 90
+          if-no-files-found: error
+          path: ${{ runner.temp }}/release-receipt/receipt.json
