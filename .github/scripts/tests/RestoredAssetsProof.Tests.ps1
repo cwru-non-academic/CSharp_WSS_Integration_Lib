@@ -63,6 +63,32 @@ try {
  Require (!$invocation.reached) 'Verifier was executed before rejecting added helper source'
  Remove-Item -LiteralPath $added
  Assert-TrustedBaselineSnapshot $toolSnapshot
+ # Run the hosted fixture's actual capture/finally expressions on a fake project.
+ # Byte restoration alone must remain stale; the fixture must restore its timestamp.
+ $hostedPath=Join-Path $PSScriptRoot '../../../tools/SelectedRuntimeFixtures/Invoke-HostedSelectedRuntime.ps1'
+ $parseErrors=$null
+ $hostedAst=[Management.Automation.Language.Parser]::ParseFile($hostedPath,[ref]$null,[ref]$parseErrors)
+ Require ($parseErrors.Count -eq 0) 'Hosted fixture restoration source does not parse'
+ $captures=@($hostedAst.FindAll({param($n)$n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -cin @('$original','$originalLastWriteTimeUtc')},$true)|Sort-Object {$_.Extent.StartOffset})
+ $restorations=@($hostedAst.FindAll({param($n)$n -is [Management.Automation.Language.TryStatementAst] -and $null -ne $n.Finally -and $n.Finally.Extent.Text.Contains('[IO.File]::WriteAllBytes($case.path,$original)')},$true))
+ Require ($captures.Count -eq 2 -and $restorations.Count -eq 1) 'Hosted fixture must retain one original byte/timestamp capture and restoration'
+ $c=New-Case 'hosted timestamp restoration'
+ $case=@{path=$c.project}
+ $expectedTimestamp=[IO.File]::GetLastWriteTimeUtc($c.project)
+ foreach($capture in $captures){. ([scriptblock]::Create($capture.Extent.Text))}
+ [IO.File]::AppendAllText($c.project,'child mutation')
+ Reject {Assert-Case $c} 'hosted project mutation'
+ [IO.File]::WriteAllBytes($c.project,$original)
+ [IO.File]::SetLastWriteTimeUtc($c.project,[IO.File]::GetLastWriteTimeUtc($c.assets).AddSeconds(5))
+ foreach($check in @({Assert-Case $c},{Verify-Case $c})){
+  $message='';try{& $check}catch{$message=$_.Exception.Message}
+  Require ($message -like '*stale*') 'Bytes-only restoration must retain stale-assets rejection';$count++
+ }
+ $cleanup=($restorations[0].Finally.Statements|ForEach-Object {$_.Extent.Text}) -join [char]10
+ $priorMutationPath=$env:WSS_FIXTURE_MUTATION_PATH
+ try{& ([scriptblock]::Create($cleanup))}finally{$env:WSS_FIXTURE_MUTATION_PATH=$priorMutationPath}
+ Require ([IO.File]::GetLastWriteTimeUtc($c.project) -eq $expectedTimestamp) 'Hosted cleanup failed to restore original project timestamp'
+ Assert-Case $c;Verify-Case $c;$count++
  $c=New-Case 'unchanged fallback'
  Assert-Case $c;Verify-Case $c;$count++
  Require ($c.proof.NeutralAssetPath -ceq (Join-Path $c.fallback "$($c.package)/$($c.asset)")) 'Proof did not capture fallback selection'

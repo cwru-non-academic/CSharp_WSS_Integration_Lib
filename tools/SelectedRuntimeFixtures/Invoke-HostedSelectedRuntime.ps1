@@ -128,6 +128,7 @@ try{
  Require ($success.product_sha -ceq $state.product_sha -and $success.test_sha -ceq $state.test_sha -and $success.product_root -cne $success.test_root) 'Product/test identities became coupled.'
  foreach($case in @(@{name='reject-baseline-mutation';path=$proof.state.project;reason='*proof/source changed*'},@{name='reject-payload-mutation';path=(Join-Path $state.payload_root 'wss-candidate.json');reason='*payload changed*'})){
   $original=[IO.File]::ReadAllBytes($case.path)
+  $originalLastWriteTimeUtc=[IO.File]::GetLastWriteTimeUtc($case.path)
   try{
    $env:WSS_FIXTURE_MUTATION_PATH=$case.path;$rejected=$false
    try{Invoke-CredentialFreeSelectedPowerShell "$scripts/Invoke-SelectedCSharpTests.ps1" (SelectedOptions $case.name)}catch{$rejected=$true}
@@ -136,7 +137,7 @@ try{
    $parentRejected=$false
    try{Assert-PreparedProfileProof $proof}catch{if($_.Exception.Message -notlike $case.reason){throw};$parentRejected=$true}
    Require $parentRejected 'Parent failed to detect selected mutation.'
-  }finally{Remove-Item Env:WSS_FIXTURE_MUTATION_PATH -ErrorAction SilentlyContinue;[IO.File]::WriteAllBytes($case.path,$original)}
+  }finally{Remove-Item Env:WSS_FIXTURE_MUTATION_PATH -ErrorAction SilentlyContinue;[IO.File]::WriteAllBytes($case.path,$original);[IO.File]::SetLastWriteTimeUtc($case.path,$originalLastWriteTimeUtc)}
   Assert-PreparedProfileProof $proof;Assert-BaselineFiles
  }
  # The child can add an evidence file without altering existing hashes. The parent
