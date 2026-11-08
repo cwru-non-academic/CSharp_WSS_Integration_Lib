@@ -1,7 +1,7 @@
 import {canonical,requireThat,producer} from './verify.mjs';
 import {findNormalRuns,selectNormalRun} from './normal-ci.mjs';
-import {refreshPreflightProof} from './preflight-proof.mjs';
-import {refreshSelectedTestArtifact} from './campaign-test-selection.mjs';
+import {refreshPreflightProof,verifyPreflightProof} from './preflight-proof.mjs';
+import {refreshSelectedTestArtifact,verifySelectedTestArtifact,validatePlanTestSelection} from './campaign-test-selection.mjs';
 
 // Detached authenticated captures; Buffer must remain Buffer for byte validators.
 export function detachAdmission(x) {
@@ -41,12 +41,21 @@ export function refreshNormalMetadata(g,p,target,captured,{session=createAdmissi
   return {run,jobs,...(selected_tests?{selected_tests}:{})};
 }
 export function refreshPreflightMetadata(g,p,captured,{session=createAdmissionRefresh(g)}={}) {
-  const d=captured.descriptor,key=`${d.repository}:${d.run_id}:${d.attempt}`,prior=session.preflights.get(key);
-  const expectation={descriptor:d,proof:captured.proof,candidate:captured.candidate,selected_tests:captured.selected_tests};
+  const d=captured.descriptor;
+  // Equality is not validation: every incoming capture must satisfy the same
+  // pure predicates, even when an equivalent physical proof is already cached.
+  verifyPreflightProof(d,captured.proof);validatePlanTestSelection(p);
+  const target=p.manifest.targets.find(t=>t.repository===d.repository);
+  requireThat(target,'Unknown preflight target');
+  const selected=p.test_selection?verifySelectedTestArtifact(p,target.id,captured.proof.run,captured.selected_tests):undefined;
+  const a=selected?captured.selected_tests.artifact:undefined;
+  const expectation={descriptor:d,run:runIdentity(captured.proof.run),candidate:captured.candidate,
+    ...(selected?{selected_tests:{artifact:{id:String(a.id),name:a.name,expired:a.expired,digest:a.digest,
+      workflow_run:{id:String(a.workflow_run.id),head_sha:a.workflow_run.head_sha}},evidence:selected}}:{})};
+  const key=`${d.repository}:${d.run_id}:${d.attempt}`,prior=session.preflights.get(key);
   if(prior){requireThat(same(prior.expectation,expectation),'Conflicting shared preflight expectations');return detachAdmission(prior.result);}
   session.bracket(d.repository,captured.proof.run);
-  const proof=refreshPreflightProof(g,d,captured.proof),target=p.manifest.targets.find(t=>t.repository===d.repository);
-  requireThat(target,'Unknown preflight target');
+  const proof=refreshPreflightProof(g,d,captured.proof);
   const selected_tests=p.test_selection?refreshSelectedTestArtifact(g,p,target.id,proof.run,captured.selected_tests):undefined;
   session.bracket(d.repository,captured.proof.run);
   const result={descriptor:detachAdmission(d),proof,candidate:detachAdmission(captured.candidate),...(selected_tests?{selected_tests}:{})};
