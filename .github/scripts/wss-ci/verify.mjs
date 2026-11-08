@@ -1,3 +1,4 @@
+import {verifyPreflightProof} from './preflight-proof.mjs';
 import {testSelectionPolicy,validatePlanTestSelection,verifySelectedTestArtifact} from './campaign-test-selection.mjs';
 import {createHash} from 'node:crypto';
 import {channelContext} from './channels.mjs';
@@ -118,7 +119,8 @@ export function receipt(p, t, r, e) {
     requireThat(p.manifest.targets.some(x => x.repository === declared.repository) && id(declared.run_id) && sha(declared.source_sha) && declared.workflow === '.github/workflows/wss-preflight.yml', 'Invalid preflight descriptor');
     const sourceTarget = p.manifest.targets.find(x => x.repository === declared.repository);
     requireThat(declared.source_sha === p.target_snapshots[sourceTarget.id].head_sha, 'Preflight source differs from frozen target snapshot');
-    run(actual.run,declared.repository,declared.workflow,actual.run.run_attempt);
+    verifyPreflightProof(declared,actual);
+    run(actual.run,declared.repository,declared.workflow,declared.attempt);
     requireThat(String(actual.run.id) === declared.run_id && actual.run.head_sha === declared.source_sha && actual.run.head_branch===p.channel && actual.run.event === 'workflow_dispatch' && same(actual.candidate,p.candidate), 'Preflight run/candidate mismatch');
     if(p.test_selection)verifySelectedTestArtifact(p,sourceTarget.id,actual.run,actual.selected_tests);
   }
