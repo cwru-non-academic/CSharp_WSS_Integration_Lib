@@ -2,14 +2,14 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "d6eec93c77e9b8a4ce159bf3b4320e615e4f03f9",
-  "source_ref": "refs/heads/ci/tooling/d6eec93c77e9b8a4ce159bf3b4320e615e4f03f9",
+  "source_commit": "b370606870ace54bbe36e31c2c8c96fe3136eca0",
+  "source_ref": "refs/heads/ci/tooling/b370606870ace54bbe36e31c2c8c96fe3136eca0",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "902736474dce4e2b82324c0a8b75f39afa859a0e",
-      "ref": "refs/heads/ci/tooling/902736474dce4e2b82324c0a8b75f39afa859a0e"
+      "commit": "2764e377ae0e4eee977abd7c6e023d4cfea5573a",
+      "ref": "refs/heads/ci/tooling/2764e377ae0e4eee977abd7c6e023d4cfea5573a"
     }
   },
   "files": {
@@ -51,7 +51,7 @@
     ".github/scripts/wss-ci/receipt.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/receipt.mjs",
-      "sha256": "7a6e800795912ef8c1ec42a34ad95ae9632f4c6519eb35a2463f5f15e375e527"
+      "sha256": "301c81a21b6e589593a9fb6169da7dbfe39b62149f60d96bd3089f6154817dc4"
     },
     ".github/scripts/wss-ci/promotion.mjs": {
       "origin": "integration",
