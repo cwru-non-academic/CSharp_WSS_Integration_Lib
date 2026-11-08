@@ -29,7 +29,7 @@ $baselineResults=$WorkRoot+'-baseline-results'
 Invoke-CredentialFreeSelectedPowerShell "$PSScriptRoot/Invoke-ProfileFullTests.ps1" @{EvidencePath=$ProfileEvidencePath;ResultsDirectory=$baselineResults}
 Assert-PreparedProfileProof $proof
 # Bind trusted baseline output/results before running any separately selected code.
-$baselineRoots=@($proof.state.output_root,$baselineResults)
+$baselineRoots=@($proof.state.output_root,$baselineResults,(Join-Path $PSScriptRoot 'wss-ci/restored-assets'),(Join-Path $PSScriptRoot 'Verify-WssOutput.ps1'))
 $options=@{Role=$(if($TargetId -ceq 'csharp-wrapper'){'wrapper'}else{'cli'});ProductRoot=$product.path;ProductSha=$product.commit;
     PayloadRoot=$PayloadRoot;WorkRoot=$WorkRoot;TestRoot=$roots.test_root;TestSha=$binding.test_commit;
     TestRepository=$binding.test_repository;TestSelectionId=$binding.selection_id;ProfileEvidencePath=$ProfileEvidencePath}

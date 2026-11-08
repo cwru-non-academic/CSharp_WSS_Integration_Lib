@@ -101,7 +101,7 @@ try{
  if($LASTEXITCODE -ne 0){throw 'Restored staged product publish failed.'}
  & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $FixtureRoot 'staged-publish') -ProjectPath (Join-Path $proof.state.source_root 'src/Wss.CSharpImplementation.csproj') -ProjectAssetsFile (Join-Path $proof.state.source_root 'src/obj/project.assets.json') -RestoreProof $publishRestoreProof
  if($legacy){Assert-LegacyFullInventory (Join-Path $baseline 'all.trx');[xml]$missing=Get-Content (Join-Path $baseline 'all.trx') -Raw;$null=$missing.TestRun.Results.RemoveChild($missing.TestRun.Results.UnitTestResult[0]);$negative=Join-Path $FixtureRoot 'missing-baseline.trx';$missing.Save($negative);$rejected=$false;try{Assert-LegacyFullInventory $negative}catch{$rejected=$true};Require $rejected 'Missing historical baseline case was accepted.'}
- $baselineRoots=@($proof.state.output_root,$baseline)
+ $baselineRoots=@($proof.state.output_root,$baseline,(Join-Path $scripts 'wss-ci/restored-assets'),(Join-Path $scripts 'Verify-WssOutput.ps1'))
  $baselineSnapshot=New-TrustedBaselineSnapshot $baselineRoots
  function Assert-BaselineFiles {
   Assert-TrustedBaselineSnapshot $baselineSnapshot

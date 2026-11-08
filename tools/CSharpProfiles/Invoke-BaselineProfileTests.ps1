@@ -93,7 +93,7 @@ $restoredAssets=Join-Path $WorkRoot 'obj/project.assets.json'
 . "$PSScriptRoot/../../.github/scripts/wss-ci/restored-assets/RestoredAssets.ps1"
 $restoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile $restoredAssets -ProjectPath $project
 $restoredNeutral=$restoreProof.NeutralAssetPath
-$restoredSnapshot=New-TrustedBaselineSnapshot @($project,$restoredAssets,$restoredNeutral)
+$restoredSnapshot=New-TrustedBaselineSnapshot @($project,$restoredAssets,$restoredNeutral,(Join-Path "$PSScriptRoot/../../.github/scripts" 'wss-ci/restored-assets'),(Join-Path "$PSScriptRoot/../../.github/scripts" 'Verify-WssOutput.ps1'))
 & $validator -ArtifactRoot $PayloadRoot -OutputRoot $output -ProjectPath $project -ProjectAssetsFile (Join-Path $WorkRoot 'obj/project.assets.json') -RestoreProof $restoreProof
 
     & "$PSScriptRoot/Invoke-Behavior.ps1" -Profile $profile.profile -Project $project -IsolatedBuild -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot

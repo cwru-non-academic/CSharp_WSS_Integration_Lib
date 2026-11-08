@@ -91,7 +91,7 @@ $restoredAssets=Join-Path $WorkRoot 'obj/project.assets.json'
 . "$PSScriptRoot/wss-ci/restored-assets/RestoredAssets.ps1"
 $restoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile $restoredAssets -ProjectPath $project
 $restoredNeutral=$restoreProof.NeutralAssetPath
-$restoredSnapshot=New-TrustedBaselineSnapshot @($project,$restoredAssets,$restoredNeutral)
+$restoredSnapshot=New-TrustedBaselineSnapshot @($project,$restoredAssets,$restoredNeutral,(Join-Path "$PSScriptRoot" 'wss-ci/restored-assets'),(Join-Path "$PSScriptRoot" 'Verify-WssOutput.ps1'))
 & $validator -ArtifactRoot $PayloadRoot -OutputRoot $output -ProjectPath $project -ProjectAssetsFile (Join-Path $WorkRoot 'obj/project.assets.json') -RestoreProof $restoreProof
 
 if ($Role -ceq 'wrapper') {
