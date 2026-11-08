@@ -77,3 +77,10 @@ export function targetTestEvidence(p,targetId) {
   requireThat(target,'Target requires an active frozen selection');
   return {selection_id:context.selection_id,target_id:targetId,repository:target.repository,test_repository:target.tests.repository,test_commit:target.tests.commit};
 }
+
+export function refreshSelectedTestArtifact(g,p,targetId,run,captured) {
+  verifySelectedTestArtifact(p,targetId,run,captured);
+  const artifact=structuredClone(g.artifact(run.repository.full_name,String(run.id),selectedTestArtifactName(targetId,run.run_attempt)));
+  requireThat(String(artifact.id)===String(captured.artifact.id)&&artifact.digest===captured.artifact.digest,'Selected-test artifact replaced since authentication');
+  const result={artifact,bytes:Buffer.from(captured.bytes)};verifySelectedTestArtifact(p,targetId,run,result);return result;
+}

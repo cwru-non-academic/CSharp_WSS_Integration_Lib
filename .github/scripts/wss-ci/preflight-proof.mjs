@@ -82,3 +82,15 @@ export function preflightCandidate(g,d) {
   const candidate=JSON.parse(downloadVerifiedJsonArtifact(g,d.repository,metadata,['candidate.json'])['candidate.json']);
   artifact(g,d,'wss-candidate-provenance',binding);return candidate;
 }
+
+// Live metadata only. Completed log hashes remain authenticated captures, not
+// a new requirement that historical log bodies remain downloadable forever.
+export function refreshPreflightProof(g,d,captured) {
+  verifyPreflightProof(d,captured);
+  const run=structuredClone(g.run(d.repository,d.run_id));identity(run,d);
+  const jobs=proofJobs(g.jobs(d.repository,run));requireThat(same(jobs,d.jobs),'Native proved attempt job snapshot changed');
+  const artifacts=d.artifacts.map(expected=>artifact(g,d,expected.name,expected).binding);
+  const final=structuredClone(g.run(d.repository,d.run_id));identity(final,d);
+  const result={run:final,jobs,artifacts,logs:structuredClone(captured.logs)};
+  verifyPreflightProof(d,result);return result;
+}
