@@ -35,8 +35,15 @@ function Assert-WssRestoredAssetsProof {
 function Capture-Child {$script:events.Add([pscustomobject]@{kind='child';id=-1});$global:LASTEXITCODE=0}
 function Capture-TrustedPublish {$global:LASTEXITCODE=0}
 function Capture-TrustedCliBaseline {@('synthetic CLI baseline')}
-function New-TrustedBaselineSnapshot {@{roots=@()}}
-function Assert-TrustedBaselineSnapshot {}
+function New-TrustedBaselineSnapshot([string[]]$Roots) {
+ $paths=@($Roots|ForEach-Object {[IO.Path]::GetFullPath($_)})
+ Require ($paths -ccontains $script:expectedHelperRoot -and $paths -ccontains $script:expectedVerifierPath) 'Caller snapshot omitted trusted helper directory or thin verifier'
+ $script:events.Add([pscustomobject]@{kind='tool-capture';id=-1})
+ @{roots=$Roots;protected=$true}
+}
+function Assert-TrustedBaselineSnapshot($Snapshot) {
+ if($Snapshot.ContainsKey('protected') -and $Snapshot.protected){$script:events.Add([pscustomobject]@{kind='tool-assert';id=-1})}
+}
 function Assert-PreparedProfileProof {}
 function Assert-StagedCSharpProduct {}
 function Assert-CSharpTestBundle {}
@@ -66,17 +73,20 @@ function New-Projection([string]$Text,[string]$Start,[string]$Stop){
   if($replacement){$edits+=@{start=$target.Extent.StartOffset;end=$target.Extent.EndOffset;text=$replacement}}
  }
  foreach($edit in $edits|Sort-Object start -Descending){$slice=$slice.Remove($edit.start,$edit.end-$edit.start).Insert($edit.start,$edit.text)}
- $slice
+ $slice.Replace('$PSScriptRoot','$CallerScriptRoot')
 }
 function Test-OrderedCaller([string]$Relative,[string]$Variant){
  $text=Get-Content (Join-Path $root $Relative) -Raw
+ $CallerScriptRoot=Split-Path -Parent (Join-Path $root $Relative)
+ $script:expectedHelperRoot=[IO.Path]::GetFullPath((Join-Path $root '.github/scripts/wss-ci/restored-assets'))
+ $script:expectedVerifierPath=[IO.Path]::GetFullPath((Join-Path $root '.github/scripts/Verify-WssOutput.ps1'))
  $script:ordered=$true;$script:events=[Collections.Generic.List[object]]::new();$script:proofs=[Collections.Generic.List[object]]::new()
  $WorkRoot=Join-Path $scratch ($Variant+'-'+[IO.Path]::GetFileNameWithoutExtension($Relative))
  $project=Join-Path $WorkRoot 'SelectedTests.csproj';$PayloadRoot='authenticated payload';$output='generated output'
  $ProductRoot='product';$ProductSha='product-sha';$IntegrationRoot='integration';$IntegrationSha='integration-sha';$bundle=@{}
  $ProfileEvidencePath=if($Variant -ceq 'profile'){'profile.json'}else{''};$profileName='layered-v1';$profile=@{profile='layered-v1'};$fixture='fixture';$payloadDigest='unchanged';$properties=@()
  $Role=if($Variant -ceq 'cli'){'cli'}else{'wrapper'};$TargetId=if($Variant -ceq 'cli'){'csharp-cli'}else{'csharp-wrapper'}
- $FixtureRoot=$WorkRoot;$scripts='reviewed tooling';$legacy=$false;$baseline=Join-Path $WorkRoot 'baseline-results'
+ $FixtureRoot=$WorkRoot;$scripts=Join-Path $root '.github/scripts';$legacy=$false;$baseline=Join-Path $WorkRoot 'baseline-results'
  $proof=@{state=@{project=$project;output_root=(Join-Path $WorkRoot 'prepared output');source_root=(Join-Path $WorkRoot 'product')}}
  $state=@{payload_root=$PayloadRoot;product_root=$ProductRoot;product_sha=$ProductSha;test_root='selected source';test_sha='selected-sha';selection_id='selection';integration_root=$IntegrationRoot;integration_sha=$IntegrationSha}
  $profilePath='profile.json';$baselineRoots=@('output','results');$options=@{};$authoritySnapshot=@{}
@@ -87,7 +97,13 @@ function Test-OrderedCaller([string]$Relative,[string]$Variant){
  foreach($name in $names){$definitions+='<UnitTest id="'+$i+'"><TestMethod className="Wss.Cli.Tests.ModeledCommandTests" /></UnitTest>';$results+='<UnitTestResult testId="'+$i+'" testName="'+$name+'" outcome="Passed" />';$i++}
  $null=New-Item -ItemType Directory (Join-Path $WorkRoot 'commands') -Force
  [IO.File]::WriteAllText((Join-Path $WorkRoot 'commands/commands.trx'),'<TestRun><TestDefinitions>'+$definitions+'</TestDefinitions><Results>'+$results+'</Results></TestRun>')
- if($Relative.EndsWith('WithContext.ps1')){$slice=New-Projection $text '# Immutable baseline builds' '# Workflow callers'}
+ if($Relative.EndsWith('WithContext.ps1')){
+  $baselineResults=$baseline
+  $baselineDeclaration=($text -split '\r?\n'|Where-Object {$_.StartsWith('$baselineRoots=@(')})
+  Require (@($baselineDeclaration).Count -eq 1) 'Missing actual baseline source snapshot roots'
+  Invoke-Expression ($baselineDeclaration.Replace('$PSScriptRoot','$CallerScriptRoot'))
+  $slice=New-Projection $text '# Immutable baseline builds' '# Workflow callers'
+ }
  elseif($Relative.Contains('HostedSelectedRuntime')){$slice=New-Projection $text ' # The immutable baseline' ' $success='}
  else{$slice=New-Projection $text '# Freeze restore identity' '$evidence='}
  & ([scriptblock]::Create($slice))
@@ -101,6 +117,15 @@ function Test-OrderedCaller([string]$Relative,[string]$Variant){
   Require ($verified.Count -ge 2 -and $verified[0] -lt $children[0] -and $verified[-1] -gt $children[-1]) "Proof verification did not enclose child: $Relative/$Variant"
   Require ($asserted.Count -gt 0 -and $asserted[-1] -gt $children[-1]) "No final retained proof assertion: $Relative/$Variant"
  }
+ foreach($index in 0..($events.Count-1)){
+  if($events[$index].kind -cne 'verify'){continue}
+  $previousChildren=@($children|Where-Object {$_ -lt $index})
+  if(!$previousChildren.Count){continue}
+  $toolAssertions=@(0..($index-1)|Where-Object {$events[$_].kind -ceq 'tool-assert'})
+  Require ($toolAssertions.Count -gt 0 -and $toolAssertions[-1] -gt $previousChildren[-1]) "Verifier source reloaded before trusted tool snapshot assertion: $Relative/$Variant"
+ }
+ $toolCaptures=@(0..($events.Count-1)|Where-Object {$events[$_].kind -ceq 'tool-capture'})
+ Require ($toolCaptures.Count -gt 0 -and $toolCaptures[0] -lt $children[0]) "Trusted tools were not snapshotted before selectable child: $Relative/$Variant"
  Require ($script:proofs.Count -gt 0) 'No executable proof capture'
  $script:count++;$script:ordered=$false
 }

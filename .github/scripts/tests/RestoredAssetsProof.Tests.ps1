@@ -36,6 +36,33 @@ function New-Case([string]$Name,[switch]$PrimaryPresent){
 function Assert-Case($Case){Assert-WssRestoredAssetsProof -Proof $Case.proof -ProjectAssetsFile $Case.assets -ProjectPath $Case.project}
 function Verify-Case($Case){$options=$Case.options;& "$PSScriptRoot/../Verify-WssOutput.ps1" @options | Out-Null}
 try {
+ # Exercise the existing snapshot guard on fabricated executable-tool sources.
+ # The harmless synthetic verifier records whether execution was reached.
+ $toolRoot=Join-Path $root 'reviewed tooling/restored-assets'
+ $thinVerifier=Join-Path $root 'reviewed tooling/Verify-WssOutput.ps1'
+ $helperFiles=@('RestoredAssets.ps1','RestoredPackageAssets.cs','Verify-WssOutput.ps1')|ForEach-Object {Join-Path $toolRoot $_}
+ foreach($file in $helperFiles){Write-Bytes $file 'original trusted source'}
+ Write-Bytes $thinVerifier 'param($Invocation) $Invocation.reached=$true'
+ $toolSnapshot=New-TrustedBaselineSnapshot @($toolRoot,$thinVerifier)
+ $invocation=@{reached=$false}
+ Assert-TrustedBaselineSnapshot $toolSnapshot
+ & $thinVerifier $invocation
+ Require $invocation.reached 'Unchanged synthetic verifier was not reached';$count++
+ foreach($file in @($helperFiles)+@($thinVerifier)){
+  $original=[IO.File]::ReadAllText($file)
+  Write-Bytes $file 'param($Invocation) $Invocation.reached=$true; throw "MUTATED TOOL EXECUTED"'
+  $invocation.reached=$false
+  Reject {Assert-TrustedBaselineSnapshot $toolSnapshot;& $thinVerifier $invocation} 'trusted helper/verifier source mutation'
+  Require (!$invocation.reached) 'Verifier was executed before rejecting changed tool source'
+  Write-Bytes $file $original
+ }
+ $added=Join-Path $toolRoot 'child-added-helper.ps1'
+ Write-Bytes $added 'throw "ADDED TOOL EXECUTED"'
+ $invocation.reached=$false
+ Reject {Assert-TrustedBaselineSnapshot $toolSnapshot;& $thinVerifier $invocation} 'trusted helper directory addition'
+ Require (!$invocation.reached) 'Verifier was executed before rejecting added helper source'
+ Remove-Item -LiteralPath $added
+ Assert-TrustedBaselineSnapshot $toolSnapshot
  $c=New-Case 'unchanged fallback'
  Assert-Case $c;Verify-Case $c;$count++
  Require ($c.proof.NeutralAssetPath -ceq (Join-Path $c.fallback "$($c.package)/$($c.asset)")) 'Proof did not capture fallback selection'
