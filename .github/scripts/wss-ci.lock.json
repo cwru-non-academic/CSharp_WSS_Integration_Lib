@@ -2,14 +2,14 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "b370606870ace54bbe36e31c2c8c96fe3136eca0",
-  "source_ref": "refs/heads/ci/tooling/b370606870ace54bbe36e31c2c8c96fe3136eca0",
+  "source_commit": "4a7e099ef095ad7bc2d334aa5309a09fb484303a",
+  "source_ref": "refs/heads/ci/tooling/4a7e099ef095ad7bc2d334aa5309a09fb484303a",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "2764e377ae0e4eee977abd7c6e023d4cfea5573a",
-      "ref": "refs/heads/ci/tooling/2764e377ae0e4eee977abd7c6e023d4cfea5573a"
+      "commit": "1f4bd6353cb4a5767baea64daf6647c8fb4aa31d",
+      "ref": "refs/heads/ci/tooling/1f4bd6353cb4a5767baea64daf6647c8fb4aa31d"
     }
   },
   "files": {
@@ -41,7 +41,7 @@
     ".github/scripts/wss-ci/github.mjs": {
       "origin": "core",
       "source": "tools/release/github.mjs",
-      "sha256": "98e068a0514788e6500c1b605604eeab133ecbb595da422d344ab9fbcf5d170b"
+      "sha256": "c736eb87cbb9e9f02bfaad1cc88d14622d12785ee03f5f659fba880e5acae533"
     },
     ".github/scripts/wss-ci/policy.mjs": {
       "origin": "core",
@@ -51,7 +51,7 @@
     ".github/scripts/wss-ci/receipt.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/receipt.mjs",
-      "sha256": "301c81a21b6e589593a9fb6169da7dbfe39b62149f60d96bd3089f6154817dc4"
+      "sha256": "1853ccb565d579cbdad944a706734114c637e91347b5d403a20be2a8d004e5dd"
     },
     ".github/scripts/wss-ci/promotion.mjs": {
       "origin": "integration",

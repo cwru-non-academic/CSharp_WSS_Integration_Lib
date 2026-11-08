@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {allClear,bytesDigest,candidate,canonical,CORE,digest,manifest,plan,producer,requireThat} from './verify.mjs';
 import {checkTagGuard} from './policy.mjs';
-import {findNormalRuns} from './normal-ci.mjs';
+import {findNormalRuns,selectNormalRun} from './normal-ci.mjs';
 import {channelContext,releaseFingerprint} from './channels.mjs';
 
 // No shell expansion, caller-provided commands, implicit pagination or token output.
@@ -94,7 +94,7 @@ export function archive(g,c) {
 }
 export function collect(g,p) {
   plan(p);
-  const c=p.candidate, source=g.run(CORE,c.run_id), zip=archive(g,c);
+  const c=p.candidate, source=structuredClone(g.run(CORE,c.run_id)), zip=archive(g,c);
   const evidence={producer:{run:source,current_head:g.head(CORE,p.channel),jobs:g.jobs(CORE,source),artifact:zip.artifact,archive_sha256:bytesDigest(zip.files[c.archive])},targets:{}};
   for(const t of p.manifest.targets) {
     const runs=g.pages(`repos/${t.repository}/actions/workflows/release-receipt.yml/runs?branch=${t.branch}`,'workflow_runs');
@@ -132,11 +132,36 @@ export function collect(g,p) {
       ...(p.test_selection?{selected_tests:collectSelectedTestArtifact(g,p,t.id,normal)}:{}),
       emitter_run:g.run(t.repository,String(emitter.id)),artifact:g.artifact(t.repository,String(emitter.id),name),preflights};
   }
-  // Recheck every proved native attempt after all nine targets were collected.
+  // Finish expensive native artifact/log IO before the final admission reads.
   for(const target of Object.values(evidence.targets))for(const d of target.receipt.preflights)collectPreflightProof(g,d);
-  // Recheck all native attempts after collecting every receiver.
-  for(const target of Object.values(evidence.targets))for(const d of target.receipt.preflights)collectPreflightProof(g,d);
-  return {record:allClear(p,evidence),files:zip.files};
+  return {record:refreshAdmission(g,p,evidence),files:zip.files,admission:evidence};
+}
+
+// Internal evidence context only; frozen plans and acceptance wire schemas stay
+// unchanged. Reuse receipt/producer/allClear policy after refreshing mutable CI
+// metadata, then read exact accepted heads last (parents are also required targets).
+// These distributed observations narrow the IO window; they are not atomic.
+export function refreshAdmission(g,p,evidence) {
+  requireThat(evidence?.producer&&evidence?.targets,'Publication requires collected admission evidence');
+  const acceptedAttempt=evidence.producer.run.run_attempt;
+  evidence={producer:{...evidence.producer},targets:Object.fromEntries(Object.entries(evidence.targets).map(([id,e])=>[id,{...e}]))};
+  for(const t of p.manifest.targets) {
+    const e=evidence.targets[t.id],r=e.receipt;
+    const observed=structuredClone(g.run(t.repository,r.normal_ci.run_id)),normalJobs=structuredClone(g.jobs(t.repository,observed));
+    const latest=selectNormalRun(findNormalRuns(g,t,r.merge.sha,e.pr.merged_at),t,r.merge.sha,e.pr.merged_at);
+    const normal=structuredClone(g.run(t.repository,r.normal_ci.run_id));
+    requireThat(String(latest.id)===String(normal.id)&&latest.run_attempt===normal.run_attempt&&String(observed.id)===String(normal.id)&&observed.run_attempt===normal.run_attempt,
+      'Normal post-merge CI run missing, ambiguous or different from receipt');
+    e.normal_run=normal;e.normal_latest_run_id=String(latest.id);e.normal_jobs=normalJobs;
+  }
+  const source=structuredClone(g.run(CORE,p.candidate.run_id));
+  evidence.producer.jobs=structuredClone(g.jobs(CORE,source));
+  evidence.producer.artifact=structuredClone(g.artifact(CORE,p.candidate.run_id,'universal-release-assets'));
+  evidence.producer.run=structuredClone(g.run(CORE,p.candidate.run_id));
+  requireThat(String(source.id)===p.candidate.run_id&&source.run_attempt===acceptedAttempt&&source.run_attempt===evidence.producer.run.run_attempt,'Producer attempt changed during admission');
+  for(const t of p.manifest.targets)evidence.targets[t.id].current_head=g.head(t.repository,t.branch);
+  evidence.producer.current_head=g.head(CORE,p.channel);
+  return allClear(p,evidence);
 }
 
 export function publish(g,p,accepted,directory,reader=g) {
