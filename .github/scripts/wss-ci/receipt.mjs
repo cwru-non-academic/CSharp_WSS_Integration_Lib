@@ -131,7 +131,7 @@ export async function runReceipt(config,{g=new ReadOnly(),env=process.env}={}) {
   const pr=g.get(`repos/${t.repository}/pulls/${associations[0].number}`);
   mergedPr(pr,t,head,p.candidate);
   const normalProof=()=>selectNormalRun(g.pages(`repos/${t.repository}/actions/workflows/${t.workflow.split('/').at(-1)}/runs?branch=${t.branch}&head_sha=${head}`,'workflow_runs'),t,head,pr.merged_at);
-  const normal=normalProof();v.jobs(g.jobs(t.repository,normal),t.jobs);
+  const normal=structuredClone(normalProof());v.jobs(g.jobs(t.repository,normal),t.jobs);
   v.requireThat(g.tree(t.repository,normal.head_sha)===g.tree(t.repository,head),'Normal CI tested another tree');
   const parents=Object.fromEntries(Object.entries(t.parents).map(([parent,path])=>{
     const entry=g.object(t.repository,head,path);v.requireThat(entry.type==='commit' && entry.mode==='160000','Parent is not a Git submodule');return [parent,entry.sha];
@@ -173,20 +173,26 @@ export async function runReceipt(config,{g=new ReadOnly(),env=process.env}={}) {
       }
     }
     phase='recheck';
+    // Finish proof IO before final admission. Selected evidence belongs to the
+    // originally captured normal attempt, never a newly observed rerun.
+    const selectedTests=p.test_selection?verifySelectedTestArtifact(p,id,normal,collectSelectedTestArtifact(g,p,id,normal)):undefined;
+    for(const d of preflights)collectPreflightProof(g,d);
+    for(const path of t.trusted_paths) v.requireThat(g.object(t.repository,head,path).sha===snapshot.trusted[path],`Frozen tooling changed during validation: ${path}`);
     authority.receiptAuthorization(g,p,id);
+    const observed=g.run(t.repository,normal.id),normalJobs=g.jobs(t.repository,observed);
+    const latest=normalProof(),live=g.run(t.repository,normal.id);
+    v.requireThat([observed,latest,live].every(r=>String(r.id)===String(normal.id)&&r.run_attempt===normal.run_attempt),'Normal run/attempt changed during validation');
+    for(const r of [observed,live]){runIdentity(r,t.repository,t.workflow,head,normal.event,p.channel);v.requireThat(r.status==='completed'&&r.conclusion==='success','Normal CI is no longer successful');}
+    v.jobs(normalJobs,t.jobs);
+    // These last observations narrow the admission window; sequential reads
+    // and local emission cannot form an atomic transaction with GitHub.
+    const currentHead=g.head(t.repository,t.branch);
+    const parentHeads=Object.fromEntries(Object.keys(parents).map(parent=>[parent,g.head(profiles[parent].target.repository,p.channel)]));
+    const currentCore=g.head(v.CORE,p.channel);
+    v.requireThat(currentHead===head&&currentCore===p.candidate.commit,'Source moved during validation');
+    for(const [parent,sha] of Object.entries(parents))v.requireThat(parentHeads[parent]===sha,'Accepted wrapper moved during validation');
     receiptRoots(config,profile);
     for(const [key,sha] of Object.entries(rootHeads))v.requireThat(git(roots[key],'rev-parse','HEAD')===sha,'Receipt root moved during native validation');
-    v.requireThat(g.head(t.repository,t.branch)===head && g.head(v.CORE,p.channel)===p.candidate.commit,'Source moved during validation');
-    for(const [parent,sha] of Object.entries(parents)) v.requireThat(g.head(profiles[parent].target.repository,p.channel)===sha,'Accepted wrapper moved during validation');
-    const latest=normalProof(),live=g.run(t.repository,normal.id);
-    v.requireThat(String(latest.id)===String(normal.id) && latest.run_attempt===normal.run_attempt && String(live.id)===String(normal.id) && live.run_attempt===normal.run_attempt,'Normal run/attempt changed during validation');
-    runIdentity(live,t.repository,t.workflow,head,normal.event,p.channel);v.requireThat(live.status==='completed' && live.conclusion==='success','Normal CI is no longer successful');v.jobs(g.jobs(t.repository,live),t.jobs);
-    for(const path of t.trusted_paths) v.requireThat(g.object(t.repository,head,path).sha===snapshot.trusted[path],`Frozen tooling changed during validation: ${path}`);
-    // Never derive this declaration from adapter output or caller inputs. The
-    // collector authenticates artifact ownership, source and attempt and checks
-    // its downloaded bytes against the producer's frozen selection.
-    const selectedTests=p.test_selection?verifySelectedTestArtifact(p,id,live,collectSelectedTestArtifact(g,p,id,live)):undefined;
-    for(const d of preflights)collectPreflightProof(g,d);
     const receipt={...(selectedTests?{selected_tests:selectedTests}:{}),schema:context.receiptSchema,plan_id:p.plan_id,channel:p.channel,target_id:id,candidate:p.candidate,mode:'merged-pr',merge:{pr_number:String(pr.number),head_sha:pr.head.sha,sha:head},normal_ci:{run_id:String(normal.id),attempt:normal.run_attempt},preflights,parents,emitter:{run_id:env.GITHUB_RUN_ID,attempt:Number(env.GITHUB_RUN_ATTEMPT),source_sha:head,workflow:WORKFLOW},coverage:t.coverage};
     phase='emission';
     v.requireThat(!existsSync(join(outputRoot,'receipt.json')),'Receipt output must be new');mkdirSync(outputRoot,{recursive:true});writeFileSync(join(outputRoot,'receipt.json'),v.canonical(receipt)+'\n');
