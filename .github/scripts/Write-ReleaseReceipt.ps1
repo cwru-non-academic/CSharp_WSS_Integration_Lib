@@ -96,14 +96,12 @@ if ($TargetId -ceq 'csharp-wrapper') {
     if ([Regex]::Matches([string]$pr.body,"(?m)^- Integration PR: #$($integrationPr.number)\r?$").Count -ne 1) { throw 'CLI metadata differs from actual wrapper merge.' }
     Assert-WssSource $AcceptedRoot $approval.cli.source_sha -Consumer cli
 }
-Assert-WssApproval $approval (Join-Path $work 'preflight-proof') -RequireCanonicalDev
+$preflights=[Collections.Generic.List[object]]::new()
+Assert-WssApproval $approval (Join-Path $work 'preflight-proof') -RequireCanonicalDev -ReceiptSnapshots $preflights
 Assert-WssSource $IntegrationRoot $approval.integration.source_sha
 & (Join-Path $ValidatorRoot '.github/scripts/Resolve-WssRelease.ps1') -RunId $approval.candidate.run_id -ProducerRepository $core -ExpectedCommit $approval.candidate.commit -ArchiveName $approval.candidate.archive -ExpectedSha256 $approval.candidate.sha256 -OutputRoot (Join-Path $work 'release')
 Assert-WssLib (Join-Path $IntegrationRoot 'lib') (Join-Path $work 'release/extracted/WSS-Universal') $approval
 
-$preflights=@(
-    @{repository=$wrapper; run_id=$approval.integration.preflight_run_id; source_sha=$approval.integration.source_sha; workflow='.github/workflows/wss-preflight.yml'},
-    @{repository='cwru-non-academic/CLI_CSharp_WSS_Application'; run_id=$approval.cli.preflight_run_id; source_sha=$approval.cli.source_sha; workflow='.github/workflows/wss-preflight.yml'}
-)
 
-ConvertTo-Json -InputObject @($preflights) -Depth 8 | Set-Content -LiteralPath $OutputPath
+
+ConvertTo-Json -InputObject $preflights.ToArray() -Depth 12 | Set-Content -LiteralPath $OutputPath

@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 . "$PSScriptRoot/wss-ci/Channel.ps1"
+. "$PSScriptRoot/wss-ci/Evidence.ps1"
 
 function Invoke-WssGh([string[]]$Arguments) {
     . "$PSScriptRoot/wss-ci/Process.ps1"
@@ -93,7 +94,10 @@ function Assert-WssCanonicalPreflight($Run, [string] $Consumer, [string] $Source
     }
 }
 
-function Assert-WssApproval($Approval, [string] $EvidenceRoot, [string] $BootstrapEvidenceRoot = '', [switch] $RequireCanonicalDev) {
+function Assert-WssApproval($Approval, [string] $EvidenceRoot, [string] $BootstrapEvidenceRoot = '', [switch] $RequireCanonicalDev, [Collections.Generic.List[object]] $ReceiptSnapshots) {
+    $receiptMode=$null -ne $ReceiptSnapshots
+    if ($receiptMode -and ($BootstrapEvidenceRoot -or !$RequireCanonicalDev)) { throw 'Receipt snapshots require fresh canonical preflight evidence.' }
+    $receiptProofs=@{}
     if (Test-Path -LiteralPath $EvidenceRoot) { throw 'EvidenceRoot must be new.' }
     New-Item -ItemType Directory -Path $EvidenceRoot | Out-Null
     $c = $Approval.candidate
@@ -115,20 +119,29 @@ function Assert-WssApproval($Approval, [string] $EvidenceRoot, [string] $Bootstr
         $repo = if ($consumer -ceq 'integration') { 'cwru-non-academic/CSharp_WSS_Integration_Lib' } else { 'cwru-non-academic/CLI_CSharp_WSS_Application' }
         $expected = $Approval.$consumer
         $run = Invoke-WssGh -Arguments @('api', "repos/$repo/actions/runs/$($expected.preflight_run_id)") | ConvertFrom-Json
+        if ($receiptMode) {
+            $receiptProofs[$consumer]=Start-WssCiPreflightProof -Repository $repo -RunId ([string]$expected.preflight_run_id) -SourceSha $expected.source_sha -Root (Join-Path $EvidenceRoot ($consumer+'-proof')) -ExpectedAttempt $run.run_attempt
+            $run=$receiptProofs[$consumer].Run
+        }
         if ($run.repository.full_name -cne $repo -or $run.path -cne '.github/workflows/wss-preflight.yml' -or
             $run.event -cne 'workflow_dispatch' -or $run.head_sha -cne $expected.source_sha -or
             $run.status -cne 'completed' -or $run.conclusion -cne 'success') { throw "Invalid $consumer preflight approval." }
         $destination = Join-Path $EvidenceRoot $consumer
         if ($BootstrapEvidenceRoot) {
             $record = Read-WssBootstrapProof $BootstrapEvidenceRoot $consumer $Approval $destination
+        } elseif ($receiptMode) {
+            $null=Read-WssCiPreflightArtifact -Proof $receiptProofs[$consumer] -Name 'wss-candidate-provenance' -Destination $destination
+            $record = Get-Content -LiteralPath (Join-Path $destination 'candidate.json') -Raw | ConvertFrom-Json
         } else {
             Invoke-WssGh -Arguments @('run', 'download', [string]$expected.preflight_run_id, '--repo', $repo, '--name', 'wss-candidate-provenance', '--dir', $destination)
             $record = Get-Content -LiteralPath (Join-Path $destination 'candidate.json') -Raw | ConvertFrom-Json
         }
         Assert-WssCandidateRecord $record $Approval
         if ($RequireCanonicalDev) {
-            $jobPages = Invoke-WssGh -Arguments @('api','--paginate','--slurp',"repos/$repo/actions/runs/$($run.id)/attempts/$($run.run_attempt)/jobs?per_page=100") | ConvertFrom-Json
-            $preflightJobs = @($jobPages | ForEach-Object { $_.jobs })
+            if ($receiptMode) { $preflightJobs=@($receiptProofs[$consumer].Jobs) } else {
+                $jobPages = Invoke-WssGh -Arguments @('api','--paginate','--slurp',"repos/$repo/actions/runs/$($run.id)/attempts/$($run.run_attempt)/jobs?per_page=100") | ConvertFrom-Json
+                $preflightJobs = @($jobPages | ForEach-Object { $_.jobs })
+            }
             Assert-WssCanonicalPreflight $run $consumer $expected.source_sha $preflightJobs
             $currentRun = Invoke-WssGh -Arguments @('api',"repos/$repo/actions/runs/$($run.id)") | ConvertFrom-Json
             if ($currentRun.id -ne $run.id -or $currentRun.run_attempt -ne $run.run_attempt) { throw 'Preflight run attempt changed during validation.' }
@@ -137,13 +150,24 @@ function Assert-WssApproval($Approval, [string] $EvidenceRoot, [string] $Bootstr
     }
     # Existing preflight provenance records contain the candidate, not the selected
     # Integration SHA. Bind it using the successful checkout-verification job's log.
-    $pages = Invoke-WssGh -Arguments @('api', '--paginate', '--slurp', "repos/cwru-non-academic/CLI_CSharp_WSS_Application/actions/runs/$($Approval.cli.preflight_run_id)/jobs?per_page=100") | ConvertFrom-Json
-    $jobs = @($pages | ForEach-Object { $_.jobs } | Where-Object { $_.name -ceq 'CLI general conformance' -and $_.conclusion -ceq 'success' })
-    if ($jobs.Count -ne 1) { throw 'Missing unique successful CLI source-verification job.' }
-    $logs = (Invoke-WssGh -Arguments @('run', 'view', [string]$Approval.cli.preflight_run_id, '--repo', 'cwru-non-academic/CLI_CSharp_WSS_Application', '--job', [string]$jobs[0].id, '--log')) -join "`n"
+    if ($receiptMode) {
+        $jobs=@($receiptProofs.cli.Jobs | Where-Object { $_.name -ceq 'CLI general conformance' -and $_.conclusion -ceq 'success' })
+        if ($jobs.Count -ne 1) { throw 'Missing unique successful CLI source-verification job.' }
+        $logs=Read-WssCiPreflightLog -Proof $receiptProofs.cli -JobId ([string]$jobs[0].id)
+    } else {
+        $pages = Invoke-WssGh -Arguments @('api', '--paginate', '--slurp', "repos/cwru-non-academic/CLI_CSharp_WSS_Application/actions/runs/$($Approval.cli.preflight_run_id)/jobs?per_page=100") | ConvertFrom-Json
+        $jobs = @($pages | ForEach-Object { $_.jobs } | Where-Object { $_.name -ceq 'CLI general conformance' -and $_.conclusion -ceq 'success' })
+        if ($jobs.Count -ne 1) { throw 'Missing unique successful CLI source-verification job.' }
+        $logs = (Invoke-WssGh -Arguments @('run', 'view', [string]$Approval.cli.preflight_run_id, '--repo', 'cwru-non-academic/CLI_CSharp_WSS_Application', '--job', [string]$jobs[0].id, '--log')) -join "`n"
+    }
     $shas = [Regex]::Matches($logs, 'EXPECTED_INTEGRATION_SHA: ([0-9a-f]{40})')
     if ($shas.Count -eq 0 -or @($shas | Where-Object { $_.Groups[1].Value -cne $Approval.integration.source_sha }).Count -ne 0) {
         throw 'CLI preflight did not verify the approved Integration source SHA.'
+    }
+    if ($receiptMode) {
+        foreach ($consumer in @('integration','cli')) {
+            $ReceiptSnapshots.Add((Complete-WssCiPreflightProof -Proof $receiptProofs[$consumer]))
+        }
     }
 }
 

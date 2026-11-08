@@ -74,3 +74,11 @@ try {
     }}
 } finally {foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,$saved[$key])}}
 "Native receipt adapter boundary passed ($successes role/channel positives, $rejections context/parameter rejections; no native execution)."
+# Receipt execution must request authenticated snapshots, never legacy transport.
+$proofCalls=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -in @('Assert-WssApproval','Assert-UnityApproval','Assert-UnityMergedGuiPreflight')},$true))
+$expectedProofCalls=if($roles[0] -ceq 'csharp-wrapper'){1}else{2}
+if($proofCalls.Count -ne $expectedProofCalls){throw 'Missing native receipt proof call.'}
+foreach($call in $proofCalls){
+ if(!@($call.CommandElements|Where-Object {$_ -is [Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -ceq 'ReceiptSnapshots'}).Count){throw 'Receipt may not fall back to unbound native evidence.'}
+}
+if($source -cnotmatch '\$preflights=\[Collections.Generic.List\[object\]\]::new\(\)' -or $source -match 'preflights\s*\+='){throw 'Receipt must emit only collected authenticated native snapshots.'}
