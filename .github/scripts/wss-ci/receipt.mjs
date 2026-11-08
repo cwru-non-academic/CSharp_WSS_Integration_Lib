@@ -5,7 +5,7 @@ import {isEntrypoint} from './entrypoint.mjs';
 // Runtime-specific rich proof remains in the frozen PowerShell adapter.
 import {execFileSync} from 'node:child_process';
 import {mkdtempSync,readFileSync,writeFileSync,existsSync,mkdirSync,rmSync,appendFileSync} from 'node:fs';
-import {join,resolve,dirname,basename,relative,isAbsolute} from 'node:path';
+import {join,resolve,dirname,basename,relative,isAbsolute,sep} from 'node:path';
 import {realpathSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
 import {tmpdir} from 'node:os';
@@ -81,7 +81,7 @@ export function receiptRoots(config,profile) {
     if(key!=='outputRoot')v.requireThat(realpath(git(roots[key],'rev-parse','--show-toplevel'))===roots[key],'Receipt role must identify a checkout root');
   }
   if(profile.role==='wrapper')v.requireThat(['toolsRoot','validatorRoot','integrationRoot'].every(k=>roots[k]===roots.sourceRoot),'Wrapper native roles must alias its accepted product root');
-  const contains=(a,b)=>{const r=relative(a,b);return !r||(!r.startsWith('..')&&!isAbsolute(r));};
+  const contains=(a,b)=>{const r=relative(a,b);return r===''||(r!=='..'&&!r.startsWith('..'+sep)&&!isAbsolute(r));};
   for(const a of ROOT_KEYS)for(const b of ROOT_KEYS)if(a<b&&(contains(roots[a],roots[b])||contains(roots[b],roots[a]))) {
     v.requireThat(roots[a]===roots[b]&&profile.receipt.aliases.some(group=>group.includes(a)&&group.includes(b)),`Undeclared overlapping receipt root roles: ${a}/${b}`);
   }
