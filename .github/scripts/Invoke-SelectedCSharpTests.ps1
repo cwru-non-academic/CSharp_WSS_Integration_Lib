@@ -83,9 +83,15 @@ $properties=@("-p:WSS_ARTIFACT_DIR=$PayloadRoot","-p:WSS_BLE_ARTIFACT_DIR=$Paylo
 & dotnet build $project -c Release @properties
 if ($LASTEXITCODE -ne 0) { throw 'Selected test build failed.' }
 $output=Join-Path $WorkRoot 'bin/Release/net9.0'
-# Product-owned propagation validator remains independent of the selected checkout.
-$validator=if ($Role -ceq 'wrapper') { Join-Path $PSScriptRoot 'Verify-WssOutput.ps1' } else { Join-Path $IntegrationRoot '.github/scripts/Verify-WssOutput.ps1' }
-& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
+# Reviewed bootstrap-owned propagation validator remains independent of selected and product checkouts.
+$validator=Join-Path $PSScriptRoot 'Verify-WssOutput.ps1'
+& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output -ProjectPath $project -ProjectAssetsFile (Join-Path $WorkRoot 'obj/project.assets.json')
+# Freeze restore metadata and neutral bytes before executing child test code.
+. "$PSScriptRoot/TrustedBaseline.ps1"
+$restoredAssets=Join-Path $WorkRoot 'obj/project.assets.json'
+$restoredNeutral=[Wss.BuildTools.RestoredPackageAssets]::ResolveProjectAsset($restoredAssets,$project,'System.IO.Ports/8.0.0','lib/net8.0/System.IO.Ports.dll','net9.0')
+$restoredSnapshot=New-TrustedBaselineSnapshot @($project,$restoredAssets,$restoredNeutral)
+
 if ($Role -ceq 'wrapper') {
     if($ProfileEvidencePath){
         & "$PSScriptRoot/../../tools/CSharpProfiles/Invoke-Behavior.ps1" -Profile $profileName -Project $project -IsolatedBuild -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot
@@ -112,7 +118,8 @@ Assert-StagedCSharpProduct
 Assert-CSharpTestBundle $bundle
 Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config','.github')
 Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src','.github')
-& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
+Assert-TrustedBaselineSnapshot $restoredSnapshot
+& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output -ProjectPath $project -ProjectAssetsFile (Join-Path $WorkRoot 'obj/project.assets.json')
 if ((Get-SelectedPayloadDigest $PayloadRoot) -cne $payloadDigest) { throw 'Selected payload changed during execution.' }
 $evidence=@{profile=$profile;build_product_sha=$IntegrationSha;build_product_root=$buildProduct;payload_sha256=$payloadDigest;schema='wss-selected-csharp-tests/v1';role=$Role;product_root=$ProductRoot;product_sha=$ProductSha;integration_root=$IntegrationRoot;integration_sha=$IntegrationSha;payload_root=$PayloadRoot;test_root=$bundle.root;test_sha=$bundle.sha;test_repository=$bundle.repository;test_selection_id=$bundle.selection_id;test_contract_sha256=$bundle.contract_sha256;passed=$true}
 $evidence | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $WorkRoot 'test-source-evidence.json')

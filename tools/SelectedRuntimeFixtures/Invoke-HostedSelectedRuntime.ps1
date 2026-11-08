@@ -88,10 +88,10 @@ try{
  foreach($name in $names){$prior[$name]=[Environment]::GetEnvironmentVariable($name);[Environment]::SetEnvironmentVariable($name,'synthetic-parent-only')}
  Invoke-CredentialFreeSelectedPowerShell "$scripts/Invoke-ProfileFullTests.ps1" @{EvidencePath=$profilePath;ResultsDirectory=$baseline}
  Assert-PreparedProfileProof $proof
- & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $proof.state.output_root 'Release/net9.0')
+ & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $proof.state.output_root 'Release/net9.0') -ProjectPath $proof.state.project -ProjectAssetsFile (Join-Path (Split-Path -Parent $proof.state.project) 'obj/project.assets.json')
  & dotnet publish (Join-Path $proof.state.source_root 'src/Wss.CSharpImplementation.csproj') -c Release --no-restore -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$($state.payload_root)" "-p:WSS_BLE_ARTIFACT_DIR=$($state.payload_root)" -o (Join-Path $FixtureRoot 'staged-publish')
  if($LASTEXITCODE -ne 0){throw 'Restored staged product publish failed.'}
- & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $FixtureRoot 'staged-publish')
+ & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $FixtureRoot 'staged-publish') -ProjectPath (Join-Path $proof.state.source_root 'src/Wss.CSharpImplementation.csproj') -ProjectAssetsFile (Join-Path $proof.state.source_root 'src/obj/project.assets.json')
  if($legacy){Assert-LegacyFullInventory (Join-Path $baseline 'all.trx');[xml]$missing=Get-Content (Join-Path $baseline 'all.trx') -Raw;$null=$missing.TestRun.Results.RemoveChild($missing.TestRun.Results.UnitTestResult[0]);$negative=Join-Path $FixtureRoot 'missing-baseline.trx';$missing.Save($negative);$rejected=$false;try{Assert-LegacyFullInventory $negative}catch{$rejected=$true};Require $rejected 'Missing historical baseline case was accepted.'}
  $baselineRoots=@($proof.state.output_root,$baseline)
  $baselineSnapshot=New-TrustedBaselineSnapshot $baselineRoots

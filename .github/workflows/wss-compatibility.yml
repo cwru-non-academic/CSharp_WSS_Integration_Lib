@@ -71,7 +71,7 @@ jobs:
         shell: pwsh
         run: |
           $lock = Get-Content .github/scripts/wss-ci.lock.json -Raw | ConvertFrom-Json
-          if ($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cne '7712e609f44ffc3425df3c067be8e2e080506f59' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)") { throw 'Unexpected reviewed package verifier lock.' }
+          if ($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cne 'c734877532231b07761c3a1347fcf3a5f65e55f4' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)") { throw 'Unexpected reviewed package verifier lock.' }
           "commit=$($lock.source_commit)" >> $env:GITHUB_OUTPUT
       - uses: actions/checkout@v4
         with:
@@ -249,7 +249,7 @@ jobs:
       - name: Verify committed WSS artifact propagation
         shell: pwsh
         run: |
-          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot 'lib' -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
+          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot 'lib' -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0' -ProjectPath $env:WSS_PROFILE_PROJECT -ProjectAssetsFile (Join-Path (Split-Path -Parent $env:WSS_PROFILE_PROJECT) 'obj/project.assets.json')
 
       - name: Run platform compatibility tests
         shell: pwsh
@@ -338,7 +338,7 @@ jobs:
       - name: Verify committed WSS artifact propagation
         shell: pwsh
         run: |
-          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot 'lib' -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
+          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot 'lib' -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0' -ProjectPath $env:WSS_PROFILE_PROJECT -ProjectAssetsFile (Join-Path (Split-Path -Parent $env:WSS_PROFILE_PROJECT) 'obj/project.assets.json')
 
       - name: Run platform compatibility tests
         shell: pwsh
