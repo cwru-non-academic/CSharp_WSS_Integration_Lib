@@ -2,14 +2,14 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "d4615cbc1854b5937d799df67171c33447acef53",
-  "source_ref": "refs/heads/ci/tooling/d4615cbc1854b5937d799df67171c33447acef53",
+  "source_commit": "7712e609f44ffc3425df3c067be8e2e080506f59",
+  "source_ref": "refs/heads/ci/tooling/7712e609f44ffc3425df3c067be8e2e080506f59",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "20e75c7fd91f595d6cef12b22e2c40312f31f36d",
-      "ref": "refs/heads/ci/tooling/20e75c7fd91f595d6cef12b22e2c40312f31f36d"
+      "commit": "45d571bef78b1cee9d6497e20448bed7d353644c",
+      "ref": "refs/heads/ci/tooling/45d571bef78b1cee9d6497e20448bed7d353644c"
     }
   },
   "files": {
@@ -221,7 +221,7 @@
     ".github/scripts/wss-ci/admission-context.mjs": {
       "origin": "core",
       "source": "tools/release/admission-context.mjs",
-      "sha256": "708de30d6aad40c0d60d64341a8d4116df77612344a745c36518f49a454573b5"
+      "sha256": "33696bc57b31b9063b4370ae9c44df15a4513ce4be32dd2d855b63749f5780eb"
     }
   }
 }
