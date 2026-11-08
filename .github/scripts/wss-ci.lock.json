@@ -2,14 +2,14 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "aea724dd0bc7e6375a873d716447167f4248b8e0",
-  "source_ref": "refs/heads/ci/tooling/aea724dd0bc7e6375a873d716447167f4248b8e0",
+  "source_commit": "17ce329d027d28942d5c65a0375c2a9a83e993e6",
+  "source_ref": "refs/heads/ci/tooling/17ce329d027d28942d5c65a0375c2a9a83e993e6",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "dc3f4ec74a341fa49cadf9798a6c4b4f1f8ab36a",
-      "ref": "refs/heads/ci/tooling/dc3f4ec74a341fa49cadf9798a6c4b4f1f8ab36a"
+      "commit": "15c4358190f82b9cbca3e2f14b42d9121b36c287",
+      "ref": "refs/heads/ci/tooling/15c4358190f82b9cbca3e2f14b42d9121b36c287"
     }
   },
   "files": {
@@ -51,7 +51,7 @@
     ".github/scripts/wss-ci/receipt.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/receipt.mjs",
-      "sha256": "2038d78ec22754fd8aaf68c69ccccd22914f12b97bcb942582a4db7ec4b197a0"
+      "sha256": "a3e270d00f514c2175d2a18a483cd5fc08420afc78fcfcebbbc208a94ba2d036"
     },
     ".github/scripts/wss-ci/promotion.mjs": {
       "origin": "integration",
@@ -71,7 +71,7 @@
     ".github/scripts/wss-ci/receipt-targets.json": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/receipt-targets.json",
-      "sha256": "1b7ee91c19b58610c6e51f20ce6b73c3f959b0e624e3f017f800d46314c8901d"
+      "sha256": "1d10182f147574e81da3dbe4ff41078d6f99bc44f8d66cef200ea26783b6cac5"
     },
     ".github/scripts/wss-ci/staging.mjs": {
       "origin": "integration",
@@ -187,6 +187,16 @@
       "origin": "core",
       "source": "tools/ci/shared/test-variable-snapshot.yml",
       "sha256": "0942f861c1ecb7f791752da6627d288d4bf542122dad7916e642b17ed581bf3f"
+    },
+    ".github/scripts/wss-ci/receipt-workflows.mjs": {
+      "origin": "integration",
+      "source": ".github/scripts/wss-ci/receipt-workflows.mjs",
+      "sha256": "4285f536fcaf8ee8c2dad8bb14e0de3bf609848f34f362f91053e96b3dd99b20"
+    },
+    ".github/scripts/wss-ci/receipt-workflow.yml": {
+      "origin": "integration",
+      "source": ".github/scripts/wss-ci/receipt-workflow.yml",
+      "sha256": "a32a74a985ce47f0776f8646d76d02832eba16b9bdfb5438625242cbd1148a3b"
     }
   }
 }
