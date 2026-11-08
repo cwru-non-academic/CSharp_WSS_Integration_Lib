@@ -165,7 +165,7 @@ foreach ($targetId in @('csharp-wrapper', 'csharp-cli')) {
         Reject-ToolingMutation ".accepted|HEAD:$path" 'Accepted receiver tooling differs:*'
     }
     foreach ($path in @('.github/workflows/release-receipt.yml', '.github/scripts/Write-ReleaseReceipt.ps1', '.github/scripts/WssReleaseReceipt.ps1', '.github/scripts/wss-ci')) {
-        Reject-ToolingMutation ".tools|HEAD:$path" 'Trusted main receipt tooling differs:*'
+        Reject-ToolingMutation ".tools|HEAD:$path" 'Admitted receipt tooling differs:*'
     }
     foreach ($path in @('.github/scripts/WssPromotion.ps1', '.github/scripts/Universal-WssFiles.ps1', '.github/scripts/Resolve-WssRelease.ps1', '.github/scripts/wss-ci')) {
         Reject-ToolingMutation ".validation-tools|HEAD:$path" 'Shared C# validator differs from frozen code:*'
@@ -219,7 +219,7 @@ try {
                 manifest=@{schema='wss-required-targets/v1';channel='dev';release_kind='beta';stable_enabled=$false;targets=@($profiles.PSObject.Properties | ForEach-Object { $_.Value.target });excluded=@()}
                 target_snapshots=@{}
             }
-            target=$target;paths=@{toolsRoot=$policyRoot}
+            target=$target;paths=@{toolsRoot=$policyRoot;engineRoot=$policyRoot}
         }
         # Each fixture has the actual nine profiles, not a manually duplicated
         # C# policy table. Snapshot identities are synthetic contract data.
@@ -229,6 +229,9 @@ try {
             $context.plan.target_snapshots[$entry.id]=@{head_sha=('d'*40);trusted=$trusted}
         }
         if ($policyId -ceq 'csharp-wrapper' -and '.github/workflows/notify-core-stage.yml' -cnotin $target.trusted_paths) { throw 'Canonical wrapper profile must cover its notifier.' }
+        # Native receiver tooling may differ from the immutable common engine root.
+        # The bridge must import only the latter, never execute the receiver copy.
+        $context.paths.toolsRoot=Join-Path $policyRoot 'accepted receiver tools'
         Invoke-PolicyContext $context $policyId
         $main=$context|ConvertTo-Json -Depth 50|ConvertFrom-Json
         $main.plan.schema='wss-propagation-plan/v2';$main.plan.channel='main'
@@ -254,7 +257,7 @@ try {
             {param($c)$c.plan.manifest.excluded=@(@{id=$c.target.id})},
             {param($c)$c.plan.channel='main'}, {param($c)$c.plan.manifest.channel='main'},
             {param($c)$c.target.jobs=@('unverified')}, {param($c)$c.target.role='other'},
-            {param($c)$c.paths.toolsRoot=Join-Path $policyRoot 'different-tools'},
+            {param($c)$c.paths.engineRoot=Join-Path $policyRoot 'different-tools'},
             {param($c)$c.plan=$null}, {param($c)$c.target=$null}, {param($c)$c.paths=$null}
         )) {
             $bad=$context | ConvertTo-Json -Depth 50 | ConvertFrom-Json
@@ -387,3 +390,6 @@ Reject { Assert-WssReceiptNormalFresh $originalNormal $latestNormal $liveNormal 
 # Expected native rejection cases above leave a nonzero process status; all
 # assertions have completed successfully if execution reaches this point.
 $global:LASTEXITCODE=0
+
+# Validate the adapter-only common invocation boundary without native execution.
+& "$PSScriptRoot/NativeReceiptAdapter.Tests.ps1"

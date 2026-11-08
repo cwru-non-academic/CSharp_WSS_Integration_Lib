@@ -2,14 +2,9 @@ param(
     [Parameter(Mandatory)][ValidateSet('csharp-wrapper','csharp-cli')][string] $TargetId,
     [Parameter(Mandatory)][ValidatePattern('^[1-9][0-9]*$')][string] $ProducerRunId,
     [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string] $PlanId,
-    [string] $ToolsRoot = '.tools',
-    [string] $ValidatorRoot = '.validation-tools',
-    [string] $AcceptedRoot = '.accepted',
-    [string] $IntegrationRoot = '.integration',
-    [string] $OutputRoot = 'receipt-output',
-    [string] $ContextPath = '',
-    [string] $WorkRoot = '',
-    [string] $OutputPath = ''
+    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $ContextPath,
+    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $WorkRoot,
+    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $OutputPath
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
@@ -30,14 +25,14 @@ function Invoke-ReceiptGit([string] $Root,[string[]] $Arguments) {
     $result
 }
 function Assert-WssReceiptTooling($Plan, [string] $TargetId, $Target, [string] $ToolsRoot, [string] $ValidatorRoot, [string] $AcceptedRoot, [string] $IntegrationRoot) {
-    # The frozen target describes accepted dev, including its branch-specific CI.
+    # The frozen target describes the accepted channel and its branch-specific CI.
     foreach ($path in $Target.trusted_paths) {
         if ((Invoke-ReceiptGit $AcceptedRoot -Arguments @('rev-parse',"HEAD:$path")) -cne $Plan.target_snapshots.$TargetId.trusted.$path) { throw "Accepted receiver tooling differs: $path" }
     }
-    # Main executes only these receiver files. Compare them individually so
-    # unrelated branch-specific scripts and normal CI need not be identical.
+    # Check the admitted adapter files against the accepted receiver as defense in depth.
+    # Generic source admission belongs to the common engine.
     foreach ($path in @('.github/workflows/release-receipt.yml', '.github/scripts/Write-ReleaseReceipt.ps1', '.github/scripts/WssReleaseReceipt.ps1', '.github/scripts/wss-ci')) {
-        if ((Invoke-ReceiptGit $ToolsRoot -Arguments @('rev-parse',"HEAD:$path")) -cne (Invoke-ReceiptGit $AcceptedRoot -Arguments @('rev-parse',"HEAD:$path"))) { throw "Trusted main receipt tooling differs: $path" }
+        if ((Invoke-ReceiptGit $ToolsRoot -Arguments @('rev-parse',"HEAD:$path")) -cne (Invoke-ReceiptGit $AcceptedRoot -Arguments @('rev-parse',"HEAD:$path"))) { throw "Admitted receipt tooling differs: $path" }
     }
     $wrapperRoot = if ($TargetId -ceq 'csharp-wrapper') { $AcceptedRoot } else { $IntegrationRoot }
     if ((Invoke-ReceiptGit $wrapperRoot -Arguments @('rev-parse','HEAD:.github/scripts')) -cne $Plan.target_snapshots.'csharp-wrapper'.trusted.'.github/scripts') { throw 'Accepted wrapper validators differ from frozen code.' }
@@ -65,18 +60,8 @@ function MergedPr([string] $Repository,[string] $Sha) {
 }
 
 
-# One shared Node engine owns receipt orchestration; this script is a rich-proof adapter.
-if (!$ContextPath) {
-    $env:TARGET_ID=$TargetId; $env:PRODUCER_RUN_ID=$ProducerRunId; $env:PLAN_ID=$PlanId
-    $config=@{sourceRoot=[IO.Path]::GetFullPath($AcceptedRoot);toolsRoot=[IO.Path]::GetFullPath($ToolsRoot);validatorRoot=[IO.Path]::GetFullPath($ValidatorRoot);integrationRoot=[IO.Path]::GetFullPath($(if ($TargetId.EndsWith('-wrapper')) {$AcceptedRoot}else{$IntegrationRoot}));outputRoot=[IO.Path]::GetFullPath($OutputRoot)}
-    $configPath=Join-Path $env:RUNNER_TEMP ('receipt-config-'+[guid]::NewGuid().ToString('N')+'.json')
-    $config | ConvertTo-Json | Set-Content -LiteralPath $configPath
-    try {
-        & node (Join-Path $ToolsRoot '.github/scripts/wss-ci/receipt.mjs') $configPath
-        if ($LASTEXITCODE -ne 0) { throw 'Shared read-only receipt verification failed.' }
-    } finally { Remove-Item -LiteralPath $configPath }
-    return
-}
+# The admitted common engine invokes this native-proof adapter exactly once.
+# Root identities and generic policy are admitted before this boundary.
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or $env:GITHUB_REF -cne (Get-WssCiChannelContext).ref) { throw 'Adapter is restricted to actual dev receipt execution.' }
 $ctx=Get-Content -LiteralPath $ContextPath -Raw | ConvertFrom-Json
 if($ctx.plan.channel -cne (Get-WssCiChannel) -or $ctx.target.branch -cne (Get-WssCiChannel)){throw 'Receipt adapter context differs from explicit channel.'}
@@ -91,7 +76,7 @@ $work=$WorkRoot
 Assert-WssReceiptTooling $plan $TargetId $target $ToolsRoot $ValidatorRoot $AcceptedRoot $IntegrationRoot
 . (Join-Path $ValidatorRoot '.github/scripts/WssPromotion.ps1')
 . (Join-Path $ToolsRoot '.github/scripts/WssReleaseReceipt.ps1')
-Assert-WssReceiptPolicy $TargetId $ContextPath $ToolsRoot
+Assert-WssReceiptPolicy $TargetId $ContextPath $ctx.paths.engineRoot
 $approval = Read-WssApprovalMarker ([string]$pr.body) (Join-Path $work 'approval.json')
 Assert-WssReceiptSources $approval $plan
 Assert-WssCandidateRecord $plan.candidate $approval
