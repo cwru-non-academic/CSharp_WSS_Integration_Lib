@@ -392,3 +392,5 @@ $global:LASTEXITCODE=0
 
 # Validate the adapter-only common invocation boundary without native execution.
 & "$PSScriptRoot/NativeReceiptAdapter.Tests.ps1"
+# Both wrapper and CLI source checks require the frozen preflight commit in Git history.
+& "$PSScriptRoot/NativeReceiptHistory.Tests.ps1"
