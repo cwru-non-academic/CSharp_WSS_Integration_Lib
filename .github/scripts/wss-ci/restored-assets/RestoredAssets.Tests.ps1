@@ -129,7 +129,10 @@ try {
  Reject {Check-Proof $proof} 'project/assets content'
  $v.packageFolders=[ordered]@{$root=@{};$fallback=@{}};Save-Assets $v
  $proof=New-WssRestoredAssetsProof -ProjectAssetsFile $assets -ProjectPath $project
- Remove-Item -LiteralPath (Join-Path $root 'system.io.ports/8.0.0/.nupkg.metadata')
+ $marker=Join-Path $root 'system.io.ports/8.0.0/.nupkg.metadata'
+ if($IsWindows){[IO.File]::SetAttributes($marker,[IO.File]::GetAttributes($marker) -bor [IO.FileAttributes]::Hidden)}
+ Remove-Item -LiteralPath $marker -Force
+ Require (!(Test-Path -LiteralPath $marker)) 'Synthetic package marker was not removed'
  Reject {Check-Proof $proof} 'resolution identity'
  Write-Bytes (Join-Path $root 'system.io.ports/8.0.0/.nupkg.metadata') '{}'
  # Optional root output does not make mandatory restore authentication optional.

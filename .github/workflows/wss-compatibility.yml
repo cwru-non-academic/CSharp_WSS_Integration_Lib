@@ -71,7 +71,7 @@ jobs:
         shell: pwsh
         run: |
           $lock = Get-Content .github/scripts/wss-ci.lock.json -Raw | ConvertFrom-Json
-          if ($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cne '3eb48da437841fb705c4e984c839838722e77baf' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)") { throw 'Unexpected reviewed package verifier lock.' }
+          if ($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cne '099a0287b4c6ba238112482310c429ac334ea8cf' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)") { throw 'Unexpected reviewed package verifier lock.' }
           "commit=$($lock.source_commit)" >> $env:GITHUB_OUTPUT
       - uses: actions/checkout@v4
         with:
