@@ -2,14 +2,14 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "88885ffd93acd7670a54573d65106bfade2b3b78",
-  "source_ref": "refs/heads/ci/tooling/88885ffd93acd7670a54573d65106bfade2b3b78",
+  "source_commit": "4661b6b92d896ed2e150a4e98620a8f0588c1051",
+  "source_ref": "refs/heads/ci/tooling/4661b6b92d896ed2e150a4e98620a8f0588c1051",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "450623fb1cef648c6d8c92eee5dd21082f6e97eb",
-      "ref": "refs/heads/ci/tooling/450623fb1cef648c6d8c92eee5dd21082f6e97eb"
+      "commit": "e520ebcd19691f745551e9984d16086bb8bb1353",
+      "ref": "refs/heads/ci/tooling/e520ebcd19691f745551e9984d16086bb8bb1353"
     }
   },
   "files": {
@@ -51,7 +51,7 @@
     ".github/scripts/wss-ci/receipt.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/receipt.mjs",
-      "sha256": "c5ad3d1fa87f5be6a333549d006e6ed0dd1924ba08c8f54446ed2bb073c14896"
+      "sha256": "59f555dd4f8b6c283560fb0472be0bb9726a3993b152a6ff17c97a944c212e96"
     },
     ".github/scripts/wss-ci/promotion.mjs": {
       "origin": "integration",
@@ -236,7 +236,7 @@
     ".github/scripts/wss-ci/restored-assets/Universal-WssFiles.ps1": {
       "origin": "core",
       "source": "tools/ci/shared/restored-assets/Universal-WssFiles.ps1",
-      "sha256": "f747bddc93a7db16bfdad7e887997176c068712cee89b56bb2b99e7b623c6e14"
+      "sha256": "8ca5b49fbc418d71958bfa9c481583f2fb00ccb0aacaa20b8783fdd911ec822b"
     },
     ".github/scripts/wss-ci/restored-assets/RestoredPackageAssets.cs": {
       "origin": "core",
@@ -246,7 +246,7 @@
     ".github/scripts/wss-ci/restored-assets/RestoredAssets.Tests.ps1": {
       "origin": "core",
       "source": "tools/ci/shared/restored-assets/RestoredAssets.Tests.ps1",
-      "sha256": "7211ce5841160366ff8fbc90a967917ab067ad4572870cf23db1ef85073ff79b"
+      "sha256": "a314744fd3b46d2ebce9830cbdfcf99f5478c20bbd5dfb878430cf1d474d65a4"
     },
     ".github/scripts/wss-ci/restored-assets/RestoredAssets.ps1": {
       "origin": "core",
@@ -262,6 +262,11 @@
       "origin": "core",
       "source": "tools/ci/shared/native-receipt/NativeReceiptAdapter.Tests.ps1",
       "sha256": "25b77cead7844c0f63a143e0c42e68e9248b67d4daa57e0413c780d289082e04"
+    },
+    ".github/scripts/Universal-WssFiles.ps1": {
+      "origin": "core",
+      "source": "tools/ci/shared/restored-assets/Universal-WssFiles.ps1",
+      "sha256": "8ca5b49fbc418d71958bfa9c481583f2fb00ccb0aacaa20b8783fdd911ec822b"
     }
   }
 }
