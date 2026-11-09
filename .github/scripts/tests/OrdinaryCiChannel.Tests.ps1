@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-& "$PSScriptRoot/ReviewedPackageGuard.Tests.ps1"
+. "$PSScriptRoot/ReviewedPackageGuard.Tests.ps1"
 . "$PSScriptRoot/../Resolve-OrdinaryCiChannel.ps1"
 $script:passed = 0
 $source = 'a' * 40
@@ -436,8 +436,19 @@ function Assert-OrdinaryWorkflow([string]$Text, [string]$Workflow) {
     }
     $restored = $text.Replace("$resolver`n", '').Replace("$ordinary`n", '').Replace($aggregate, '    needs: macos_architecture').Replace("$guard`n", '').Replace("$fixture`n", '')
     $restored = $restored.Replace("permissions:`n", "env:`n  WSS_CI_CHANNEL: dev`npermissions:`n")
+    if ($Workflow -ceq 'wss-compatibility.yml') {
+        # Validate the real acquisition/admission before normalizing only its pin.
+        # Everything else, including each admission statement, stays fingerprinted.
+        $null = Assert-ReviewedPackageGuard $text $sourceLock
+        $pin = "          repository: cwru-non-academic/WSSCore" + [char]10 +
+            "          ref: $($sourceLock.source_commit)" + [char]10 +
+            '          path: workflow-guard'
+        $normalizedPin = $pin.Replace($sourceLock.source_commit, '__CORE_COMMIT__')
+        if ([regex]::Matches($restored, [regex]::Escape($pin)).Count -ne 1) { throw 'Ambiguous reviewed package checkout pin.' }
+        $restored = $restored.Replace($pin, $normalizedPin)
+    }
     $digest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($restored))).ToLowerInvariant()
-    $expected = if ($Workflow -ceq 'cli-ci.yml') { 'ac030fa6fe5c253a1c04e264bccea3803ec610f3ab988e1a533a0c2cb0e5a3e0' } else { 'd6adef4b4f8641d08cf688027803e9a52633f77e91806a99efc31f70ee1706a1' }
+    $expected = if ($Workflow -ceq 'cli-ci.yml') { 'ac030fa6fe5c253a1c04e264bccea3803ec610f3ab988e1a533a0c2cb0e5a3e0' } else { 'bac564f025ec0012b48cbc5adb1368010b3291290b73f729799a7f786bad0222' }
     if ($digest -cne $expected) { throw 'Ordinary workflow triggers, permissions or mandatory baseline jobs changed.' }
 }
 $workflow = if (Test-Path "$PSScriptRoot/../../workflows/cli-ci.yml") { 'cli-ci.yml' } else { 'wss-compatibility.yml' }
@@ -467,6 +478,22 @@ foreach ($change in @(
     try { Assert-OrdinaryWorkflow $changed $workflow } catch { $rejected = $true }
     if (!$rejected) { throw 'Unsafe ordinary workflow mutation was accepted.' }
     $passed++
+}
+# Canonical pin refreshes do not invalidate unrelated workflow baselines.
+if ($workflow -ceq 'wss-compatibility.yml') {
+    & {
+        $oldCommit = $sourceLock.source_commit
+        $sourceLock = $sourceLock | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable
+        $sourceLock.source_commit = 'e' * 40
+        $sourceLock.source_ref = "refs/heads/ci/tooling/$($sourceLock.source_commit)"
+        $pinText = "          ref: $oldCommit" + [char]10 + '          path: workflow-guard'
+        $refreshed = $text.Replace($pinText, ("          ref: $($sourceLock.source_commit)" + [char]10 + '          path: workflow-guard'))
+        Assert-OrdinaryWorkflow $refreshed $workflow
+        Expect-GuardRejection { Assert-OrdinaryWorkflow $text $workflow } 'Reviewed package checkout/admission contract differs.' 'stale pin rejected before normalization'
+        Expect-GuardRejection { Assert-OrdinaryWorkflow ($refreshed.Replace($sourceLock.source_commit, ('d' * 40))) $workflow } 'Reviewed package checkout/admission contract differs.' 'wrong pin rejected before normalization'
+        Expect-GuardRejection { Assert-OrdinaryWorkflow ($refreshed.Replace('contents: read', 'contents: write')) $workflow } 'Ordinary workflow triggers, permissions or mandatory baseline jobs changed.' 'unrelated workflow edit still fingerprinted'
+    }
+    $passed += 4
 }
 $workflowCount = $passed - $matrixCount - $identityCount - $jsonCount
 "Ordinary CI channel contracts passed: $passed ($matrixCount event/ref/base cases, $identityCount identity/override cases, $jsonCount JSON-roundtrip cases, $workflowCount workflow-preservation cases). Push resolution is helper-only; registered workflow triggers are unchanged."
