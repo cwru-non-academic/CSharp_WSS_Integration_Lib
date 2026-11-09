@@ -1,4 +1,4 @@
-import {execFileSync} from 'node:child_process';
+import {downloadJobLogBytes} from './job-log.mjs';
 import {canonical,requireThat,bytesDigest} from './verify.mjs';
 import {downloadVerifiedJsonArtifact,downloadVerifiedArtifactBytes} from './verified-json-artifact.mjs';
 const id=x=>typeof x==='string'&&/^[1-9][0-9]*$/.test(x);
@@ -48,7 +48,7 @@ export function capturePreflightArtifact(g,state,name) {
   return bytes;
 }
 export function jobLogBytes(g,repository,jobId) {
-  const bytes=g.jobLogBytes?g.jobLogBytes(repository,jobId):execFileSync('gh',['api',`repos/${repository}/actions/jobs/${jobId}/logs`],{env:g.environment,maxBuffer:64*1024*1024});
+  const bytes=g.jobLogBytes?g.jobLogBytes(repository,jobId):downloadJobLogBytes(g,repository,jobId);
   requireThat(Buffer.isBuffer(bytes)&&bytes.length<=64*1024*1024,'Invalid bounded job log bytes');return bytes;
 }
 export function capturePreflightLog(g,state,jobId) {

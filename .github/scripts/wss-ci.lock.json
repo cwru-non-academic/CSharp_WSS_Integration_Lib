@@ -2,14 +2,14 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "099a0287b4c6ba238112482310c429ac334ea8cf",
-  "source_ref": "refs/heads/ci/tooling/099a0287b4c6ba238112482310c429ac334ea8cf",
+  "source_commit": "a6458c5ddcd1de2df9373b1a7bbe7d873b8d8120",
+  "source_ref": "refs/heads/ci/tooling/a6458c5ddcd1de2df9373b1a7bbe7d873b8d8120",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "45d571bef78b1cee9d6497e20448bed7d353644c",
-      "ref": "refs/heads/ci/tooling/45d571bef78b1cee9d6497e20448bed7d353644c"
+      "commit": "3c022aec7633211fc0da44ef5b91ebabd7defb3b",
+      "ref": "refs/heads/ci/tooling/3c022aec7633211fc0da44ef5b91ebabd7defb3b"
     }
   },
   "files": {
@@ -31,7 +31,7 @@
     ".github/scripts/wss-ci/producer-jobs.mjs": {
       "origin": "core",
       "source": "tools/release/producer-jobs.mjs",
-      "sha256": "6a653c65e80032fe7814682188b9da2f8e346886e75928a10cb1711ee6406a14"
+      "sha256": "3e3978e003571f85b40bc800849f97efd998cdd408c5e67e0ec05e43a61b94a9"
     },
     ".github/scripts/wss-ci/Producer.ps1": {
       "origin": "integration",
@@ -198,10 +198,15 @@
       "source": ".github/scripts/wss-ci/receipt-workflow.yml",
       "sha256": "c0d356f22be78c4a92041dc57c646abe8f3fa63d4d212d6fb12a50b4ac6da5c1"
     },
+    ".github/scripts/wss-ci/job-log.mjs": {
+      "origin": "core",
+      "source": "tools/release/job-log.mjs",
+      "sha256": "7bdeed713d63e74ea8348246bb722737bfe294fe215439b3bdc4be336fd8090e"
+    },
     ".github/scripts/wss-ci/preflight-proof.mjs": {
       "origin": "core",
       "source": "tools/release/preflight-proof.mjs",
-      "sha256": "56f75e4160f5059b60eadbd33eb4af542464ff7d61a5b0878caffb2334bbdd69"
+      "sha256": "bd670c26c1ac351b963819843e7acf2fb98f28900f4e9228b80666b56c4d8ee4"
     },
     ".github/scripts/wss-ci/verified-json-artifact.mjs": {
       "origin": "core",
@@ -252,6 +257,11 @@
       "origin": "core",
       "source": "tools/ci/shared/compiled-tests/CompiledCSharpTests.ps1",
       "sha256": "d6061357fb9eab17267f56de5b3825fc724423fcddd1bb2a9005044245e140b5"
+    },
+    ".github/scripts/tests/NativeReceiptAdapter.Tests.ps1": {
+      "origin": "core",
+      "source": "tools/ci/shared/native-receipt/NativeReceiptAdapter.Tests.ps1",
+      "sha256": "25b77cead7844c0f63a143e0c42e68e9248b67d4daa57e0413c780d289082e04"
     }
   }
 }
