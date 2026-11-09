@@ -79,25 +79,38 @@ $compile
 </Project>
 "@
 [IO.File]::WriteAllText($project,$xml,[Text.UTF8Encoding]::new($false))
-$properties=@("-p:WSS_ARTIFACT_DIR=$PayloadRoot","-p:WSS_BLE_ARTIFACT_DIR=$PayloadRoot",'-p:TreatWarningsAsErrors=true','-p:ImportDirectoryBuildProps=false','-p:ImportDirectoryBuildTargets=false')
-& dotnet build $project -c Release @properties
-if ($LASTEXITCODE -ne 0) { throw 'Selected test build failed.' }
+$properties=@("-p:WSS_ARTIFACT_DIR=$PayloadRoot","-p:WSS_BLE_ARTIFACT_DIR=$PayloadRoot",'-p:TreatWarningsAsErrors=true','-p:ImportDirectoryBuildProps=false','-p:ImportDirectoryBuildTargets=false','-p:DisablePackageAssetsCache=true')
+& dotnet restore $project @properties
+if ($LASTEXITCODE -ne 0) { throw 'Explicit test restore failed.' }
 $output=Join-Path $WorkRoot 'bin/Release/net9.0'
-# Product-owned propagation validator remains independent of the selected checkout.
-$validator=if ($Role -ceq 'wrapper') { Join-Path $PSScriptRoot 'Verify-WssOutput.ps1' } else { Join-Path $IntegrationRoot '.github/scripts/Verify-WssOutput.ps1' }
-& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
+# Reviewed bootstrap-owned propagation validator remains independent of selected and product checkouts.
+$validator=Join-Path $PSScriptRoot 'Verify-WssOutput.ps1'
+# Freeze explicit restore identity before a cache-disabled build and any test child.
+. "$PSScriptRoot/TrustedBaseline.ps1"
+$restoredAssets=Join-Path $WorkRoot 'obj/project.assets.json'
+. "$PSScriptRoot/wss-ci/restored-assets/RestoredAssets.ps1"
+$restoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile $restoredAssets -ProjectPath $project
+$restoredNeutral=$restoreProof.NeutralAssetPath
+. "$PSScriptRoot/wss-ci/compiled-tests/CompiledCSharpTests.ps1"
+$restoredSnapshot=New-TrustedBaselineSnapshot @($project,$restoredAssets,$restoredNeutral,(Join-Path "$PSScriptRoot" 'wss-ci/restored-assets'),(Join-Path "$PSScriptRoot" 'Verify-WssOutput.ps1'))
+& dotnet build $project -c Release --no-restore @properties
+if ($LASTEXITCODE -ne 0) { throw 'Selected test build failed.' }
+Assert-WssRestoredAssetsProof -Proof $restoreProof -ProjectAssetsFile $restoredAssets -ProjectPath $project
+& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output -ProjectPath $project -ProjectAssetsFile (Join-Path $WorkRoot 'obj/project.assets.json') -RestoreProof $restoreProof
+$compiledProof=New-CompiledCSharpTestProof -OutputRoot $output -AssemblyName $(if($Role -ceq 'wrapper'){'Wss.CSharpImplementation.Tests.dll'}else{'Wss.Cli.Tests.dll'})
+
 if ($Role -ceq 'wrapper') {
     if($ProfileEvidencePath){
-        & "$PSScriptRoot/../../tools/CSharpProfiles/Invoke-Behavior.ps1" -Profile $profileName -Project $project -IsolatedBuild -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot
+        & "$PSScriptRoot/../../tools/CSharpProfiles/Invoke-Behavior.ps1" -Profile $profileName -Project $project -CompiledProof $compiledProof -IsolatedBuild -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot
     }else{
-    & "$PSScriptRoot/Invoke-WssBehavioralConformance.ps1" -Project $project -IsolatedBuild -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot
+    & "$PSScriptRoot/Invoke-WssBehavioralConformance.ps1" -Project $project -CompiledProof $compiledProof -IsolatedBuild -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot
     }
     # The ordinary platform/reload/options suites are additive and never replace canonical 16+16.
-    & dotnet test $project -c Release --no-build --no-restore @properties --logger 'trx;LogFileName=all.trx' --results-directory (Join-Path $WorkRoot 'all')
+    Invoke-CompiledCSharpTests -Proof $compiledProof -ResultsDirectory (Join-Path $WorkRoot 'all') -TrxFileName 'all.trx'
     if ($LASTEXITCODE -ne 0) { throw 'Selected full suite failed.' }
     Assert-CSharpFullTestResults (Join-Path $WorkRoot 'all/all.trx')
 } else {
-    & dotnet test $project -c Release --no-build --no-restore @properties --logger 'trx;LogFileName=commands.trx' --results-directory (Join-Path $WorkRoot 'commands')
+    Invoke-CompiledCSharpTests -Proof $compiledProof -ResultsDirectory (Join-Path $WorkRoot 'commands') -TrxFileName 'commands.trx'
     if ($LASTEXITCODE -ne 0) { throw 'Selected production command tests failed.' }
     [xml]$trx=Get-Content (Join-Path $WorkRoot 'commands/commands.trx') -Raw
     $expected=@('analog.multichannel-isolation','analog.multidevice-isolation')
@@ -112,7 +125,9 @@ Assert-StagedCSharpProduct
 Assert-CSharpTestBundle $bundle
 Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','Config','.github')
 Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src','.github')
-& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
+Assert-TrustedBaselineSnapshot $restoredSnapshot
+Assert-WssRestoredAssetsProof -Proof $restoreProof -ProjectAssetsFile $restoredAssets -ProjectPath $project
+& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output -ProjectPath $project -ProjectAssetsFile (Join-Path $WorkRoot 'obj/project.assets.json') -RestoreProof $restoreProof
 if ((Get-SelectedPayloadDigest $PayloadRoot) -cne $payloadDigest) { throw 'Selected payload changed during execution.' }
 $evidence=@{profile=$profile;build_product_sha=$IntegrationSha;build_product_root=$buildProduct;payload_sha256=$payloadDigest;schema='wss-selected-csharp-tests/v1';role=$Role;product_root=$ProductRoot;product_sha=$ProductSha;integration_root=$IntegrationRoot;integration_sha=$IntegrationSha;payload_root=$PayloadRoot;test_root=$bundle.root;test_sha=$bundle.sha;test_repository=$bundle.repository;test_selection_id=$bundle.selection_id;test_contract_sha256=$bundle.contract_sha256;passed=$true}
 $evidence | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $WorkRoot 'test-source-evidence.json')

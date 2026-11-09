@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$EvidencePath=$env:WSS_PROFILE_EVIDENCE,[string]$ResultsDirectory=(Join-Path ([IO.Path]::GetTempPath()) ('wss-behavior-'+[guid]::NewGuid().ToString('N'))))
+param([string]$EvidencePath=$env:WSS_PROFILE_EVIDENCE,[string]$ResultsDirectory=(Join-Path ([IO.Path]::GetTempPath()) ('wss-behavior-'+[guid]::NewGuid().ToString('N'))),[object]$CompiledProof)
 $ErrorActionPreference='Stop'
 . "$PSScriptRoot/Profile.ps1"
 if(!$EvidencePath){throw 'Verified profile preparation is required before behavioral conformance.'}
@@ -15,6 +15,10 @@ function Assert-PreparedSources {
  if((Get-FileHash $output -Algorithm SHA256).Hash.ToLowerInvariant() -cne $state.profile.core_dll_sha256){throw 'Compiled test output uses a different Core payload.'}
 }
 Assert-PreparedSources
-& "$PSScriptRoot/Invoke-Behavior.ps1" -Profile $actual.profile -Project $state.project -IsolatedBuild -ResultsDirectory $ResultsDirectory -ArtifactDirectory $state.payload_root -BleArtifactDirectory $state.payload_root
+if($null -eq $CompiledProof){
+ . "$PSScriptRoot/../../.github/scripts/wss-ci/compiled-tests/CompiledCSharpTests.ps1"
+ $CompiledProof=New-CompiledCSharpTestProof -OutputRoot (Join-Path $state.output_root 'Release/net9.0') -AssemblyName 'Wss.CSharpImplementation.Tests.dll'
+}
+& "$PSScriptRoot/Invoke-Behavior.ps1" -Profile $actual.profile -Project $state.project -CompiledProof $CompiledProof -IsolatedBuild -ResultsDirectory $ResultsDirectory -ArtifactDirectory $state.payload_root -BleArtifactDirectory $state.payload_root
 Assert-PreparedSources
 $state.profile | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $ResultsDirectory 'profile.json')
