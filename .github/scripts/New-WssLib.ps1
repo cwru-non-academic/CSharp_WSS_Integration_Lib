@@ -7,11 +7,8 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/WssPromotion.ps1"
 . "$PSScriptRoot/Universal-WssFiles.ps1"
 $approval = Read-WssApproval $ApprovalFile
-$root = (Resolve-Path -LiteralPath $ArtifactRoot).Path
-$files = @(Get-ChildItem -LiteralPath $root -File -Recurse | ForEach-Object {
-    $_.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/')
-})
-$selectedFiles = @(Get-WssUniversalFiles $files)
+$root = (Get-Item -LiteralPath $ArtifactRoot).FullName
+$selectedFiles = @(Read-WssUniversalFiles $root)
 Assert-WssMacOSPayload $root $selectedFiles
 if (Test-Path -LiteralPath $Destination) { throw 'Destination must be new; existing dependencies will not be overwritten.' }
 New-Item -ItemType Directory -Path $Destination | Out-Null

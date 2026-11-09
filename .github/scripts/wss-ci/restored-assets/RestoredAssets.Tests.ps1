@@ -30,6 +30,38 @@ function New-Assets {
 function Save-Assets($Value){Write-Bytes $assets (ConvertTo-Json -InputObject $Value -Depth 20)}
 function Resolve-Asset{[Wss.BuildTools.RestoredPackageAssets]::ResolveProjectAsset($assets,$project,$package,$asset,'net9.0')}
 try {
+
+ # Real directory inventories must not depend on Windows long/8.3 spelling.
+ # Keep fixtures as text: this tests path admission, not native payload loading.
+ foreach($variant in @(@{files=@($WssUniversalFiles)},@{files=@($WssUniversalFiles)+@($WssMacOSFiles)})) {
+  $inventory=Join-Path $scratch ('universal inventory '+$variant.files.Count)
+  foreach($relative in $variant.files){Write-Bytes (Join-Path $inventory $relative) 'inventory fixture'}
+  $roots=@($inventory)
+  if($IsWindows){
+   $short=(New-Object -ComObject Scripting.FileSystemObject).GetFolder($inventory).ShortPath
+   if($short -cne $inventory){$roots+=@($short)}
+   else {Write-Output 'SKIP Windows 8.3 inventory alias: short names unavailable on fixture volume.'}
+  }
+  foreach($inventoryRoot in $roots){
+   $actual=@(Read-WssUniversalFiles $inventoryRoot)
+   Require (@(Compare-Object $actual $variant.files -CaseSensitive).Count -eq 0) 'Directory inventory changed through a path alias';$count++
+   Write-Bytes (Join-Path $inventory 'wss-candidate.json') '{}'
+   Reject {Read-WssUniversalFiles $inventoryRoot} 'exact legacy or macOS'
+   $actual=@(Read-WssUniversalFiles $inventoryRoot -AllowProvenance)
+   Require (@(Compare-Object $actual $variant.files -CaseSensitive).Count -eq 0) 'Exact provenance exception changed inventory';$count++
+   Remove-Item -LiteralPath (Join-Path $inventory 'wss-candidate.json')
+   Write-Bytes (Join-Path $inventory 'extra.dll') 'extra'
+   Reject {Read-WssUniversalFiles $inventoryRoot} 'exact legacy or macOS'
+   Remove-Item -LiteralPath (Join-Path $inventory 'extra.dll')
+   $first=Join-Path $inventory $variant.files[0]
+   Remove-Item -LiteralPath $first
+   Reject {Read-WssUniversalFiles $inventoryRoot} 'exact legacy or macOS'
+   Write-Bytes (Join-Path $inventory $variant.files[0].ToLowerInvariant()) 'wrong case'
+   Reject {Read-WssUniversalFiles $inventoryRoot} 'exact legacy or macOS'
+   Remove-Item -LiteralPath (Join-Path $inventory $variant.files[0].ToLowerInvariant())
+   Write-Bytes $first 'inventory fixture'
+  }
+ }
  Save-Assets (New-Assets)
  Require ((Resolve-Asset) -ceq (Join-Path $root "system.io.ports/8.0.0/$asset")) 'Custom root/spaces resolution failed';$count++
  # Default-cache layout, custom NuGet.Config roots and fallbacks all use the restored packageFolders map.

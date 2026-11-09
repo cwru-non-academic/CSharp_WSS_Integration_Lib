@@ -41,6 +41,83 @@ $badJobs[1].conclusion = 'skipped'
 Reject { Assert-WssMacOSProducerJobs $badJobs } 'Required macOS producer job*'
 Reject { Assert-WssMacOSProducerJobs ($jobs + @($jobs[0])) } 'Required macOS producer job*'
 
+
+# Exercise the real acquisition, equality and assertion functions with both
+# supported directory layouts. Only managed identity metadata is inspected;
+# no product assembly or native library is executed.
+$tempBase=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+$temp=Join-Path $tempBase ('wss-directory-inventory-'+[guid]::NewGuid().ToString('N'))
+$null=New-Item -ItemType Directory -Path $temp
+try {
+    $approval=Read-WssApproval "$PSScriptRoot/../../universal-bootstrap.json"
+    $approvalPath=Join-Path $temp 'approval.json'
+    Write-WssApproval $approval $approvalPath
+    foreach($variant in @(@{files=$legacy},@{files=$modern})) {
+        $source=Join-Path $temp ('candidate long directory '+$variant.files.Count)
+        foreach($relative in $variant.files){
+            $file=Join-Path $source $relative
+            $null=New-Item -ItemType Directory -Path (Split-Path -Parent $file) -Force
+            if($relative -cin $WssMacOSFiles){
+                Copy-Item -LiteralPath (Join-Path "$PSScriptRoot/../../../lib" $relative) -Destination $file
+            } else {[IO.File]::WriteAllText($file,"fixture bytes: $relative")}
+        }
+        $sourceRoots=@($source)
+        if($IsWindows){
+            $short=(New-Object -ComObject Scripting.FileSystemObject).GetFolder($source).ShortPath
+            if($short -cne $source){$sourceRoots+=@($short)}
+            else {Write-Output 'SKIP Windows 8.3 candidate alias: short names unavailable on fixture volume.'}
+        }
+        foreach($candidate in $sourceRoots){
+            $staged=Join-Path $temp ('installed long directory '+[guid]::NewGuid().ToString('N'))
+            & "$PSScriptRoot/../New-WssLib.ps1" -ArtifactRoot $candidate -ApprovalFile $approvalPath -Destination $staged
+            $libRoots=@($staged)
+            if($IsWindows){$libRoots+=@((New-Object -ComObject Scripting.FileSystemObject).GetFolder($staged).ShortPath)}
+            foreach($lib in $libRoots){
+                Assert-WssLib $lib $candidate $approval
+                if(-not (Test-WssPayloadEqual $lib $candidate)){throw 'Identical payload through alias was not a no-op.'}
+                $count++
+                $first=Join-Path $lib $variant.files[0]
+                [IO.File]::WriteAllText($first,'tampered fixture bytes')
+                Reject {Assert-WssLib $lib $candidate $approval} 'Committed universal bytes differ:*'
+                if(Test-WssPayloadEqual $lib $candidate){throw 'Tampered bytes accepted through alias.'}
+                Copy-Item -LiteralPath (Join-Path $candidate $variant.files[0]) -Destination $first -Force
+                $provenance=Join-Path $lib 'wss-candidate.json'
+                Remove-Item -LiteralPath $provenance
+                Reject {Assert-WssLib $lib $candidate $approval} 'Committed lib provenance is missing.'
+                if(Test-WssPayloadEqual $lib $candidate){throw 'Missing provenance accepted through alias.'}
+                Write-WssApproval $approval $provenance
+                if($IsWindows){
+                    $attributes=[IO.File]::GetAttributes($provenance)
+                    try {
+                        [IO.File]::SetAttributes($provenance,$attributes -bor [IO.FileAttributes]::Hidden)
+                        Reject {Assert-WssLib $lib $candidate $approval} 'Committed lib provenance is missing.'
+                        if(Test-WssPayloadEqual $lib $candidate){throw 'Hidden provenance changed the existing enumeration contract.'}
+                    } finally {[IO.File]::SetAttributes($provenance,$attributes)}
+                }
+                $wrong=$approval|ConvertTo-Json -Depth 5|ConvertFrom-Json
+                $wrong.cli.preflight_run_id='1'
+                Write-WssApproval $wrong $provenance
+                Reject {Assert-WssLib $lib $candidate $approval} 'Committed lib approval differs.'
+                Write-WssApproval $approval $provenance
+                [IO.File]::WriteAllText((Join-Path $lib 'extra.dll'),'extra')
+                Reject {Assert-WssLib $lib $candidate $approval} '*exact legacy or macOS*'
+                if(Test-WssPayloadEqual $lib $candidate){throw 'Extra file accepted through alias.'}
+                Remove-Item -LiteralPath (Join-Path $lib 'extra.dll')
+                Remove-Item -LiteralPath $provenance
+                Write-WssApproval $approval (Join-Path $lib 'WSS-CANDIDATE.JSON')
+                Reject {Assert-WssLib $lib $candidate $approval} '*'
+                if(Test-WssPayloadEqual $lib $candidate){throw 'Wrong-case provenance accepted through alias.'}
+                Remove-Item -LiteralPath (Join-Path $lib 'WSS-CANDIDATE.JSON')
+                Write-WssApproval $approval $provenance
+            }
+        }
+    }
+} finally {
+    $resolved=[IO.Path]::GetFullPath($temp)
+    if(-not $resolved.StartsWith($tempBase,[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($resolved) -cnotmatch '^wss-directory-inventory-[a-f0-9]{32}$'){throw 'Unsafe inventory fixture cleanup.'}
+    Remove-Item -LiteralPath $resolved -Recurse -Force
+}
+
 if ($ArtifactRoot) {
     $files = @(Read-WssUniversalFiles $ArtifactRoot)
     Assert-WssMacOSPayload $ArtifactRoot $files

@@ -60,6 +60,8 @@ const object=(root,path)=>git(root,'rev-parse',`HEAD:${path}`);
 
 export const ROOT_KEYS=['sourceRoot','toolsRoot','validatorRoot','integrationRoot','engineRoot','coreRoot','outputRoot'];
 const realpath=realpathSync.native;
+// Pass physical paths across the Node/PowerShell boundary, including aliased TEMP.
+export const createReceiptWorkspace=()=>realpath(mkdtempSync(join(tmpdir(),'wss-receipt-')));
 const fullSha=value=>typeof value==='string'&&/^[a-f0-9]{40}$/.test(value);
 export function receiptEligibility(env) {
   const profile=profiles[env.TARGET_ID],channel=env.WSS_CI_CHANNEL;
@@ -141,7 +143,7 @@ export async function runReceipt(config,{g=new ReadOnly(),env=process.env}={}) {
   }));
   for(const path of ['.github/scripts',...(profile.receipt.configuration?[profile.receipt.configuration]:[])])v.requireThat(object(integrationRoot,path)===wrapperSnapshot.trusted[path],`Accepted wrapper tooling differs from frozen source: ${path}`);
   for(const [parent,sha] of Object.entries(parents))v.requireThat(git(integrationRoot,'rev-parse','HEAD')===sha&&g.head(profiles[parent].target.repository,p.channel)===sha,'Actual integration root differs from accepted parent');
-  const work=mkdtempSync(join(tmpdir(),'wss-receipt-'));
+  const work=createReceiptWorkspace();
   try {
     const adapterContext={plan:p,target:t,head,pr,parents,paths:roots};
     phase='adapter';

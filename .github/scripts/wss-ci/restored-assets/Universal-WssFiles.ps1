@@ -41,9 +41,11 @@ function Assert-WssMacOSProducerJobs($Jobs) {
 }
 
 function Read-WssUniversalFiles([string] $Root, [switch] $AllowProvenance) {
-    $resolved = (Resolve-Path -LiteralPath $Root).Path
+    # Resolve-Path preserves Windows 8.3 spelling, while child FullName values
+    # expand it. Canonicalize both operands before computing relative names.
+    $resolved = (Get-Item -LiteralPath $Root).FullName
     $paths = @(Get-ChildItem -LiteralPath $resolved -File -Recurse | ForEach-Object {
-        $_.FullName.Substring($resolved.Length).TrimStart('\', '/').Replace('\', '/')
+        [IO.Path]::GetRelativePath($resolved, $_.FullName).Replace('\', '/')
     })
     if ($AllowProvenance) { $paths = @($paths | Where-Object { $_ -cne 'wss-candidate.json' }) }
     Get-WssUniversalFiles $paths
