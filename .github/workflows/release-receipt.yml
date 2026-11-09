@@ -24,9 +24,9 @@ jobs:
       TARGET_ID: csharp-wrapper
       PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
       PLAN_ID: ${{ inputs.plan_id }}
-      WSS_RECEIPT_ENGINE_SHA: 3c022aec7633211fc0da44ef5b91ebabd7defb3b
-      WSS_RECEIPT_CORE_SHA: a6458c5ddcd1de2df9373b1a7bbe7d873b8d8120
-      WSS_RECEIPT_VALIDATOR_SHA: 3c022aec7633211fc0da44ef5b91ebabd7defb3b
+      WSS_RECEIPT_ENGINE_SHA: 450623fb1cef648c6d8c92eee5dd21082f6e97eb
+      WSS_RECEIPT_CORE_SHA: 88240a93b6e8871f40d1f2ea69c49c17d573f058
+      WSS_RECEIPT_VALIDATOR_SHA: 450623fb1cef648c6d8c92eee5dd21082f6e97eb
     steps:
       - name: Require static caller eligibility before credentials
         shell: pwsh
@@ -36,13 +36,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: cwru-non-academic/Python_WSS_Integration_Lib
-          ref: 3c022aec7633211fc0da44ef5b91ebabd7defb3b
+          ref: 450623fb1cef648c6d8c92eee5dd21082f6e97eb
           path: bootstrap/Python_WSS_Integration_Lib
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: cwru-non-academic/WSSCore
-          ref: a6458c5ddcd1de2df9373b1a7bbe7d873b8d8120
+          ref: 88240a93b6e8871f40d1f2ea69c49c17d573f058
           path: core
           persist-credentials: false
       - uses: actions/checkout@v4

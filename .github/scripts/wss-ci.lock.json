@@ -2,14 +2,14 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "a6458c5ddcd1de2df9373b1a7bbe7d873b8d8120",
-  "source_ref": "refs/heads/ci/tooling/a6458c5ddcd1de2df9373b1a7bbe7d873b8d8120",
+  "source_commit": "88240a93b6e8871f40d1f2ea69c49c17d573f058",
+  "source_ref": "refs/heads/ci/tooling/88240a93b6e8871f40d1f2ea69c49c17d573f058",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "3c022aec7633211fc0da44ef5b91ebabd7defb3b",
-      "ref": "refs/heads/ci/tooling/3c022aec7633211fc0da44ef5b91ebabd7defb3b"
+      "commit": "450623fb1cef648c6d8c92eee5dd21082f6e97eb",
+      "ref": "refs/heads/ci/tooling/450623fb1cef648c6d8c92eee5dd21082f6e97eb"
     }
   },
   "files": {
@@ -221,7 +221,7 @@
     ".github/scripts/wss-ci/tests/receipt-gh-preload.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/tests/receipt-gh-preload.mjs",
-      "sha256": "86680433ce2dcadefff2ab2b42ab877db2a9cc774e0fef0c1440fb08cd4caab5"
+      "sha256": "2616539ba3cc039d1bd63fa152e5fd273bd441c10694e721f2bfed6d5fb53dc2"
     },
     ".github/scripts/wss-ci/admission-context.mjs": {
       "origin": "core",
