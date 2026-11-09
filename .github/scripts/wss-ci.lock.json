@@ -2,14 +2,14 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "1030e530735933720e1b83b966a47befa29191d0",
-  "source_ref": "refs/heads/ci/tooling/1030e530735933720e1b83b966a47befa29191d0",
+  "source_commit": "eea306a8919980d578b1c5e31af3d994d162392e",
+  "source_ref": "refs/heads/ci/tooling/eea306a8919980d578b1c5e31af3d994d162392e",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "8479d559a7a79f53fb3b8b6654abb53659ee5cbf",
-      "ref": "refs/heads/ci/tooling/8479d559a7a79f53fb3b8b6654abb53659ee5cbf"
+      "commit": "cedce0423ed86a2ac5249d70f078572e4426c935",
+      "ref": "refs/heads/ci/tooling/cedce0423ed86a2ac5249d70f078572e4426c935"
     }
   },
   "files": {
@@ -66,7 +66,7 @@
     ".github/scripts/wss-ci/DispatchProof.ps1": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/DispatchProof.ps1",
-      "sha256": "524ad76de41f86d907b185869fc7fb040afb096ead6bafda749e4961c192f09e"
+      "sha256": "f0edbca22511d8836afce9c6a015225d507dbb66846f4c975061e86c75466e3b"
     },
     ".github/scripts/wss-ci/receipt-targets.json": {
       "origin": "integration",
@@ -91,7 +91,7 @@
     ".github/scripts/wss-ci/Prepare-StagedApplicationFanout.ps1": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/Prepare-StagedApplicationFanout.ps1",
-      "sha256": "1eb3773db79ba99c001cdcc19122977c97555d71faf50016546a779fe5d90baf"
+      "sha256": "938a5e23e57fe47550c375ee5e023527c1aaf8060ebe66d6827b0e9a88d54e46"
     },
     ".github/scripts/wss-ci/normalize-candidate.mjs": {
       "origin": "integration",
@@ -136,7 +136,7 @@
     ".github/workflows/shared-ci.yml": {
       "origin": "core",
       "source": "tools/ci/shared/shared-ci.yml",
-      "sha256": "287f4dd74dcc372468608714be9cb41bb01df19fc49283ccbb5c8c2b3f3c3e6c"
+      "sha256": "18fcca2162c3ca10b6efded4422d487d22dff941d49744c8ee180789df7867c0"
     },
     ".github/scripts/wss-ci/notify-family.mjs": {
       "origin": "integration",
@@ -267,6 +267,11 @@
       "origin": "core",
       "source": "tools/ci/shared/restored-assets/Universal-WssFiles.ps1",
       "sha256": "8ca5b49fbc418d71958bfa9c481583f2fb00ccb0aacaa20b8783fdd911ec822b"
+    },
+    ".github/scripts/wss-ci/PhaseDiagnostics.ps1": {
+      "origin": "integration",
+      "source": ".github/scripts/wss-ci/PhaseDiagnostics.ps1",
+      "sha256": "0716f5944c7ab58dfa441007a9019a1dcc431373dc62e4dd84431084536e8c52"
     }
   }
 }
