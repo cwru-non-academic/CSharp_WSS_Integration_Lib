@@ -25,7 +25,7 @@ jobs:
       PRODUCER_RUN_ID: ${{ inputs.producer_run_id }}
       PLAN_ID: ${{ inputs.plan_id }}
       WSS_RECEIPT_ENGINE_SHA: 450623fb1cef648c6d8c92eee5dd21082f6e97eb
-      WSS_RECEIPT_CORE_SHA: 88240a93b6e8871f40d1f2ea69c49c17d573f058
+      WSS_RECEIPT_CORE_SHA: 88885ffd93acd7670a54573d65106bfade2b3b78
       WSS_RECEIPT_VALIDATOR_SHA: 450623fb1cef648c6d8c92eee5dd21082f6e97eb
     steps:
       - name: Require static caller eligibility before credentials
@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: cwru-non-academic/WSSCore
-          ref: 88240a93b6e8871f40d1f2ea69c49c17d573f058
+          ref: 88885ffd93acd7670a54573d65106bfade2b3b78
           path: core
           persist-credentials: false
       - uses: actions/checkout@v4
