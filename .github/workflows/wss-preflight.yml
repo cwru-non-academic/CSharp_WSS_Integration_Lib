@@ -76,20 +76,30 @@ jobs:
           }
 
           ./.github/scripts/Resolve-WssRelease.ps1 -ProducerRepository $env:PRODUCER_REPOSITORY -RunId $env:RUN_ID -ReleaseTag $env:RELEASE_TAG -ExpectedCommit $env:EXPECTED_COMMIT -ArchiveName $env:ARCHIVE -ExpectedSha256 $env:SHA256 -OutputRoot "$env:RUNNER_TEMP/wss-release"
-      - name: Read reviewed package verifier identity independently of candidate provenance
-        id: package-tools
-        shell: pwsh
-        run: |
-          $lock = Get-Content .github/scripts/wss-ci.lock.json -Raw | ConvertFrom-Json
-          if ($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cne '099a0287b4c6ba238112482310c429ac334ea8cf' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)") { throw 'Unexpected reviewed package verifier lock.' }
-          "commit=$($lock.source_commit)" >> $env:GITHUB_OUTPUT
       - uses: actions/checkout@v4
         with:
           repository: cwru-non-academic/WSSCore
-          ref: ${{ steps.package-tools.outputs.commit }}
+          ref: 88885ffd93acd7670a54573d65106bfade2b3b78
           path: workflow-guard
           token: ${{ steps.core-token.outputs.token }}
           persist-credentials: false
+      - name: Admit reviewed package verifier checkout before executing Core code
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $lock = Get-Content .github/scripts/wss-ci.lock.json -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
+          if ($lock -isnot [System.Collections.IDictionary] -or $lock['source_repository'] -isnot [string] -or $lock['source_repository'] -cne 'cwru-non-academic/WSSCore' -or $lock['source_commit'] -isnot [string] -or $lock['source_commit'] -cnotmatch '^[a-f0-9]{40}$' -or $lock['source_ref'] -isnot [string] -or $lock['source_ref'] -cne "refs/heads/ci/tooling/$($lock['source_commit'])") { throw 'Invalid reviewed package source lock.' }
+          $head = & git --no-optional-locks -C workflow-guard rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Reviewed package HEAD query failed.' }
+          if (($head -join '').Trim() -cne $lock['source_commit']) { throw 'Reviewed package checkout differs from source lock.' }
+          $remote = & git --no-optional-locks -C workflow-guard remote get-url origin
+          if ($LASTEXITCODE -ne 0) { throw 'Reviewed package origin query failed.' }
+          if (($remote -join '').Trim() -cnotmatch '^(https://github.com/|git@github.com:)cwru-non-academic/WSSCore(\.git)?$') { throw 'Reviewed package checkout repository differs.' }
+          $status = @(& git --no-optional-locks -C workflow-guard status --porcelain --untracked-files=all --ignored)
+          if ($LASTEXITCODE -ne 0) { throw 'Reviewed package status query failed.' }
+          $tracked = @(& git --no-optional-locks -C workflow-guard ls-files -v)
+          if ($LASTEXITCODE -ne 0) { throw 'Reviewed package index query failed.' }
+          if ($status.Count -or @($tracked | Where-Object { $_ -cnotmatch '^H ' }).Count) { throw 'Reviewed package checkout is not pristine.' }
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x

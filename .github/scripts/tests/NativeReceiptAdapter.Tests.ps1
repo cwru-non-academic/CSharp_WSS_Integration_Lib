@@ -1,6 +1,7 @@
+param([string]$AdapterPath=(Join-Path $PSScriptRoot '../Write-ReleaseReceipt.ps1'))
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
-$path=Join-Path $PSScriptRoot '../Write-ReleaseReceipt.ps1'
+$path=$AdapterPath
 $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$null,[ref]$errors)
 if($errors.Count){throw 'Native receipt adapter must parse.'}
@@ -25,15 +26,50 @@ $probe=[scriptblock]::Create($ast.ParamBlock.Extent.Text+"`n"+($boundary -join "
 $roles=if($source.Contains("'csharp-wrapper'")){@('csharp-wrapper','csharp-cli')}else{@('unity-wrapper','unity-gui')}
 $keys=@('GITHUB_ACTIONS','GITHUB_EVENT_NAME','GITHUB_REF','GITHUB_SHA','GITHUB_REPOSITORY','GITHUB_WORKFLOW_SHA','GITHUB_WORKFLOW_REF','WSS_CI_CHANNEL')
 $saved=@{};foreach($key in $keys){$saved[$key]=[Environment]::GetEnvironmentVariable($key)}
+$tempRoot=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+$fixtureRoot=Join-Path $tempRoot ('wss native boundary '+[guid]::NewGuid().ToString('N'))
+$null=[IO.Directory]::CreateDirectory($fixtureRoot)
 $rejections=0;$successes=0
+$script:boundaryCalls=@{gh=0;git=0;node=0;'New-Item'=0}
+function Assert-NoBoundarySideEffects {
+    foreach($name in $script:boundaryCalls.Keys){
+        if($script:boundaryCalls[$name] -ne 0){throw "Forbidden boundary operation attempted: $name ($($script:boundaryCalls[$name]))"}
+    }
+}
+function Assert-BoundaryOutputsAbsent {
+    foreach($path in @($arguments.WorkRoot,$arguments.OutputPath)){
+        if(Test-Path -LiteralPath $path){throw 'Boundary created a designated output.'}
+    }
+}
+function Assert-BoundaryRejected([scriptblock]$Action,[string]$Message,[string]$Parameter='') {
+    # Setup and assertions stay outside the expected-rejection catch. A forbidden
+    # operation cannot become evidence of a valid rejection, even if swallowed.
+    Assert-BoundaryOutputsAbsent
+    $beforeJson=$script:testJson
+    $beforeArguments=$arguments|ConvertTo-Json -Depth 10 -Compress
+    $beforeContext=$ctx|ConvertTo-Json -Depth 10 -Compress
+    $beforeEnvironment=@{};foreach($key in $keys){$beforeEnvironment[$key]=[Environment]::GetEnvironmentVariable($key)}
+    $output=[Collections.Generic.List[object]]::new()
+    $failure=$null
+    try { & $Action | ForEach-Object {$output.Add($_)} } catch {$failure=$_}
+    Assert-NoBoundarySideEffects
+    Assert-BoundaryOutputsAbsent
+    if($script:testJson -cne $beforeJson -or ($arguments|ConvertTo-Json -Depth 10 -Compress) -cne $beforeArguments -or ($ctx|ConvertTo-Json -Depth 10 -Compress) -cne $beforeContext){throw 'Rejected boundary changed fixture inputs.'}
+    foreach($key in $keys){if([Environment]::GetEnvironmentVariable($key) -cne $beforeEnvironment[$key]){throw "Rejected boundary changed execution identity: $key"}}
+    if($output.Count){throw 'Rejected boundary emitted fixture output.'}
+    if($null -eq $failure){throw 'Native boundary accepted an invalid fixture.'}
+    if($Parameter){
+        if($failure.Exception -isnot [Management.Automation.ParameterBindingException] -or $failure.FullyQualifiedErrorId -notlike 'ParameterArgumentValidationError*' -or $failure.Exception.ParameterName -cne $Parameter){throw $failure}
+    }elseif($failure.Exception.Message -cne $Message){throw $failure}
+}
 try {
     function Get-WssCiChannel { $script:testChannel }
     function Get-WssCiChannelContext { @{ref="refs/heads/$script:testChannel"} }
     function Get-Content { param([string]$LiteralPath,[switch]$Raw) if($LiteralPath -cne 'context space λ.json'){throw 'Context path argument changed.'};$script:testJson }
-    function gh { throw 'Boundary attempted GitHub access.' }
-    function git { throw 'Boundary attempted Git access.' }
-    function node { throw 'Boundary attempted Node execution.' }
-    function New-Item { throw 'Boundary attempted filesystem mutation.' }
+    function gh { $script:boundaryCalls.gh++;throw 'Boundary attempted GitHub access.' }
+    function git { $script:boundaryCalls.git++;throw 'Boundary attempted Git access.' }
+    function node { $script:boundaryCalls.node++;throw 'Boundary attempted Node execution.' }
+    function New-Item { $script:boundaryCalls['New-Item']++;throw 'Boundary attempted filesystem mutation.' }
     foreach($channel in @('dev','main')){foreach($role in $roles){
         $script:testChannel=$channel
         $env:GITHUB_ACTIONS='true';$env:GITHUB_EVENT_NAME='workflow_dispatch';$env:GITHUB_REF="refs/heads/$channel"
@@ -41,19 +77,23 @@ try {
         $env:GITHUB_WORKFLOW_REF="$env:GITHUB_REPOSITORY/.github/workflows/release-receipt.yml@refs/heads/$channel"
         $ctx=@{plan=@{channel=$channel};target=@{id=$role;branch=$channel;repository=$env:GITHUB_REPOSITORY};head=$env:GITHUB_SHA;pr=@{};paths=@{sourceRoot='accepted λ';toolsRoot='accepted λ';validatorRoot='frozen validator λ';integrationRoot='accepted wrapper λ';coreRoot='immutable core λ';engineRoot='immutable engine λ'}}
         $script:testJson=$ctx|ConvertTo-Json -Depth 10
-        $arguments=@{TargetId=$role;ProducerRunId='123';PlanId=('b'*64);ContextPath='context space λ.json';WorkRoot='new work λ';OutputPath='output space λ.json'}
+        $arguments=@{TargetId=$role;ProducerRunId='123';PlanId=('b'*64);ContextPath='context space λ.json';WorkRoot=(Join-Path $fixtureRoot 'new work λ');OutputPath=(Join-Path $fixtureRoot 'output space λ.json')}
         $result=& $probe @arguments
+        Assert-NoBoundarySideEffects
+        Assert-BoundaryOutputsAbsent
         if($result.source -cne $ctx.paths.sourceRoot -or $result.tools -cne $ctx.paths.toolsRoot -or $result.validator -cne $ctx.paths.validatorRoot -or $result.integration -cne $ctx.paths.integrationRoot -or $result.work -cne $arguments.WorkRoot -or $result.output -cne $arguments.OutputPath -or $result.target -cne $role -or $result.producer -cne '123' -or $result.plan -cne ('b'*64)){throw 'Native boundary changed the common invocation arguments.'}
         $successes++
-        foreach($mutation in @(
-            {param($c)$c.plan.channel='other'}, {param($c)$c.target.branch='other'},
-            {param($c)$c.target.id='other'}, {param($c)$c.head='c'*40},
-            {param($c)$c.target.repository='other/repo'}
+        foreach($case in @(
+            @{mutate={param($c)$c.plan.channel='other'};message='Receipt adapter context differs from explicit channel.'},
+            @{mutate={param($c)$c.target.branch='other'};message='Receipt adapter context differs from explicit channel.'},
+            @{mutate={param($c)$c.target.id='other'};message='Adapter source/role differs from receipt context.'},
+            @{mutate={param($c)$c.head='c'*40};message='Adapter source/role differs from receipt context.'},
+            @{mutate={param($c)$c.target.repository='other/repo'};message='Adapter source/role differs from receipt context.'}
         )){
-            $bad=$script:testJson|ConvertFrom-Json; & $mutation $bad
+            $bad=$script:testJson|ConvertFrom-Json; & $case.mutate $bad
             $script:testJson=$bad|ConvertTo-Json -Depth 10
-            $failed=$false;try{& $probe @arguments|Out-Null}catch{$failed=$true}
-            if(!$failed){throw 'Native boundary accepted a mismatched context.'};$rejections++
+            Assert-BoundaryRejected {& $probe @arguments} -Message $case.message
+            $rejections++
             $script:testJson=$ctx|ConvertTo-Json -Depth 10
         }
         $environmentMutations=@('GITHUB_ACTIONS','GITHUB_EVENT_NAME','GITHUB_REF')
@@ -62,17 +102,24 @@ try {
             $before=[Environment]::GetEnvironmentVariable($key)
             try {
                 [Environment]::SetEnvironmentVariable($key,'invalid')
-                $failed=$false;try{& $probe @arguments|Out-Null}catch{$failed=$true}
-                if(!$failed){throw "Native boundary accepted invalid execution identity: $key"};$rejections++
+                $message=if($key -in @('GITHUB_WORKFLOW_SHA','GITHUB_WORKFLOW_REF')){'Main receipt must execute its exact registered receiver source.'}else{'Adapter is restricted to actual dev receipt execution.'}
+                Assert-BoundaryRejected {& $probe @arguments} -Message $message
+                $rejections++
             } finally {[Environment]::SetEnvironmentVariable($key,$before)}
         }
         foreach($name in @('ContextPath','WorkRoot','OutputPath')){
             $badArgs=$arguments.Clone();$badArgs[$name]=''
-            $failed=$false;try{& $probe @badArgs|Out-Null}catch{$failed=$true}
-            if(!$failed){throw "Native boundary accepted empty $name"};$rejections++
+            Assert-BoundaryRejected {& $probe @badArgs} -Parameter $name
+            $rejections++
         }
     }}
-} finally {foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,$saved[$key])}}
+ } finally {
+    foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,$saved[$key])}
+    # Only remove the unique fixture directory created directly under temp.
+    $resolved=[IO.Path]::GetFullPath($fixtureRoot)
+    if([IO.Path]::GetDirectoryName($resolved) -cne [IO.Path]::TrimEndingDirectorySeparator($tempRoot)){throw 'Fixture cleanup escaped its temporary root.'}
+    Remove-Item -LiteralPath $resolved -Recurse -Force
+}
 "Native receipt adapter boundary passed ($successes role/channel positives, $rejections context/parameter rejections; no native execution)."
 # Receipt execution must request authenticated snapshots, never legacy transport.
 $proofCalls=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -in @('Assert-WssApproval','Assert-UnityApproval','Assert-UnityMergedGuiPreflight')},$true))
