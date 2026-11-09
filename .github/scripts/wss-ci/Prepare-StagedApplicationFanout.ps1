@@ -20,6 +20,7 @@ function Read-RepositoryJson([string]$Repository, [string]$Commit, [string]$Path
     return ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($file.content)) | ConvertFrom-Json)
 }
 function Write-ReadyEvent($PullRequest) {
+    try { Write-WssCiPhaseDiagnostic -Family $Receiver -Role $(if ($Receiver -ceq 'unity') { 'gui' } else { 'cli' }) -Operation 'write-ready-event' -Status 'started' -ErrorCode 'none' } catch { } # wss-diag
     if (!$PullRequest.merged -or $PullRequest.state -cne 'closed' -or
         $PullRequest.base.ref -cne $context.branch -or $PullRequest.base.repo.full_name -cne $env:GITHUB_REPOSITORY -or
         $PullRequest.head.repo.full_name -cne $env:GITHUB_REPOSITORY -or $PullRequest.user.type -cne 'Bot') {
@@ -34,28 +35,37 @@ function Write-ReadyEvent($PullRequest) {
     "event_path=$path" >> $env:GITHUB_OUTPUT
     "merge_sha=$($PullRequest.merge_commit_sha)" >> $env:GITHUB_OUTPUT
     'dispatch_allowed=true' >> $env:GITHUB_OUTPUT
+    try { Write-WssCiPhaseDiagnostic -Family $Receiver -Role $(if ($Receiver -ceq 'unity') { 'gui' } else { 'cli' }) -Operation 'write-ready-event' -Status 'completed' -ErrorCode 'none' } catch { } # wss-diag
 }
 if ($env:GITHUB_ACTIONS -cne 'true') { throw 'GitHub Actions execution required.' }
+try { Write-WssCiPhaseDiagnostic -Family $Receiver -Role $(if ($Receiver -ceq 'unity') { 'gui' } else { 'cli' }) -Operation 'validate-staging-policy' -Status 'started' -ErrorCode 'none' } catch { } # wss-diag
 $cap = Get-Content -LiteralPath $context.receiverPolicy -Raw | ConvertFrom-Json
 if ($cap.schema -cne $context.receiverSchema -or $cap.core_workflow -cne $context.stageWorkflow -or !$cap.staged_applications) { throw 'Staged receiver contract required.' }
+try { Write-WssCiPhaseDiagnostic -Family $Receiver -Role $(if ($Receiver -ceq 'unity') { 'gui' } else { 'cli' }) -Operation 'validate-staging-policy' -Status 'completed' -ErrorCode 'none' } catch { } # wss-diag
 if ($env:GITHUB_EVENT_NAME -ceq 'workflow_dispatch') {
     if ($env:GITHUB_REF -cne 'refs/heads/main' -or
         $env:PRODUCER_RUN_ID -cnotmatch '^[1-9][0-9]*$' -or
         $env:BARRIER_RUN_ID -cnotmatch '^[1-9][0-9]*$' -or
         $env:BARRIER_ATTEMPT -cnotmatch '^[1-9][0-9]*$') { throw 'Resume requires main and exact positive run identities.' }
+    try { Write-WssCiPhaseDiagnostic -Family $Receiver -Role $(if ($Receiver -ceq 'unity') { 'gui' } else { 'cli' }) -Operation 'read-core-main' -Status 'started' -ErrorCode 'none' } catch { } # wss-diag
     $trusted = Read-GitHub "repos/$core/git/ref/heads/main"
     $checkedOut = & git -C $CoreRoot rev-parse HEAD
     if ($LASTEXITCODE -ne 0 -or $checkedOut -cne $trusted.object.sha) { throw 'Core verifier checkout is not current trusted main.' }
+    try { Write-WssCiPhaseDiagnostic -Family $Receiver -Role $(if ($Receiver -ceq 'unity') { 'gui' } else { 'cli' }) -Operation 'read-core-main' -Status 'completed' -ErrorCode 'none' } catch { } # wss-diag
+    try { Write-WssCiPhaseDiagnostic -Family $Receiver -Role $(if ($Receiver -ceq 'unity') { 'gui' } else { 'cli' }) -Operation 'verify-barrier' -Status 'started' -ErrorCode 'none' } catch { } # wss-diag
     $raw = & node (Join-Path $CoreRoot 'tools/ci/dev-propagation.mjs') verify-barrier $env:PRODUCER_RUN_ID $env:BARRIER_RUN_ID $env:BARRIER_ATTEMPT
     if ($LASTEXITCODE -ne 0) { throw 'Trusted Core integration barrier verification failed.' }
     $barrier = $raw | ConvertFrom-Json
     $accepted = $barrier.integrations.$Receiver
     Assert-WssCiBarrierExecution $barrier $Receiver $env:GITHUB_WORKSPACE
+    try { Write-WssCiPhaseDiagnostic -Family $Receiver -Role $(if ($Receiver -ceq 'unity') { 'gui' } else { 'cli' }) -Operation 'verify-barrier' -Status 'completed' -ErrorCode 'none' } catch { } # wss-diag
     if ($accepted.repository -cne $env:GITHUB_REPOSITORY -or $accepted.pr_number -cnotmatch '^[1-9][0-9]*$') {
         throw 'Barrier does not name this receiver.'
     }
+    try { Write-WssCiPhaseDiagnostic -Family $Receiver -Role $(if ($Receiver -ceq 'unity') { 'gui' } else { 'cli' }) -Operation 'read-reviewed-merge' -Status 'started' -ErrorCode 'none' } catch { } # wss-diag
     $pr = Read-GitHub "repos/$($env:GITHUB_REPOSITORY)/pulls/$($accepted.pr_number)"
     if ($pr.merge_commit_sha -cne $accepted.head_sha) { throw 'Barrier merge identity changed.' }
+    try { Write-WssCiPhaseDiagnostic -Family $Receiver -Role $(if ($Receiver -ceq 'unity') { 'gui' } else { 'cli' }) -Operation 'read-reviewed-merge' -Status 'completed' -ErrorCode 'none' } catch { } # wss-diag
     Write-ReadyEvent $pr
 } elseif ($env:GITHUB_EVENT_NAME -ceq 'pull_request_target') {
     $event = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
@@ -71,10 +81,12 @@ if ($env:GITHUB_EVENT_NAME -ceq 'workflow_dispatch') {
         $run.event -cne 'push' -or $run.head_branch -cne $context.branch -or $run.conclusion -cne 'success') {
         throw 'Candidate is not a successful canonical Core dev producer.'
     }
+    try { Write-WssCiPhaseDiagnostic -Family $Receiver -Role $(if ($Receiver -ceq 'unity') { 'gui' } else { 'cli' }) -Operation 'validate-staging-policy' -Status 'started' -ErrorCode 'none' } catch { } # wss-diag
     $tree = Read-GitHub "repos/$core/git/trees/$($candidate.commit)?recursive=1"
     $entries=@($tree.tree|Where-Object path -CEQ $context.stagePolicy)
     $file=if($entries.Count -eq 1){Read-GitHub "repos/$core/contents/$($context.stagePolicy)?ref=$($candidate.commit)"}else{$null}
     $staged=Test-WssCiStagingPolicy $tree $file $cap $Receiver
+    try { Write-WssCiPhaseDiagnostic -Family $Receiver -Role $(if ($Receiver -ceq 'unity') { 'gui' } else { 'cli' }) -Operation 'validate-staging-policy' -Status 'completed' -ErrorCode 'none' } catch { } # wss-diag
     if (!$staged) { Write-ReadyEvent $pr }
     else {
         if ($ExpectedMergeSha) { throw 'Shared barrier no longer authorizes application fanout.' }
