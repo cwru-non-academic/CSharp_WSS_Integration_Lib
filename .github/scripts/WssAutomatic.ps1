@@ -64,11 +64,10 @@ function New-WssAutomaticApproval($Candidate, [string] $CorrelationId) {
 
 function Test-WssPayloadEqual([string] $Lib, [string] $ArtifactRoot) {
     . "$PSScriptRoot/Universal-WssFiles.ps1"
-    $root = (Resolve-Path -LiteralPath $Lib).Path
-    $actual = @(Get-ChildItem -LiteralPath $root -File -Recurse | ForEach-Object { $_.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/') })
-    if ('wss-candidate.json' -cnotin $actual) { return $false }
+    $root = (Get-Item -LiteralPath $Lib).FullName
+    if (@(Get-ChildItem -LiteralPath $root -File | Where-Object { $_.Name -ceq 'wss-candidate.json' }).Count -ne 1) { return $false }
     try {
-        $selectedFiles = @(Get-WssUniversalFiles @($actual | Where-Object { $_ -cne 'wss-candidate.json' }))
+        $selectedFiles = @(Read-WssUniversalFiles $root -AllowProvenance)
         $sourceFiles = @(Read-WssUniversalFiles $ArtifactRoot)
     } catch { return $false }
     if (@(Compare-Object $selectedFiles $sourceFiles -CaseSensitive).Count -ne 0) { return $false }

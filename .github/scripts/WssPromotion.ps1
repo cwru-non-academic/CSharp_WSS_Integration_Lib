@@ -173,10 +173,9 @@ function Assert-WssApproval($Approval, [string] $EvidenceRoot, [string] $Bootstr
 
 function Assert-WssLib([string] $Lib, [string] $ArtifactRoot, $Approval) {
     . "$PSScriptRoot/Universal-WssFiles.ps1"
-    $root = (Resolve-Path -LiteralPath $Lib).Path
-    $actual = @(Get-ChildItem -LiteralPath $root -File -Recurse | ForEach-Object { $_.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/') })
-    if ('wss-candidate.json' -cnotin $actual) { throw 'Committed lib provenance is missing.' }
-    $selectedFiles = @(Get-WssUniversalFiles @($actual | Where-Object { $_ -cne 'wss-candidate.json' }))
+    $root = (Get-Item -LiteralPath $Lib).FullName
+    if (@(Get-ChildItem -LiteralPath $root -File | Where-Object { $_.Name -ceq 'wss-candidate.json' }).Count -ne 1) { throw 'Committed lib provenance is missing.' }
+    $selectedFiles = @(Read-WssUniversalFiles $root -AllowProvenance)
     $sourceFiles = @(Read-WssUniversalFiles $ArtifactRoot)
     if (@(Compare-Object $selectedFiles $sourceFiles -CaseSensitive).Count -ne 0) { throw 'Committed and candidate inventory variants differ.' }
     Assert-WssMacOSPayload $root $selectedFiles
