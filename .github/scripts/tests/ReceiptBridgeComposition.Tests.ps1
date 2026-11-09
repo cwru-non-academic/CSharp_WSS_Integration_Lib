@@ -12,7 +12,7 @@ function Save-Routes { @{routes=$script:routes.ToArray();calls_file=$script:call
 function Invoke-WssGh([string[]]$Arguments){
  $key=ConvertTo-Json -InputObject $Arguments -Compress
  $matches=@($script:routes|Where-Object {(ConvertTo-Json -InputObject $_.args -Compress) -ceq $key})
- if($matches.Count -ne 1 -or !$matches[0].ContainsKey('json')){throw "Unexpected native GitHub fixture request: $key"}
+ if($matches.Count -ne 1 -or !$matches[0].ContainsKey('json')){$script:unexpectedCalls++;throw "Unexpected native GitHub fixture request: $key"}
  $result=$matches[0].json|ConvertTo-Json -Depth 30
  if($script:case -ceq 'later-attempt' -and $Arguments[-1] -ceq 'repos/cwru-non-academic/CLI_CSharp_WSS_Application/actions/runs/12'){
   $script:cliReads++
@@ -29,6 +29,7 @@ try {
  $wrong=Join-Path $root 'wrong.zip';[IO.File]::WriteAllText($wrong,'not the captured ZIP bytes')
  $passed=0;$rejected=0
  foreach($case in @('valid','wrong-zip','required-job-failure','wrong-log','later-attempt')){
+  $script:unexpectedCalls=0
   $script:case=$case;$script:cliReads=0;$script:routes=[Collections.Generic.List[object]]::new()
   $script:responseFile=Join-Path $root "$case-routes.json";$script:callsFile=Join-Path $root "$case-calls.jsonl";$env:WSS_TEST_GH_RESPONSES=$script:responseFile
   $producer=@{id=10;run_attempt=3;repository=@{full_name=$script:approval.candidate.repository};head_repository=@{full_name=$script:approval.candidate.repository};head_branch='dev';head_sha=$script:approval.candidate.commit;path='.github/workflows/artifacts.yml';event='push';status='completed';conclusion='success'}
@@ -52,14 +53,52 @@ try {
   $script:routes.Add(@{args=@('api','repos/cwru-non-academic/CLI_CSharp_WSS_Application/actions/jobs/102/logs');text=$text})
   Save-Routes
   $list=[Collections.Generic.List[object]]::new();$failure=$null
-  try{$output=@(Assert-WssApproval $script:approval (Join-Path $root "$case-proof") -RequireCanonicalDev -ReceiptSnapshots $list)}catch{$failure=$_}
+  $output=[Collections.Generic.List[object]]::new();$stderrFile=Join-Path $root "$case-stderr.txt"
+  $callsFile=Join-Path $root "$case-calls.jsonl"
+  if(Test-Path -LiteralPath $callsFile){throw 'Transport call log must be new.'}
+  try{Assert-WssApproval $script:approval (Join-Path $root "$case-proof") -RequireCanonicalDev -ReceiptSnapshots $list 2>$stderrFile|ForEach-Object {$output.Add($_)}}catch{$failure=$_}
+  # Check transport attempts independently of the expected rejection catch. The
+  # shared preload records every request before matching, including forbidden ones.
+  if($script:unexpectedCalls){throw "Unexpected native transport operation: $case"}
+  if(!(Test-Path -LiteralPath $callsFile)){throw "Missing transport call evidence: $case"}
+  $calls=@(Get-Content -LiteralPath $callsFile|ForEach-Object {ConvertFrom-Json -InputObject $_ -NoEnumerate})
+  foreach($call in $calls){
+   $key=ConvertTo-Json -InputObject $call -Compress
+   if(@($script:routes|Where-Object {(ConvertTo-Json -InputObject $_.args -Compress) -ceq $key}).Count -ne 1){throw "Unexpected Node transport operation: $key"}
+  }
+  $zipCalls=@($calls|Where-Object {$_[-1] -cmatch '/artifacts/[0-9]+/zip$'}|ForEach-Object {($_[-1] -split '/')[-2]})
+  $logCalls=@($calls|Where-Object {$_[-1] -cmatch '/jobs/[0-9]+/logs$'})
+  $diagnostics=if(Test-Path -LiteralPath $stderrFile){[IO.File]::ReadAllText($stderrFile)}else{''}
+  $expectedZips=switch -CaseSensitive ($case){'valid' {'1011|1012|1011|1012'};'later-attempt' {'1011|1012|1011'};'wrong-log' {'1011|1012'};default {'1011'}}
+  $expectedLogs=if($case -ceq 'valid'){2}elseif($case -cin @('wrong-log','later-attempt')){1}else{0}
+  if(($zipCalls -join '|') -cne $expectedZips -or $logCalls.Count -ne $expectedLogs){throw "Receipt transport rejection phase changed: $case (ZIPs=$($zipCalls -join '|'); logs=$($logCalls.Count); error=$failure)"}
+  if($expectedLogs -and $logCalls[0][-1] -cne 'repos/cwru-non-academic/CLI_CSharp_WSS_Application/actions/jobs/102/logs'){throw 'Receipt log lost captured job identity.'}
+  if($case -ceq 'later-attempt' -and $script:cliReads -ne 2){throw 'Later-attempt fixture was not activated.'}
   if($case -ceq 'valid'){
+   if($diagnostics){throw "Positive receipt emitted unexpected diagnostics: $diagnostics"}
    if($failure){throw $failure}
    if($output.Count -or $list.Count -ne 2 -or $list[0].attempt -ne 3 -or $list[1].logs.Count -ne 1 -or $list[1].artifacts[0].digest -cne $digest){throw 'Real bridge descriptors lost paired/native bindings.'}
    $logHash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($text))).ToLowerInvariant()
    if($list[1].logs[0].sha256 -cne $logHash -or $list[1].logs[0].job_id -cne '102'){throw 'Real bridge changed validated log bytes/job identity.'}
    $passed++
-  }else{if(!$failure){throw "Real bridge accepted $case"};$rejected++}
+  }else{
+   $expected=switch -CaseSensitive ($case){
+    'wrong-zip' {'Authenticated native proof transport failed.'}
+    'required-job-failure' {'Required canonical C# preflight job missing/skipped/failed: Preflight behavioral tests'}
+    'wrong-log' {'CLI preflight did not verify the approved Integration source SHA.'}
+    'later-attempt' {'Authenticated native proof transport failed.'}
+   }
+   $nodeError=switch -CaseSensitive ($case){'wrong-zip' {'Artifact ZIP digest mismatch'};'later-attempt' {'Preflight proved run/attempt changed'};default {''}}
+   $expectedSnapshots=if($case -ceq 'later-attempt'){1}else{0}
+   if($expectedSnapshots -and ($list.Count -ne 1 -or $list[0].run_id -cne '11' -or $list[0].attempt -ne 3)){throw 'Later attempt changed the already completed integration snapshot.'}
+   if($null -eq $failure -or $list.Count -ne $expectedSnapshots -or $output.Count){throw "Real bridge accepted descriptor/output for $case"}
+   if($failure.Exception.Message -cne $expected){throw $failure}
+   if($nodeError){
+    $errors=@($diagnostics -split '\r?\n'|Where-Object {$_ -cmatch '^Error: '})
+    if($errors.Count -ne 1 -or $errors[0] -cne "Error: $nodeError"){throw "Wrong underlying Node rejection for ${case}: $diagnostics"}
+   }elseif($diagnostics){throw "Unexpected native rejection diagnostics for ${case}: $diagnostics"}
+   $rejected++
+  }
  }
  "C# real receipt bridge composition passed ($passed paired proof positive, $rejected semantic/ZIP/attempt negatives; actual native checks, Node capture and ZIP extraction; only GitHub transport stubbed)."
 }finally{
