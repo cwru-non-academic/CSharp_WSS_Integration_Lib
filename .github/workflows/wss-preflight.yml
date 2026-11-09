@@ -79,7 +79,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: cwru-non-academic/WSSCore
-          ref: 4661b6b92d896ed2e150a4e98620a8f0588c1051
+          ref: 1030e530735933720e1b83b966a47befa29191d0
           path: workflow-guard
           token: ${{ steps.core-token.outputs.token }}
           persist-credentials: false

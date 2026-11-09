@@ -49,3 +49,8 @@ jobs:
           TARGET_REPOSITORY: ${{ github.event.repository.name }}
           GH_TOKEN: ${{ github.token }}
         run: node .wss-core/tools/ci/adapter-pins.mjs check "$TARGET_REPOSITORY" "$GITHUB_WORKSPACE"
+      - name: Protect committed CI from unrelated concurrency requests
+        if: ${{ github.event.repository.name == 'Unity_WSS_Integration_Lib' || github.event.repository.name == 'GUI_Unity_WSS_Application' || github.event.repository.name == 'ROS_Python_WSS_Application' }}
+        env:
+          WSS_CONCURRENCY_TARGET_ROOT: ${{ github.workspace }}
+        run: node --test .wss-core/tools/ci/unity-concurrency.test.mjs
