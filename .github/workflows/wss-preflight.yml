@@ -81,7 +81,7 @@ jobs:
         shell: pwsh
         run: |
           $lock = Get-Content .github/scripts/wss-ci.lock.json -Raw | ConvertFrom-Json
-          if ($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cne '7712e609f44ffc3425df3c067be8e2e080506f59' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)") { throw 'Unexpected reviewed package verifier lock.' }
+          if ($lock.source_repository -cne 'cwru-non-academic/WSSCore' -or $lock.source_commit -cne '099a0287b4c6ba238112482310c429ac334ea8cf' -or $lock.source_ref -cne "refs/heads/ci/tooling/$($lock.source_commit)") { throw 'Unexpected reviewed package verifier lock.' }
           "commit=$($lock.source_commit)" >> $env:GITHUB_OUTPUT
       - uses: actions/checkout@v4
         with:
@@ -177,21 +177,17 @@ jobs:
 
       - name: Restore with downloaded WSS assemblies
         shell: pwsh
-        run: >-
-          dotnet restore "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
-
+        run: |
+          dotnet restore -p:DisablePackageAssetsCache=true "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
       - name: Build with downloaded WSS assemblies
         shell: pwsh
-        run: >-
-          dotnet build "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
-          -c Release
-          --no-restore
-          -p:TreatWarningsAsErrors=true
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
-
+        run: |
+          . ./.github/scripts/wss-ci/restored-assets/RestoredAssets.ps1
+          $builtProfile=Get-Content $env:WSS_PROFILE_EVIDENCE -Raw | ConvertFrom-Json
+          $buildRestoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile (Join-Path (Split-Path -Parent $env:WSS_PROFILE_PROJECT) 'obj/project.assets.json') -ProjectPath $env:WSS_PROFILE_PROJECT
+          dotnet build -p:DisablePackageAssetsCache=true "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -c Release --no-restore -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+          if ($LASTEXITCODE -ne 0) { throw 'Cache-disabled build failed.' }
+          & "./.github/scripts/Verify-WssOutput.ps1" -ArtifactRoot $builtProfile.payload_root -OutputRoot (Join-Path $builtProfile.output_root 'Release/net9.0') -ProjectPath $env:WSS_PROFILE_PROJECT -ProjectAssetsFile (Join-Path (Split-Path -Parent $env:WSS_PROFILE_PROJECT) 'obj/project.assets.json') -RestoreProof $buildRestoreProof
       - name: Run behavioral tests
         shell: pwsh
         run: ./.github/scripts/Invoke-WssBehavioralConformance.ps1
@@ -266,42 +262,35 @@ jobs:
 
       - name: Restore with downloaded WSS assemblies
         shell: pwsh
-        run: >-
-          dotnet restore "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
-
+        run: |
+          dotnet restore -p:DisablePackageAssetsCache=true "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
       - name: Build with downloaded WSS assemblies
         shell: pwsh
-        run: >-
-          dotnet build "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
-          -c Release
-          --no-restore
-          -p:TreatWarningsAsErrors=true
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
-
+        run: |
+          . ./.github/scripts/wss-ci/restored-assets/RestoredAssets.ps1
+          $builtProfile=Get-Content $env:WSS_PROFILE_EVIDENCE -Raw | ConvertFrom-Json
+          $buildRestoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile (Join-Path (Split-Path -Parent $env:WSS_PROFILE_PROJECT) 'obj/project.assets.json') -ProjectPath $env:WSS_PROFILE_PROJECT
+          dotnet build -p:DisablePackageAssetsCache=true "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -c Release --no-restore -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+          if ($LASTEXITCODE -ne 0) { throw 'Cache-disabled build failed.' }
+          & "./.github/scripts/Verify-WssOutput.ps1" -ArtifactRoot $builtProfile.payload_root -OutputRoot (Join-Path $builtProfile.output_root 'Release/net9.0') -ProjectPath $env:WSS_PROFILE_PROJECT -ProjectAssetsFile (Join-Path (Split-Path -Parent $env:WSS_PROFILE_PROJECT) 'obj/project.assets.json') -RestoreProof $buildRestoreProof
       - name: Verify downloaded artifact propagation
         shell: pwsh
         run: |
-          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
+          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0' -ProjectPath $env:WSS_PROFILE_PROJECT -ProjectAssetsFile (Join-Path (Split-Path -Parent $env:WSS_PROFILE_PROJECT) 'obj/project.assets.json')
           $profile = Get-Content $env:WSS_PROFILE_EVIDENCE -Raw | ConvertFrom-Json
-          dotnet publish (Join-Path $profile.source_root 'src/Wss.CSharpImplementation.csproj') -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -c Release --no-restore -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" -o "$env:RUNNER_TEMP/integration-publish"
+          . ./.github/scripts/wss-ci/restored-assets/RestoredAssets.ps1
+          $publishRestoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile (Join-Path $profile.source_root 'src/obj/project.assets.json') -ProjectPath (Join-Path $profile.source_root 'src/Wss.CSharpImplementation.csproj')
+          dotnet publish -p:DisablePackageAssetsCache=true (Join-Path $profile.source_root 'src/Wss.CSharpImplementation.csproj') -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -c Release --no-restore -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" -o "$env:RUNNER_TEMP/integration-publish"
           if ($LASTEXITCODE -ne 0) { throw 'Integration publish failed.' }
-          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot "$env:RUNNER_TEMP/integration-publish"
+          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot "$env:RUNNER_TEMP/integration-publish" -ProjectPath (Join-Path $profile.source_root 'src/Wss.CSharpImplementation.csproj') -ProjectAssetsFile (Join-Path $profile.source_root 'src/obj/project.assets.json') -RestoreProof $publishRestoreProof
 
       - name: Run platform compatibility tests
         shell: pwsh
-        run: >-
-          dotnet test "$env:WSS_PROFILE_PROJECT"
-          -c Release
-          --no-build
-          --no-restore
-          --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.SerialRuntimeSelectionTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.BleBackendLoadingTests"
-          -p:TreatWarningsAsErrors=true
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
-
+        run: |
+          . ./.github/scripts/wss-ci/compiled-tests/CompiledCSharpTests.ps1
+          $compiledProfile=Get-Content $env:WSS_PROFILE_EVIDENCE -Raw | ConvertFrom-Json
+          $compiledProof=New-CompiledCSharpTestProof -OutputRoot (Join-Path $compiledProfile.output_root 'Release/net9.0') -AssemblyName 'Wss.CSharpImplementation.Tests.dll'
+          Invoke-CompiledCSharpTests -Proof $compiledProof -ResultsDirectory (Join-Path (Split-Path -Parent $env:WSS_PROFILE_PROJECT) 'TestResults') -Filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.SerialRuntimeSelectionTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.BleBackendLoadingTests" -TrxFileName 'platform.trx'
   macos_architecture:
     name: macOS BLE detail (${{ matrix.cpu }})
     needs: resolve-inputs
@@ -387,34 +376,35 @@ jobs:
 
       - name: Restore with downloaded WSS assemblies
         shell: pwsh
-        run: >-
-          dotnet restore "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
-
+        run: |
+          dotnet restore -p:DisablePackageAssetsCache=true "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
       - name: Build with downloaded WSS assemblies
         shell: pwsh
-        run: >-
-          dotnet build "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false
-          -c Release
-          --no-restore
-          -p:TreatWarningsAsErrors=true
-          "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR"
-          "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
-
+        run: |
+          . ./.github/scripts/wss-ci/restored-assets/RestoredAssets.ps1
+          $builtProfile=Get-Content $env:WSS_PROFILE_EVIDENCE -Raw | ConvertFrom-Json
+          $buildRestoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile (Join-Path (Split-Path -Parent $env:WSS_PROFILE_PROJECT) 'obj/project.assets.json') -ProjectPath $env:WSS_PROFILE_PROJECT
+          dotnet build -p:DisablePackageAssetsCache=true "$env:WSS_PROFILE_PROJECT" -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -c Release --no-restore -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR"
+          if ($LASTEXITCODE -ne 0) { throw 'Cache-disabled build failed.' }
+          & "./.github/scripts/Verify-WssOutput.ps1" -ArtifactRoot $builtProfile.payload_root -OutputRoot (Join-Path $builtProfile.output_root 'Release/net9.0') -ProjectPath $env:WSS_PROFILE_PROJECT -ProjectAssetsFile (Join-Path (Split-Path -Parent $env:WSS_PROFILE_PROJECT) 'obj/project.assets.json') -RestoreProof $buildRestoreProof
       - name: Verify downloaded artifact propagation
         shell: pwsh
         run: |
-          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0'
+          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot 'tests/Wss.CSharpImplementation.Tests/bin/Release/net9.0' -ProjectPath $env:WSS_PROFILE_PROJECT -ProjectAssetsFile (Join-Path (Split-Path -Parent $env:WSS_PROFILE_PROJECT) 'obj/project.assets.json')
           $profile = Get-Content $env:WSS_PROFILE_EVIDENCE -Raw | ConvertFrom-Json
-          dotnet publish (Join-Path $profile.source_root 'src/Wss.CSharpImplementation.csproj') -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -c Release --no-restore -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" -o "$env:RUNNER_TEMP/integration-publish"
+          . ./.github/scripts/wss-ci/restored-assets/RestoredAssets.ps1
+          $publishRestoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile (Join-Path $profile.source_root 'src/obj/project.assets.json') -ProjectPath (Join-Path $profile.source_root 'src/Wss.CSharpImplementation.csproj')
+          dotnet publish -p:DisablePackageAssetsCache=true (Join-Path $profile.source_root 'src/Wss.CSharpImplementation.csproj') -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -c Release --no-restore -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" -o "$env:RUNNER_TEMP/integration-publish"
           if ($LASTEXITCODE -ne 0) { throw 'Integration publish failed.' }
-          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot "$env:RUNNER_TEMP/integration-publish"
+          ./.github/scripts/Verify-WssOutput.ps1 -ArtifactRoot $env:WSS_ARTIFACT_DIR -OutputRoot "$env:RUNNER_TEMP/integration-publish" -ProjectPath (Join-Path $profile.source_root 'src/Wss.CSharpImplementation.csproj') -ProjectAssetsFile (Join-Path $profile.source_root 'src/obj/project.assets.json') -RestoreProof $publishRestoreProof
 
       - name: Run platform compatibility tests
         shell: pwsh
         run: |
-          & dotnet test "$env:WSS_PROFILE_PROJECT" -c Release --no-build --no-restore --filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.SerialRuntimeSelectionTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.BleBackendLoadingTests" -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$env:WSS_ARTIFACT_DIR" "-p:WSS_BLE_ARTIFACT_DIR=$env:WSS_BLE_ARTIFACT_DIR" --logger 'console;verbosity=detailed' --logger 'trx;LogFileName=macos-platform.trx' --results-directory "$env:RUNNER_TEMP/macos-results" -- RunConfiguration.TargetPlatform=${{ matrix.test_platform }} | Tee-Object -FilePath "$env:RUNNER_TEMP/macos-platform.log"
+          . ./.github/scripts/wss-ci/compiled-tests/CompiledCSharpTests.ps1
+          $compiledProfile=Get-Content $env:WSS_PROFILE_EVIDENCE -Raw | ConvertFrom-Json
+          $compiledProof=New-CompiledCSharpTestProof -OutputRoot (Join-Path $compiledProfile.output_root 'Release/net9.0') -AssemblyName 'Wss.CSharpImplementation.Tests.dll'
+          Invoke-CompiledCSharpTests -Proof $compiledProof -ResultsDirectory "$env:RUNNER_TEMP/macos-results" -Filter "FullyQualifiedName~Wss.CSharpImplementation.Tests.SerialRuntimeSelectionTests|FullyQualifiedName~Wss.CSharpImplementation.Tests.BleBackendLoadingTests" -TrxFileName 'macos-platform.trx' -Platform '${{ matrix.test_platform }}' -DetailedConsole | Tee-Object -FilePath "$env:RUNNER_TEMP/macos-platform.log"
           if ($LASTEXITCODE -ne 0) { throw 'Canonical platform tests failed.' }
 
       - name: Record canonical packaged BLE result before any synthetic fixture

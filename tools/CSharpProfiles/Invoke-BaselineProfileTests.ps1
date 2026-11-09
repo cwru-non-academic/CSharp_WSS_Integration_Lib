@@ -81,23 +81,38 @@ $compile
 </Project>
 "@
 [IO.File]::WriteAllText($project,$xml,[Text.UTF8Encoding]::new($false))
-$properties=@("-p:WSS_ARTIFACT_DIR=$PayloadRoot","-p:WSS_BLE_ARTIFACT_DIR=$PayloadRoot",'-p:TreatWarningsAsErrors=true','-p:ImportDirectoryBuildProps=false','-p:ImportDirectoryBuildTargets=false')
-& dotnet build $project -c Release @properties
-if ($LASTEXITCODE -ne 0) { throw 'Profile test build failed.' }
+$properties=@("-p:WSS_ARTIFACT_DIR=$PayloadRoot","-p:WSS_BLE_ARTIFACT_DIR=$PayloadRoot",'-p:TreatWarningsAsErrors=true','-p:ImportDirectoryBuildProps=false','-p:ImportDirectoryBuildTargets=false','-p:DisablePackageAssetsCache=true')
+& dotnet restore $project @properties
+if ($LASTEXITCODE -ne 0) { throw 'Explicit test restore failed.' }
 $output=Join-Path $WorkRoot 'bin/Release/net9.0'
-# Product-owned propagation validator remains independent of the selected checkout.
+# Reviewed bootstrap-owned propagation validator remains independent of selected and product checkouts.
 $validator=Join-Path $PSScriptRoot '../../.github/scripts/Verify-WssOutput.ps1'
-& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
-    & "$PSScriptRoot/Invoke-Behavior.ps1" -Profile $profile.profile -Project $project -IsolatedBuild -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot
+# Freeze explicit restore identity before a cache-disabled build and any test child.
+. "$PSScriptRoot/../../.github/scripts/TrustedBaseline.ps1"
+$restoredAssets=Join-Path $WorkRoot 'obj/project.assets.json'
+. "$PSScriptRoot/../../.github/scripts/wss-ci/restored-assets/RestoredAssets.ps1"
+$restoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile $restoredAssets -ProjectPath $project
+$restoredNeutral=$restoreProof.NeutralAssetPath
+. "$PSScriptRoot/../../.github/scripts/wss-ci/compiled-tests/CompiledCSharpTests.ps1"
+$restoredSnapshot=New-TrustedBaselineSnapshot @($project,$restoredAssets,$restoredNeutral,(Join-Path "$PSScriptRoot/../../.github/scripts" 'wss-ci/restored-assets'),(Join-Path "$PSScriptRoot/../../.github/scripts" 'Verify-WssOutput.ps1'))
+& dotnet build $project -c Release --no-restore @properties
+if ($LASTEXITCODE -ne 0) { throw 'Profile test build failed.' }
+Assert-WssRestoredAssetsProof -Proof $restoreProof -ProjectAssetsFile $restoredAssets -ProjectPath $project
+& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output -ProjectPath $project -ProjectAssetsFile (Join-Path $WorkRoot 'obj/project.assets.json') -RestoreProof $restoreProof
+$compiledProof=New-CompiledCSharpTestProof -OutputRoot $output -AssemblyName 'Wss.CSharpImplementation.Tests.dll'
+
+    & "$PSScriptRoot/Invoke-Behavior.ps1" -Profile $profile.profile -Project $project -CompiledProof $compiledProof -IsolatedBuild -ResultsDirectory (Join-Path $WorkRoot 'behavior') -ArtifactDirectory $PayloadRoot -BleArtifactDirectory $PayloadRoot
     # Platform/reload/options suites are additive and never replace the mandatory profile catalog.
-    & dotnet test $project -c Release --no-build --no-restore @properties --logger 'trx;LogFileName=all.trx' --results-directory (Join-Path $WorkRoot 'all')
+    Invoke-CompiledCSharpTests -Proof $compiledProof -ResultsDirectory (Join-Path $WorkRoot 'all') -TrxFileName 'all.trx'
     if ($LASTEXITCODE -ne 0) { throw 'Additional full suite failed.' }
     Assert-CSharpFullTestResults (Join-Path $WorkRoot 'all/all.trx')
 Assert-StagedCSharpProduct
 if((Get-WssProfileFixture $profile.profile) -cne $fixture){throw 'Fixture changed during execution.'}
 Assert-TestBundleCheckout $ProductRoot $ProductSha @('src','lib','tests','.github')
 Assert-TestBundleCheckout $IntegrationRoot $IntegrationSha @('src','lib','tests','.github')
-& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output
+Assert-TrustedBaselineSnapshot $restoredSnapshot
+Assert-WssRestoredAssetsProof -Proof $restoreProof -ProjectAssetsFile $restoredAssets -ProjectPath $project
+& $validator -ArtifactRoot $PayloadRoot -OutputRoot $output -ProjectPath $project -ProjectAssetsFile (Join-Path $WorkRoot 'obj/project.assets.json') -RestoreProof $restoreProof
 if ((Get-SelectedPayloadDigest $PayloadRoot) -cne $payloadDigest) { throw 'Selected payload changed during execution.' }
 $evidence=@{schema='wss-csharp-profile-runtime/v1';profile=$profile;product_sha=$ProductSha;build_product_sha=$IntegrationSha;payload_sha256=$payloadDigest;fixture_sha256=(Get-TestBundleFileHash $fixture);passed=$true}
 $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $WorkRoot 'profile-evidence.json')

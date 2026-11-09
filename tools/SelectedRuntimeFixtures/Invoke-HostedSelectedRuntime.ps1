@@ -74,6 +74,7 @@ $scripts=Join-Path $AdapterRoot '.github/scripts'
 . "$scripts/CSharpTestSource.ps1"
 . "$scripts/PreparedProfileProof.ps1"
 . "$scripts/TrustedBaseline.ps1"
+. "$scripts/wss-ci/restored-assets/RestoredAssets.ps1"
 $profilePath=Join-Path $FixtureRoot 'profile/profile.json'
 $legacy=$state.fixture_profile -ceq 'legacy-v1'
 $proof=New-PreparedProfileProof $profilePath $state.payload_root $state.product_root $state.product_sha (!$legacy)
@@ -88,14 +89,27 @@ try{
  foreach($name in $names){$prior[$name]=[Environment]::GetEnvironmentVariable($name);[Environment]::SetEnvironmentVariable($name,'synthetic-parent-only')}
  Invoke-CredentialFreeSelectedPowerShell "$scripts/Invoke-ProfileFullTests.ps1" @{EvidencePath=$profilePath;ResultsDirectory=$baseline}
  Assert-PreparedProfileProof $proof
- & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $proof.state.output_root 'Release/net9.0')
- & dotnet publish (Join-Path $proof.state.source_root 'src/Wss.CSharpImplementation.csproj') -c Release --no-restore -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$($state.payload_root)" "-p:WSS_BLE_ARTIFACT_DIR=$($state.payload_root)" -o (Join-Path $FixtureRoot 'staged-publish')
+ # The immutable baseline has built its project. Preserve its restore identity
+ # in this parent before any separately selected source executes.
+ $baselineAssets=Join-Path (Split-Path -Parent $proof.state.project) 'obj/project.assets.json'
+ $baselineRestoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile $baselineAssets -ProjectPath $proof.state.project
+ & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $proof.state.output_root 'Release/net9.0') -ProjectPath $proof.state.project -ProjectAssetsFile (Join-Path (Split-Path -Parent $proof.state.project) 'obj/project.assets.json') -RestoreProof $baselineRestoreProof
+ $publishProject=Join-Path $proof.state.source_root 'src/Wss.CSharpImplementation.csproj'
+ $publishAssets=Join-Path $proof.state.source_root 'src/obj/project.assets.json'
+ $publishRestoreProof=New-WssRestoredAssetsProof -ProjectAssetsFile $publishAssets -ProjectPath $publishProject
+ & dotnet publish -p:DisablePackageAssetsCache=true (Join-Path $proof.state.source_root 'src/Wss.CSharpImplementation.csproj') -c Release --no-restore -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:TreatWarningsAsErrors=true "-p:WSS_ARTIFACT_DIR=$($state.payload_root)" "-p:WSS_BLE_ARTIFACT_DIR=$($state.payload_root)" -o (Join-Path $FixtureRoot 'staged-publish')
  if($LASTEXITCODE -ne 0){throw 'Restored staged product publish failed.'}
- & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $FixtureRoot 'staged-publish')
+ & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $FixtureRoot 'staged-publish') -ProjectPath (Join-Path $proof.state.source_root 'src/Wss.CSharpImplementation.csproj') -ProjectAssetsFile (Join-Path $proof.state.source_root 'src/obj/project.assets.json') -RestoreProof $publishRestoreProof
  if($legacy){Assert-LegacyFullInventory (Join-Path $baseline 'all.trx');[xml]$missing=Get-Content (Join-Path $baseline 'all.trx') -Raw;$null=$missing.TestRun.Results.RemoveChild($missing.TestRun.Results.UnitTestResult[0]);$negative=Join-Path $FixtureRoot 'missing-baseline.trx';$missing.Save($negative);$rejected=$false;try{Assert-LegacyFullInventory $negative}catch{$rejected=$true};Require $rejected 'Missing historical baseline case was accepted.'}
- $baselineRoots=@($proof.state.output_root,$baseline)
+ $baselineRoots=@($proof.state.output_root,$baseline,(Join-Path $scripts 'wss-ci/restored-assets'),(Join-Path $scripts 'Verify-WssOutput.ps1'))
  $baselineSnapshot=New-TrustedBaselineSnapshot $baselineRoots
- function Assert-BaselineFiles {Assert-TrustedBaselineSnapshot $baselineSnapshot}
+ function Assert-BaselineFiles {
+  Assert-TrustedBaselineSnapshot $baselineSnapshot
+  Assert-WssRestoredAssetsProof -Proof $baselineRestoreProof -ProjectAssetsFile $baselineAssets -ProjectPath $proof.state.project
+  & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $proof.state.output_root 'Release/net9.0') -ProjectPath $proof.state.project -ProjectAssetsFile $baselineAssets -RestoreProof $baselineRestoreProof
+  Assert-WssRestoredAssetsProof -Proof $publishRestoreProof -ProjectAssetsFile $publishAssets -ProjectPath $publishProject
+  & "$scripts/Verify-WssOutput.ps1" -ArtifactRoot $state.payload_root -OutputRoot (Join-Path $FixtureRoot 'staged-publish') -ProjectPath $publishProject -ProjectAssetsFile $publishAssets -RestoreProof $publishRestoreProof
+ }
  function SelectedOptions([string]$Name){@{Role='wrapper';ProductRoot=$state.product_root;ProductSha=$state.product_sha;PayloadRoot=$state.payload_root;WorkRoot=(Join-Path $FixtureRoot $Name);TestRoot=$state.test_root;TestSha=$state.test_sha;TestRepository='cwru-non-academic/CSharp_WSS_Integration_Lib';TestSelectionId=$state.selection_id;ProfileEvidencePath=$profilePath}}
  function Assert-SelectedResults([string]$Name){
   $root=Join-Path $FixtureRoot $Name
@@ -107,12 +121,14 @@ try{
   if($legacy){Require ($stages.Count -eq 1 -and $stages[0].stage -ceq 'legacy' -and $stages[0].passed -eq 10) 'Mandatory legacy10 missing.';Assert-LegacyFullInventory (Join-Path $root 'all/all.trx') -SelectedExtra}
   else{Require ($stages.Count -eq 2 -and @($stages | Where-Object passed -ne 16).Count -eq 0) 'Mandatory modern16+16 missing.'}
  }
+ Assert-BaselineFiles
  Invoke-CredentialFreeSelectedPowerShell "$scripts/Invoke-SelectedCSharpTests.ps1" (SelectedOptions 'selected-success')
  Assert-SelectedResults 'selected-success';Assert-PreparedProfileProof $proof;Assert-BaselineFiles
  $success=Get-Content (Join-Path $FixtureRoot 'selected-success/test-source-evidence.json') -Raw | ConvertFrom-Json
  Require ($success.product_sha -ceq $state.product_sha -and $success.test_sha -ceq $state.test_sha -and $success.product_root -cne $success.test_root) 'Product/test identities became coupled.'
  foreach($case in @(@{name='reject-baseline-mutation';path=$proof.state.project;reason='*proof/source changed*'},@{name='reject-payload-mutation';path=(Join-Path $state.payload_root 'wss-candidate.json');reason='*payload changed*'})){
   $original=[IO.File]::ReadAllBytes($case.path)
+  $originalLastWriteTimeUtc=[IO.File]::GetLastWriteTimeUtc($case.path)
   try{
    $env:WSS_FIXTURE_MUTATION_PATH=$case.path;$rejected=$false
    try{Invoke-CredentialFreeSelectedPowerShell "$scripts/Invoke-SelectedCSharpTests.ps1" (SelectedOptions $case.name)}catch{$rejected=$true}
@@ -121,7 +137,7 @@ try{
    $parentRejected=$false
    try{Assert-PreparedProfileProof $proof}catch{if($_.Exception.Message -notlike $case.reason){throw};$parentRejected=$true}
    Require $parentRejected 'Parent failed to detect selected mutation.'
-  }finally{Remove-Item Env:WSS_FIXTURE_MUTATION_PATH -ErrorAction SilentlyContinue;[IO.File]::WriteAllBytes($case.path,$original)}
+  }finally{Remove-Item Env:WSS_FIXTURE_MUTATION_PATH -ErrorAction SilentlyContinue;[IO.File]::WriteAllBytes($case.path,$original);[IO.File]::SetLastWriteTimeUtc($case.path,$originalLastWriteTimeUtc)}
   Assert-PreparedProfileProof $proof;Assert-BaselineFiles
  }
  # The child can add an evidence file without altering existing hashes. The parent
