@@ -3,9 +3,11 @@ Set-StrictMode -Version Latest
 . "$PSScriptRoot/../TrustedBaseline.ps1"
 . "$PSScriptRoot/../wss-ci/restored-assets/RestoredAssets.ps1"
 . "$PSScriptRoot/../wss-ci/restored-assets/Universal-WssFiles.ps1"
-$root=Join-Path ([IO.Path]::GetTempPath()) ('wss-restore-proof-'+[guid]::NewGuid().ToString('N'))
+$tempParent=[IO.Path]::GetTempPath()
+if(!$IsWindows){Push-Location $tempParent;try{$tempParent=(& /bin/pwd -P).Trim();if($LASTEXITCODE -ne 0 -or !$tempParent){throw 'Cannot resolve physical fixture parent.'}}finally{Pop-Location}}
+$tempParent=[IO.Path]::GetFullPath($tempParent).TrimEnd([IO.Path]::DirectorySeparatorChar)
+$root=Join-Path $tempParent ('wss-restore-proof-'+[guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory $root
-if(!$IsWindows){Push-Location $root;try{$root=(& /bin/pwd -P).Trim()}finally{Pop-Location}}
 $count=0
 function Require([bool]$Value,[string]$Message){if(!$Value){throw $Message}}
 function Write-Bytes([string]$Path,[string]$Value){$null=New-Item -ItemType Directory (Split-Path -Parent $Path) -Force;[IO.File]::WriteAllText($Path,$Value)}
@@ -111,7 +113,10 @@ try {
   Reject {Assert-Case $c} "earlier root addition $sameBytes";Reject {Verify-Case $c} "earlier root/output replacement $sameBytes"
  }
  $c=New-Case 'fallback shift' -PrimaryPresent
- Remove-Item -LiteralPath (Join-Path $c.primary "$($c.package)/.nupkg.metadata")
+ $marker=Join-Path $c.primary "$($c.package)/.nupkg.metadata"
+ if($IsWindows){[IO.File]::SetAttributes($marker,[IO.File]::GetAttributes($marker) -bor [IO.FileAttributes]::Hidden)}
+ Remove-Item -LiteralPath $marker -Force
+ Require (!(Test-Path -LiteralPath $marker)) 'Synthetic package marker was not removed'
  Reject {Assert-Case $c} 'primary removal selects fallback';Reject {Verify-Case $c} 'same-byte fallback replacement'
  $c=New-Case 'incomplete earlier package'
  Write-Bytes (Join-Path $c.primary "$($c.package)/.nupkg.metadata") '{"version":2}'
@@ -124,7 +129,8 @@ try {
  Verify-Case $c;$count++
  "Restored child-boundary proof contracts passed: $count. Synthetic files and managed proof only; no WSS/native/hardware execution."
 }finally{
- $resolved=[IO.Path]::GetFullPath($root);$temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
- if(!$resolved.StartsWith($temp,[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($resolved) -cnotmatch '^wss-restore-proof-[a-f0-9]{32}$'){throw 'Unsafe fixture cleanup path'}
+ $resolved=[IO.Path]::GetFullPath($root)
+ if([IO.Path]::GetDirectoryName($resolved) -cne $tempParent -or [IO.Path]::GetFileName($resolved) -cnotmatch '^wss-restore-proof-[a-f0-9]{32}$'){throw 'Unsafe fixture cleanup path'}
+ Assert-BaselineRegularPath $resolved
  Remove-Item -LiteralPath $resolved -Recurse -Force
 }

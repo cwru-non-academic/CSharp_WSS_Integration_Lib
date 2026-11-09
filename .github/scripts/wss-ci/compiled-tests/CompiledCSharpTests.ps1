@@ -19,7 +19,7 @@ function New-CompiledCSharpTestProof {
    throw 'Compiled test runtime configuration contains external additional probing paths.'
   }
  }
- $dotnet=(Get-Command dotnet -CommandType Application -ErrorAction Stop).Source
+ $dotnet=(Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
  # Bind the chosen installed VSTest console once. Later stages must not rerun
  # SDK selection against a global.json changed by a preceding test child.
  $version=(& $dotnet --version|Out-String).Trim()
