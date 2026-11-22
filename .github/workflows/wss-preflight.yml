@@ -121,6 +121,7 @@ jobs:
           retention-days: 1
       - uses: actions/upload-artifact@v4
         with:
+          retention-days: 90
           name: wss-candidate-provenance
           path: ${{ runner.temp }}/wss-release/candidate.json
           if-no-files-found: error
@@ -452,6 +453,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
+          retention-days: 90
           name: wss-macos-wrapper-preflight-${{ matrix.arch }}-a${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/macos-evidence/*.json
