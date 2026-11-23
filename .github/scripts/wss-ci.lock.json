@@ -2,14 +2,14 @@
   "schema": "wss-shared-ci/v2",
   "repository": "cwru-non-academic/CSharp_WSS_Integration_Lib",
   "source_repository": "cwru-non-academic/WSSCore",
-  "source_commit": "1030e530735933720e1b83b966a47befa29191d0",
-  "source_ref": "refs/heads/ci/tooling/1030e530735933720e1b83b966a47befa29191d0",
+  "source_commit": "4e96b97586075c3c491557db353ab1290b88a0d1",
+  "source_ref": "refs/heads/ci/tooling/4e96b97586075c3c491557db353ab1290b88a0d1",
   "origins": {
     "integration": {
       "repository": "cwru-non-academic/Python_WSS_Integration_Lib",
       "workspace": "Python_WSS_Integration_Lib",
-      "commit": "8479d559a7a79f53fb3b8b6654abb53659ee5cbf",
-      "ref": "refs/heads/ci/tooling/8479d559a7a79f53fb3b8b6654abb53659ee5cbf"
+      "commit": "4fafd422190712e80276b78a2f6be88dd41aacc7",
+      "ref": "refs/heads/ci/tooling/4fafd422190712e80276b78a2f6be88dd41aacc7"
     }
   },
   "files": {
@@ -51,12 +51,12 @@
     ".github/scripts/wss-ci/receipt.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/receipt.mjs",
-      "sha256": "59f555dd4f8b6c283560fb0472be0bb9726a3993b152a6ff17c97a944c212e96"
+      "sha256": "30f74af0e198693b1d1ebb9d3a48fb08f2dbc44ee244eb842760899919dc5abc"
     },
     ".github/scripts/wss-ci/promotion.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/promotion.mjs",
-      "sha256": "42cefc8746420da45a64049e1dcddb3181c239999ef6db75439fc7142dee734a"
+      "sha256": "eb56a025dc96d3adcfbd399ff2c3e986c504fc44e2df0cb49b25c61e4bfd457b"
     },
     ".github/scripts/wss-ci/dispatch-proof.mjs": {
       "origin": "integration",
@@ -66,7 +66,7 @@
     ".github/scripts/wss-ci/DispatchProof.ps1": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/DispatchProof.ps1",
-      "sha256": "524ad76de41f86d907b185869fc7fb040afb096ead6bafda749e4961c192f09e"
+      "sha256": "dc8ad62fe13166836709333eda1eb36433d81bbaddcb5e5adaeaddd49816a0ac"
     },
     ".github/scripts/wss-ci/receipt-targets.json": {
       "origin": "integration",
@@ -136,22 +136,22 @@
     ".github/workflows/shared-ci.yml": {
       "origin": "core",
       "source": "tools/ci/shared/shared-ci.yml",
-      "sha256": "287f4dd74dcc372468608714be9cb41bb01df19fc49283ccbb5c8c2b3f3c3e6c"
+      "sha256": "a906d0fbb613c5dd2ab17a0af99752e9e47a70a8d0ba4fdcd38e6093de8cb22e"
     },
     ".github/scripts/wss-ci/notify-family.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/notify-family.mjs",
-      "sha256": "5890cffe487d0bd65bdb7b28b53a0fd9fbb7cf96ba693b1f2b864d2ebb35e598"
+      "sha256": "dbd3eb90625d51436f89512032d8efce80c666a54c19fae93881ee13452bfe1f"
     },
     ".github/workflows/notify-core-stage.yml": {
       "origin": "integration",
       "source": ".github/workflows/notify-core-stage.yml",
-      "sha256": "7390e15c83ec288999ec0c2374f2b9b753b1b1602a179e6556b3307d4b4cab68"
+      "sha256": "a1c87f6ff48ae45dff6b6a36cc895a28cf0e15fea740c991731616f2d0ab860b"
     },
     ".github/scripts/wss-ci/preflight.mjs": {
       "origin": "integration",
       "source": ".github/scripts/wss-ci/preflight.mjs",
-      "sha256": "d6a430305e7ce8dbaedacde3ba52bb8dc140233a06429f4a0786a300f151602e"
+      "sha256": "f36ff5284abb349ead90615657208365ff08fa6713abd1706f5618b7002c9e6d"
     },
     ".github/scripts/wss-ci/Preflight.ps1": {
       "origin": "integration",
