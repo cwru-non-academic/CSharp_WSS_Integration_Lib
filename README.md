@@ -8,6 +8,12 @@ This repository owns the integration/library layer. The [CLI application](https:
 
 All documentation about the API and other implementations can be found in [GitHub Pages](https://cwru-non-academic.github.io/WSS_Documentation/).
 
+## Try the library without hardware
+
+Install the .NET 9 SDK and build from the repo root with `dotnet build Wss.CSharpImplementation.sln`. To exercise the controller through the console, follow the [C# CLI quickstart](https://github.com/cwru-non-academic/CLI_CSharp_WSS_Application/blob/dev/README.md#first-stimulation) through its `--conformance` step. That uses the library revision pinned by the application.
+
+When embedding this checkout, use a disposable configuration directory and select `StimulationTransportKind.Conformance`. See [Emulator Conformance Mode](#emulator-conformance-mode) for the initialization, observation, and validation calls. Dispose the controller at the end of the session.
+
 ## Layout
 
 - `src/` - library project containing `StimulationController` and `StimulationOptions`
