@@ -9,6 +9,17 @@ function Invoke-WssCiDispatchProof($Context) {
         $raw|ConvertFrom-Json
     } finally {if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path}}
 }
+function Test-WssCiApplicationDispatchReuse([string]$Repository,[string]$SourceSha,[string]$Title,$MergedAt,[string]$ReadCommand) {
+    if (!$MergedAt) { throw 'Application dispatch discovery requires the integration PR merge time.' }
+    $since=([DateTimeOffset]$MergedAt).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture)
+    $created=[Uri]::EscapeDataString(">=$since")
+    $pages=& $ReadCommand -Arguments @('api','--paginate','--slurp',"repos/$Repository/actions/workflows/promote-integration.yml/runs?event=workflow_dispatch&created=$created&per_page=100") | ConvertFrom-Json
+    $runs=@($pages | ForEach-Object { $_.workflow_runs } | Where-Object display_title -CEQ $Title)
+    $run=if($runs.Count -eq 1 -and [string]$runs[0].id -cmatch '^[1-9][0-9]*$'){
+        & $ReadCommand -Arguments @('api',"repos/$Repository/actions/runs/$($runs[0].id)") | ConvertFrom-Json
+    } else { $null }
+    Invoke-WssCiDispatchProof @{operation='reuse';runs=$runs;run=$run;expected=@{repository=$Repository;source_sha=$SourceSha;title=$Title}}
+}
 function Assert-WssCiDispatchArtifacts([string]$Repository,[string]$Name,[switch]$RequireCurrent) {
     . "$PSScriptRoot/Process.ps1"
     $pages=Invoke-WssCiProcess -Executable gh -Arguments @('api','--paginate','--slurp',"repos/$Repository/actions/artifacts?name=$Name&per_page=100")|ConvertFrom-Json

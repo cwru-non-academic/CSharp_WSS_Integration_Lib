@@ -23,17 +23,27 @@ export function promotionCredentialArguments(token,scope='https://github.com/') 
   const header=Buffer.from('x-access-token:'+token).toString('base64');
   return ['-c',`http.${scope}.extraheader=`,'-c',`http.${scope}.extraheader=AUTHORIZATION: basic ${header}`];
 }
-export function mainWorkflowAuthority(c,env,git=nativeGit,execute=execFileSync) {
+function lockedCoreTooling(c,env,git) {
   const core=env.WSS_CORE_TOOLS_ROOT;
-  requireThat(typeof core==='string'&&core.length>0,'Main publication requires the immutable Core workflow guard');
+  requireThat(typeof core==='string'&&core.length>0,'Publication requires the immutable Core workflow guard');
   const lock=JSON.parse(readFileSync(join(resolve(c.repository_root),'.github/scripts/wss-ci.lock.json'),'utf8'));
   requireThat(lock.source_repository==='cwru-non-academic/WSSCore'&&/^[a-f0-9]{40}$/.test(lock.source_commit)&&git(core,['rev-parse','HEAD'])===lock.source_commit&&git(core,['status','--porcelain','--untracked-files=no'])==='','Core workflow guard differs from locked clean source');
+  return resolve(core);
+}
+export function mainWorkflowAuthority(c,env,git=nativeGit,execute=execFileSync) {
+  const core=lockedCoreTooling(c,env,git);
   let proof;
   try{proof=JSON.parse(execute(process.execPath,[join(resolve(core),'tools/ci/workflow-freeze.mjs'),'check-receiver',c.candidate.run_id,env.GITHUB_REPOSITORY],{encoding:'utf8',env,stdio:['ignore','pipe','pipe']}));}
   catch{throw Error('Frozen main workflow authorization failed; no publication permitted');}
   requireThat(proof.schema==='wss-receiver-workflow-authorization/v1'&&proof.channel==='main'&&proof.repository===env.GITHUB_REPOSITORY&&proof.target_id===c.target_id&&/^[a-f0-9]{64}$/.test(proof.plan_id)&&canonical(proof.candidate)===canonical(c.candidate),'Core workflow guard returned mismatched proof');
 }
-export async function publishPromotion(c,{g=new GitHub(),writer=new GitHub(process.env.WSS_PUSH_TOKEN),git=nativeGit,env=process.env,authorize=mainWorkflowAuthority,loadFrozenPlan=loadPlan}={}) {
+export function applicationStageAuthority(c,env,git=nativeGit,execute=execFileSync) {
+  const core=lockedCoreTooling(c,env,git);
+  const bytes=execute(process.execPath,[join(core,'tools/ci/dev-propagation.mjs'),'check-application',c.candidate.run_id,env.GITHUB_REPOSITORY],{encoding:'utf8',env,stdio:['ignore','pipe','inherit']});
+  const proof=JSON.parse(bytes);
+  requireThat(proof.channel===channelContext(c.channel).channel&&canonical(proof.candidate)===canonical(c.candidate),'Library stage proof differs from the application candidate');
+}
+export async function publishPromotion(c,{g=new GitHub(),writer=new GitHub(process.env.WSS_PUSH_TOKEN),git=nativeGit,env=process.env,authorize=mainWorkflowAuthority,authorizeApplication=applicationStageAuthority,loadFrozenPlan=loadPlan}={}) {
   const profile=profiles[c.target_id];requireThat(profile,'Unknown publication target');
   const context=channelContext(c.channel||'dev'),t=targetForChannel(profile.target,context.channel),root=resolve(c.repository_root);
   requireThat(channelContext(env.WSS_CI_CHANNEL||'dev').channel===context.channel&&env.GITHUB_ACTIONS==='true' && env.GITHUB_REF===context.ref && env.GITHUB_REPOSITORY===t.repository && env.WSS_PUSH_TOKEN,'Publication requires trusted channel execution and delayed scoped token');
@@ -49,13 +59,14 @@ export async function publishPromotion(c,{g=new GitHub(),writer=new GitHub(proce
   const checkout=git(root,['rev-parse','HEAD']);
   requireThat(checkout===c.source_sha || (c.precommitted===true && /^[a-f0-9]{40}$/.test(checkout)),'Publication checkout is not validated source');
   const paths=git(root,c.precommitted?['diff','--name-only','--no-renames',c.source_sha,'HEAD']:['diff','--cached','--name-only','--no-renames']).split(/\r?\n/).filter(Boolean);
-  requireThat(paths.length>0,'No-op must not publish metadata-only PR');
+  requireThat(paths.length>0,'No staged dependency change to publish');
   requireThat(Array.isArray(c.allowed_paths) && c.allowed_paths.every(p=>typeof p==='string'&&!p.split('/').includes('..')&&!p.startsWith('/')),'Invalid publication path descriptor');
   for(const path of paths) requireThat(c.allowed_paths.includes(path)||(c.target_id==='csharp-wrapper'&&path.startsWith('lib/')),'Staged changes escape reviewed promotion allowlist');
   requireThat(git(root,['diff','--name-only','--ignore-submodules=all'])==='','Unstaged changes outside intended promotion');
   git(root,['diff','--cached','--check']);
   for(const [path,sha] of Object.entries(c.gitlinks||{})) requireThat(git(root,['ls-files','--stage','--',path])===`160000 ${sha} 0\t${path}`,'Staged application entry is not the accepted gitlink');
   const tree=git(root,['write-tree']);
+  if(profile.role!=='wrapper')authorizeApplication(c,env,git);
   const sourceCheck=()=>{
     if(context.channel==='main')authorize(c,env,git);
     requireThat(g.head(t.repository,context.branch)===c.source_sha,'Target branch advanced; no stale publication');
