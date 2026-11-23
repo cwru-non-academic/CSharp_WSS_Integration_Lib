@@ -8,14 +8,14 @@ function Assert-WssFanoutSources([string] $IntegrationSha, [string] $CliSha) {
         if ($head.object.sha -cne $entry[1]) { throw "Fanout source moved: $($entry[0]); require fresh reviewed evidence." }
     }
 }
-function Get-WssCliDispatchReuse($Approval,[string]$IntegrationSha,[string]$CorrelationId) {
+function Get-WssCliDispatchReuse($Approval,[string]$IntegrationSha,[string]$CorrelationId,[string]$IntegrationPr) {
     . "$PSScriptRoot/wss-ci/DispatchProof.ps1"
+    if ($IntegrationPr -cnotmatch '^[1-9][0-9]*$') { throw 'Invalid integration PR for dispatch discovery.' }
+    $pr=Invoke-WssGh -Arguments @('api',"repos/cwru-non-academic/CSharp_WSS_Integration_Lib/pulls/$IntegrationPr") | ConvertFrom-Json
+    if (!$pr.merged -or $pr.merge_commit_sha -cne $IntegrationSha) { throw 'Integration PR does not identify the dispatch merge.' }
     $title="Promote Integration $IntegrationSha / $CorrelationId"
     $repo='cwru-non-academic/CLI_CSharp_WSS_Application'
-    $pages=Invoke-WssGh -Arguments @('api','--paginate','--slurp',"repos/$repo/actions/workflows/promote-integration.yml/runs?event=workflow_dispatch&per_page=100")|ConvertFrom-Json
-    $runs=@($pages|ForEach-Object {$_.workflow_runs}|Where-Object display_title -CEQ $title)
-    $run=if($runs.Count -eq 1 -and [string]$runs[0].id -cmatch '^[1-9][0-9]*$'){Invoke-WssGh -Arguments @('api',"repos/$repo/actions/runs/$($runs[0].id)")|ConvertFrom-Json}else{$null}
-    Invoke-WssCiDispatchProof @{operation='reuse';runs=$runs;run=$run;expected=@{repository=$repo;source_sha=$Approval.cli.source_sha;title=$title}}
+    Test-WssCiApplicationDispatchReuse $repo $Approval.cli.source_sha $title $pr.merged_at Invoke-WssGh
 }
 
 function Assert-WssCliDispatchIntent([string]$IntegrationSha,[switch]$RequireCurrent) {
@@ -31,7 +31,7 @@ function New-WssCliDispatchRequest([string] $IntegrationSha, [string] $Integrati
     if ($IntegrationPr -cnotmatch '^[1-9][0-9]*$' -or $CorrelationId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$') { throw 'Invalid CLI dispatch metadata.' }
     $approval = Read-WssApproval $ApprovalPath
     Assert-WssFanoutSources $IntegrationSha $approval.cli.source_sha
-    if (Get-WssCliDispatchReuse $approval $IntegrationSha $CorrelationId) { 'dispatch_needed=false' >> $env:GITHUB_OUTPUT; return }
+    if (Get-WssCliDispatchReuse $approval $IntegrationSha $CorrelationId $IntegrationPr) { 'dispatch_needed=false' >> $env:GITHUB_OUTPUT; return }
     Assert-WssCliDispatchIntent $IntegrationSha
     if (Test-Path -LiteralPath $RequestPath) { throw 'CLI dispatch request must be new.' }
     @{ref=(Get-WssCiChannel);inputs=@{integration_sha=$IntegrationSha;integration_pr=$IntegrationPr;correlation_id=$CorrelationId;approval_json=($approval | ConvertTo-Json -Depth 5 -Compress)}} |
@@ -56,7 +56,7 @@ function Send-WssCliDispatch([string] $RequestPath, [string] $ReadToken, [string
             Assert-WssCandidateRecord $proof.candidate $approval
         }
         Assert-WssFanoutSources $request.inputs.integration_sha $approval.cli.source_sha
-        if (Get-WssCliDispatchReuse $approval $request.inputs.integration_sha $request.inputs.correlation_id) { return }
+        if (Get-WssCliDispatchReuse $approval $request.inputs.integration_sha $request.inputs.correlation_id $request.inputs.integration_pr) { return }
         Assert-WssCliDispatchIntent $request.inputs.integration_sha -RequireCurrent
         # These are the final reads before the one POST, after journal/reuse reads.
         Assert-WssFanoutSources $request.inputs.integration_sha $approval.cli.source_sha

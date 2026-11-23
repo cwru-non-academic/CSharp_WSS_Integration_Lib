@@ -272,7 +272,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           . ./.github/scripts/WssAutomatic.ps1
-          if (Test-WssPayloadEqual 'lib' "$env:RUNNER_TEMP/wss-release/extracted/WSS-Universal") {
+          if (Test-WssPromotionAlreadyInstalled 'lib' "$env:RUNNER_TEMP/wss-release/extracted/WSS-Universal" "$env:RUNNER_TEMP/desired-lib") {
             'branch_exists=false' >> $env:GITHUB_OUTPUT
             'pr_number=' >> $env:GITHUB_OUTPUT
             exit 0
@@ -428,8 +428,8 @@ jobs:
           }
 
           . ./.github/scripts/WssAutomatic.ps1
-          if (Test-WssPayloadEqual 'lib' "$env:RUNNER_TEMP/wss-release/extracted/WSS-Universal") {
-            'Verified no-op: universal dependency bytes already match dev; committed provenance is preserved, and no metadata-only PR is manufactured. The newly verified approval is retained as an Actions artifact.' >> $env:GITHUB_STEP_SUMMARY
+          if (Test-WssPromotionAlreadyInstalled 'lib' "$env:RUNNER_TEMP/wss-release/extracted/WSS-Universal" "$env:RUNNER_TEMP/desired-lib") {
+            'This exact verified candidate is already installed.' >> $env:GITHUB_STEP_SUMMARY
             exit 0
           }
 

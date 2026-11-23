@@ -72,11 +72,20 @@ function Test-WssPayloadEqual([string] $Lib, [string] $ArtifactRoot) {
     } catch { return $false }
     if (@(Compare-Object $selectedFiles $sourceFiles -CaseSensitive).Count -ne 0) { return $false }
     Assert-WssMacOSPayload $ArtifactRoot $sourceFiles
-    # Require valid committed provenance; a no-op preserves it instead of manufacturing a metadata-only PR.
+    # Validate committed provenance before comparing its payload to the archive.
     $null = Read-WssApproval (Join-Path $root 'wss-candidate.json')
     foreach ($relative in $selectedFiles) {
         if ((Get-FileHash -LiteralPath (Join-Path $root $relative)).Hash -cne
             (Get-FileHash -LiteralPath (Join-Path $ArtifactRoot $relative)).Hash) { return $false }
     }
+    return $true
+}
+
+function Test-WssPromotionAlreadyInstalled([string]$Lib,[string]$ArtifactRoot,[string]$DesiredLib) {
+    if (!(Test-WssPayloadEqual $Lib $ArtifactRoot)) { return $false }
+    $installed=Read-WssApproval (Join-Path $Lib 'wss-candidate.json')
+    $desired=Read-WssApproval (Join-Path $DesiredLib 'wss-candidate.json')
+    if ($installed.candidate.run_id -cne $desired.candidate.run_id) { return $false }
+    Assert-WssCandidateRecord $installed.candidate $desired
     return $true
 }

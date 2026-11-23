@@ -33,7 +33,11 @@ try {
         switch -Wildcard ($Arguments[-1]) {
             '*/CSharp_WSS_Integration_Lib/git/ref/heads/dev' { @{object=@{sha=$script:wrapperHead}} | ConvertTo-Json -Depth 4 }
             '*/CLI_CSharp_WSS_Application/git/ref/heads/dev' { @{object=@{sha=$script:cliHead}} | ConvertTo-Json -Depth 4 }
-            '*/workflows/promote-integration.yml/runs?*' { ConvertTo-Json -InputObject @(@{workflow_runs=$script:runs}) -Depth 8 }
+            '*/CSharp_WSS_Integration_Lib/pulls/40' { @{merged=$true;merge_commit_sha=$sha;merged_at='2026-11-20T12:00:00Z'} | ConvertTo-Json }
+            '*/workflows/promote-integration.yml/runs?*' {
+                if ($Arguments[-1] -cnotlike '*&created=%3E%3D2026-11-20T12%3A00%3A00Z&*') { throw 'Application promotion search was not limited to this merge.' }
+                ConvertTo-Json -InputObject @(@{workflow_runs=$script:runs}) -Depth 8
+            }
             '*/CLI_CSharp_WSS_Application/actions/runs/7' { $script:priorRun | ConvertTo-Json -Depth 8 }
             '*/CSharp_WSS_Integration_Lib/actions/artifacts?*' {
                 if ($script:moveOnIntent) { $script:cliHead='f'*40 }
@@ -58,15 +62,15 @@ try {
     foreach ($field in @('head_sha','head_branch','path','event','display_title','repository','head_repository')) {
         $before=$script:priorRun[$field]
         $script:priorRun[$field]=if ($field -cin @('repository','head_repository')) { @{full_name='other/repo'} } else { 'wrong' }
-        Reject { Get-WssCliDispatchReuse $approval $sha $correlation } 'Common application dispatch proof failed*'
+        Reject { Get-WssCliDispatchReuse $approval $sha $correlation '40' } 'Common application dispatch proof failed*'
         $script:priorRun[$field]=$before
     }
     $script:priorRun.conclusion='failure'
     Reject { Send-WssCliDispatch $requestPath 'read-fixture' 'write-fixture' } 'Common application dispatch proof failed*'
     $script:priorRun.conclusion='success'; $script:priorRun.status='in_progress'
-    Reject { Get-WssCliDispatchReuse $approval $sha $correlation } 'Common application dispatch proof failed*'
+    Reject { Get-WssCliDispatchReuse $approval $sha $correlation '40' } 'Common application dispatch proof failed*'
     $script:priorRun.status='completed'; $script:runs+= $script:runs[0]
-    Reject { Get-WssCliDispatchReuse $approval $sha $correlation } 'Common application dispatch proof failed*'
+    Reject { Get-WssCliDispatchReuse $approval $sha $correlation '40' } 'Common application dispatch proof failed*'
     $script:runs=@()
 
     $env:GITHUB_RUN_ATTEMPT='2'
