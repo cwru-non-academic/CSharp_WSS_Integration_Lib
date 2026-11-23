@@ -378,7 +378,7 @@ if(mode==='valid'&&proofs!==1)throw Error('Valid guard did not execute frozen pr
     Remove-Item Function:Invoke-WssGh
     . "$PSScriptRoot/../WssAutomatic.ps1"
 
-    # Payload-only no-op detection, independent of promotion metadata. Not runtime DLL fakes.
+    # Synthetic inventory fixtures exercise provenance-only promotion eligibility.
     . "$PSScriptRoot/../Universal-WssFiles.ps1"
     $payload = Join-Path $temp 'payload'
     $lib = Join-Path $temp 'lib'
@@ -390,7 +390,15 @@ if(mode==='valid'&&proofs!==1)throw Error('Valid guard did not execute frozen pr
         }
     }
     Write-WssApproval $approval (Join-Path $lib 'wss-candidate.json')
-    if (-not (Test-WssPayloadEqual $lib $payload)) { throw 'Identical payload with old approval did not produce a no-op.' }
+    if (-not (Test-WssPayloadEqual $lib $payload)) { throw 'Identical payload was not recognized.' }
+    $desired = Join-Path $temp 'desired'
+    New-Item -ItemType Directory $desired | Out-Null
+    Write-WssApproval $approval (Join-Path $desired 'wss-candidate.json')
+    if (!(Test-WssPromotionAlreadyInstalled $lib $payload $desired)) { throw 'An exact candidate replay should stop.' }
+    $fresh = Read-WssApproval (Join-Path $desired 'wss-candidate.json')
+    $fresh.candidate.run_id = [string]([bigint]$fresh.candidate.run_id+1)
+    Write-WssApproval $fresh (Join-Path $desired 'wss-candidate.json')
+    if (Test-WssPromotionAlreadyInstalled $lib $payload $desired) { throw 'A fresh candidate with identical DLL bytes should advance.' }
     'different payload bytes' | Set-Content (Join-Path $payload 'WSS_Core_Interface.dll')
     if (Test-WssPayloadEqual $lib $payload) { throw 'Different universal candidate was treated as a no-op.' }
     Copy-Item (Join-Path $lib 'WSS_Core_Interface.dll') (Join-Path $payload 'WSS_Core_Interface.dll') -Force

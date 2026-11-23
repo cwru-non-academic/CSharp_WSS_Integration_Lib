@@ -125,7 +125,9 @@ export async function runReceipt(config,{g=new ReadOnly(),env=process.env}={}) {
   emitter(capturedEmitter,env,t,head);
   for(const path of t.trusted_paths)v.requireThat(object(sourceRoot,path)===snapshot.trusted[path]&&g.object(t.repository,head,path).sha===snapshot.trusted[path],`Frozen receipt/CI tooling changed: ${path}`);
   const wrapperSnapshot=p.target_snapshots[profile.wrapper];
-  for(const path of ['.github/scripts',...(profile.receipt.configuration?[profile.receipt.configuration]:[])])v.requireThat(object(validatorRoot,path)===wrapperSnapshot.trusted[path],`Native validator differs from frozen wrapper source: ${path}`);
+  const wrapperPaths=['.github/scripts',...(profile.receipt.configuration?[profile.receipt.configuration]:[])];
+  const useAcceptedValidator=p.manifest.workflow_authority==='executed-source'&&profile.role!=='wrapper';
+  if(!useAcceptedValidator)for(const path of wrapperPaths)v.requireThat(object(validatorRoot,path)===wrapperSnapshot.trusted[path],`Native validator differs from frozen wrapper source: ${path}`);
   v.requireThat(toolsRoot===(profile.receipt.adapter_owner==='receiver'?sourceRoot:validatorRoot),'Native adapter root differs from registered owner');
   receiptLocalReadiness(sourceRoot,profile);
   const zip=archive(g,p.candidate),coreRun=detachAdmission(g.run(v.CORE,producerId));
@@ -141,19 +143,20 @@ export async function runReceipt(config,{g=new ReadOnly(),env=process.env}={}) {
   const parents=Object.fromEntries(Object.entries(t.parents).map(([parent,path])=>{
     const entry=g.object(t.repository,head,path);v.requireThat(entry.type==='commit' && entry.mode==='160000','Parent is not a Git submodule');return [parent,entry.sha];
   }));
-  for(const path of ['.github/scripts',...(profile.receipt.configuration?[profile.receipt.configuration]:[])])v.requireThat(object(integrationRoot,path)===wrapperSnapshot.trusted[path],`Accepted wrapper tooling differs from frozen source: ${path}`);
+  for(const path of wrapperPaths)v.requireThat(object(integrationRoot,path)===wrapperSnapshot.trusted[path],`Accepted wrapper tooling differs from reviewed source: ${path}`);
   for(const [parent,sha] of Object.entries(parents))v.requireThat(git(integrationRoot,'rev-parse','HEAD')===sha&&g.head(profiles[parent].target.repository,p.channel)===sha,'Actual integration root differs from accepted parent');
+  const adapterPaths=useAcceptedValidator?{...roots,validatorRoot:integrationRoot,toolsRoot:profile.receipt.adapter_owner==='receiver'?sourceRoot:integrationRoot}:roots;
   const work=createReceiptWorkspace();
   try {
-    const adapterContext={plan:p,target:t,head,pr,parents,paths:roots};
+    const adapterContext={plan:p,target:t,head,pr,parents,paths:adapterPaths};
     phase='adapter';
     let preflights;
     {
       writeFileSync(join(work,'context.json'),JSON.stringify(adapterContext));
       const script=profile.receipt.adapter.split('/').at(-1);
-      const args=['-NoProfile','-File',join(toolsRoot,'.github/scripts',script),'-ContextPath',join(work,'context.json')];
+      const args=['-NoProfile','-File',join(adapterPaths.toolsRoot,'.github/scripts',script),'-ContextPath',join(work,'context.json')];
       if(script==='Write-ReleaseReceipt.ps1') args.push('-TargetId',id,'-ProducerRunId',producerId,'-PlanId',planId);
-      else args.push('-ToolsRoot',toolsRoot);
+      else args.push('-ToolsRoot',adapterPaths.toolsRoot);
       args.push('-WorkRoot',join(work,'validation'),'-OutputPath',join(work,'preflights.json'));
       execFileSync('pwsh',args,{stdio:'inherit',env:{...env,WSS_CI_CHANNEL:p.channel,WSS_CORE_TOOLS_ROOT:coreRoot,WSS_TARGET_ROOT:sourceRoot}});
       preflights=JSON.parse(readFileSync(join(work,'preflights.json'),'utf8').replace(/^\uFEFF/,''));

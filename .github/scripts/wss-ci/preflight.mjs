@@ -62,9 +62,10 @@ export function assertRun(run,{repository,source_sha,workflow='wss-preflight.yml
   return run;
 }
 
-export function findPreflight(g,expected){
+function findPreflight(g,expected,producerCreatedAt){
   profileFor(expected.repository);
-  const matches=g.pages(`repos/${expected.repository}/actions/workflows/wss-preflight.yml/runs?event=workflow_dispatch`,'workflow_runs').filter(r=>r.display_title===expected.title);
+  const created=encodeURIComponent('>='+producerCreatedAt);
+  const matches=g.pages(`repos/${expected.repository}/actions/workflows/wss-preflight.yml/runs?event=workflow_dispatch&created=${created}`,'workflow_runs').filter(r=>r.display_title===expected.title);
   requireThat(matches.length<=1,'Ambiguous correlated preflight; no selection or redispatch');
   if(!matches.length)return null;
   const run=g.run(expected.repository,matches[0].id);
@@ -72,16 +73,19 @@ export function findPreflight(g,expected){
 }
 
 export async function startPreflight(g,context,{post=(repo,body)=>dispatchJson(repo,body,process.env.WSS_PREFLIGHT_TOKEN),now=Date.now,pause=sleep,loadFrozenPlan=loadPlan}={}){
-  const expected=request(context);
+  const expected=request(context),c=normalizeCandidate(context.candidate);
+  const producer=assertRun(g.run(CORE,c.run_id),{repository:CORE,source_sha:c.commit,workflow:'artifacts.yml',event:'push',run_id:c.run_id,channel:expected.channel});
+  const createdAt=producer.created_at;
+  requireThat(typeof createdAt==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(createdAt)&&Number.isFinite(Date.parse(createdAt)),'Missing canonical producer creation time');
   let frozenSource;
   if(expected.channel==='main'){
-    const c=normalizeCandidate(context.candidate),p=loadFrozenPlan(g,c.run_id),profile=profileFor(expected.repository);
+    const p=loadFrozenPlan(g,c.run_id),profile=profileFor(expected.repository);
     requireThat(p.channel==='main'&&canonical(p.candidate)===canonical(c)&&g.head(CORE,'main')===c.commit,'Main preflight requires the exact current canonical main producer');
     targetPolicy(p,profile.target.id);frozenSource=p.target_snapshots[profile.target.id].head_sha;
     requireThat(!expected.source_sha||expected.source_sha===frozenSource,'Main preflight source differs from frozen target');
     expected.source_sha=frozenSource;
   }
-  const existing=findPreflight(g,expected);
+  const existing=findPreflight(g,expected,createdAt);
   if(existing)return existing;
   const source=g.head(expected.repository,expected.channel);requireThat(sha(source)&&(!expected.source_sha||source===expected.source_sha),'Preflight target source advanced before dispatch');
   expected.source_sha=source;
@@ -89,7 +93,7 @@ export async function startPreflight(g,context,{post=(repo,body)=>dispatchJson(r
   await post(expected.repository,expected.body); // exactly one attempt, even after transport failure
   const deadline=now()+seconds*1000;
   for(;;){
-    const found=findPreflight(g,expected);if(found)return found;
+    const found=findPreflight(g,expected,createdAt);if(found)return found;
     requireThat(now()<deadline,'Dispatched preflight not discovered; outcome uncertain, inspect before retry');
     await pause(5000);
   }
